@@ -215,9 +215,12 @@ describe("TaskService.start refusals, in order", () => {
     await expectCode(t.service.start(ctx(), { rowId: "r1", inputs: {} }), "invalid");
   });
 
-  it("5. a paused agent is accepted", async () => {
+  it("5. a paused agent is refused before anything is created", async () => {
     const t = setup({ agents: { "agent-1": { id: "agent-1", name: "Mailer Bot", status: "paused" } } });
-    await expect(t.service.start(ctx(), RAW)).resolves.toMatchObject({ status: "waiting" });
+    await expectCode(t.service.start(ctx(), RAW), "disabled", "Mailer Bot is paused. Try again when it has been resumed.");
+    expect(t.deps.previewAssignment).not.toHaveBeenCalled();
+    expect(t.issues.create).not.toHaveBeenCalled();
+    expect(t.store.insert).not.toHaveBeenCalled();
   });
 
   it("5. writes need the agent at write", async () => {
@@ -368,7 +371,7 @@ describe("TaskService.start success", () => {
     expect(t.store.setWaitingReason).toHaveBeenCalledWith("issue-1", "The agent will pick this up when the company's scheduling allows.");
   });
 
-  it("a refused wake-up leaves the task waiting with a mapped reason, never the core's text", async () => {
+  it("a refused wake-up cancels the task as the viewer, closes it, audits the cancel and fails with a mapped reason", async () => {
     const cases: Array<[string, string]> = [
       ["Agent is not invokable in its current state", "The agent is paused or not available right now."],
       ["Budget hard stop reached for agent", "The agent is over its budget."],
@@ -376,15 +379,29 @@ describe("TaskService.start success", () => {
     ];
     for (const [message, reason] of cases) {
       const t = setup({ wake: async () => { throw new Error(message); } });
-      const task = await t.service.start(ctx(), RAW);
-      expect(task).toMatchObject({ status: "waiting", waitingReason: reason });
-      expect(t.rows.get("issue-1")!.waitingReason).toBe(reason);
+      const error = await expectCode(t.service.start(ctx(), RAW), "disabled", `${reason} The task was cancelled; try again later.`);
+      expect(error.message).not.toContain(message);
+      expect(t.calls).toEqual(["create", "insert", "wake", "update"]);
+      expect(t.issues.update).toHaveBeenCalledWith("issue-1", { status: "cancelled" }, C, { actorUserId: "viewer" });
+      expect(t.issuesById.get("issue-1")!.status).toBe("cancelled");
+      expect(t.rows.get("issue-1")!.closed).toBe(true);
+      expect(t.audits.map((a) => a.operation)).toEqual(["app_task_start", "app_task_cancel"]);
+      expect(t.audits[1]).toMatchObject({ companyId: C, actor: VIEWER, table: "tickets" });
+      expect(t.audits[1]!.details).toEqual({ app: "help-desk", appId: "app-1", version: 3, template: "reply", agentId: "agent-1", issueId: "issue-1", via: "app@help-desk@3", reason: "wake_refused" });
     }
   });
 
-  it("a failure to record the waiting reason does not fail the start", async () => {
-    const t = setup({ wake: async () => { throw new Error("Agent is not invokable"); }, setWaitingFails: true });
-    await expect(t.service.start(ctx(), RAW)).resolves.toMatchObject({ status: "waiting", waitingReason: "The agent is paused or not available right now." });
+  it("a refused wake-up whose cancel fails is logged, left open and still fails the start", async () => {
+    const t = setup({ wake: async () => { throw new Error("Agent is not invokable"); }, updateFails: true });
+    await expectCode(t.service.start(ctx(), RAW), "disabled", "The agent is paused or not available right now. The task was cancelled; try again later.");
+    expect(t.logs.map((l) => l.message)).toEqual(["app task issue not cancelled after its wake-up was refused"]);
+    expect(t.rows.get("issue-1")!.closed).toBe(false);
+    expect(t.audits.map((a) => a.operation)).toEqual(["app_task_start"]);
+  });
+
+  it("a failure to record the scheduling reason does not fail the start", async () => {
+    const t = setup({ wake: async () => ({ queued: false, runId: null }), setWaitingFails: true });
+    await expect(t.service.start(ctx(), RAW)).resolves.toMatchObject({ status: "waiting", waitingReason: "The agent will pick this up when the company's scheduling allows." });
   });
 });
 
@@ -486,49 +503,14 @@ describe("TaskService.get", () => {
     expect((await t.service.get(C, APP.id, t.task.id)).waitingReason).toBeNull();
   });
 
-  it("retries a refused wake-up at most once a minute and clears the reason once it queues", async () => {
-    let refuse = true;
-    const t = await started({ wake: async () => { if (refuse) throw new Error("Agent is not invokable in its current state"); return { queued: true, runId: "run-9" }; } });
+  it("never wakes the agent again: a waiting task is left to the core's scheduling", async () => {
+    const t = await started({ wake: async () => ({ queued: false, runId: null }) });
     expect(t.issues.requestWakeup).toHaveBeenCalledTimes(1);
-    t.clock.t += 30_000;
-    expect((await t.service.get(C, APP.id, t.task.id)).waitingReason).toBe("The agent is paused or not available right now.");
+    for (let i = 0; i < 3; i++) {
+      t.clock.t += 120_000;
+      expect(await t.service.get(C, APP.id, t.task.id)).toMatchObject({ status: "waiting", waitingReason: "The agent will pick this up when the company's scheduling allows." });
+    }
     expect(t.issues.requestWakeup).toHaveBeenCalledTimes(1);
-    t.clock.t += 31_000;
-    expect((await t.service.get(C, APP.id, t.task.id)).waitingReason).toBe("The agent is paused or not available right now.");
-    expect(t.issues.requestWakeup).toHaveBeenCalledTimes(2);
-    expect(t.issues.requestWakeup).toHaveBeenLastCalledWith(t.task.id, C, { reason: "kyoube_app_task", actorUserId: "viewer" });
-    await t.service.get(C, APP.id, t.task.id);
-    expect(t.issues.requestWakeup).toHaveBeenCalledTimes(2);
-    refuse = false;
-    t.clock.t += 60_000;
-    const task = await t.service.get(C, APP.id, t.task.id);
-    expect(t.issues.requestWakeup).toHaveBeenCalledTimes(3);
-    expect(task).toMatchObject({ status: "waiting", waitingReason: null });
-    expect(t.rows.get(t.task.id)!.waitingReason).toBeNull();
-    t.clock.t += 120_000;
-    await t.service.get(C, APP.id, t.task.id);
-    expect(t.issues.requestWakeup).toHaveBeenCalledTimes(3);
-  });
-
-  it("updates the reason when a retry is refused differently", async () => {
-    let message = "Agent is not invokable in its current state";
-    const t = await started({ wake: async () => { throw new Error(message); } });
-    message = "budget hard stop";
-    t.clock.t += 61_000;
-    expect((await t.service.get(C, APP.id, t.task.id)).waitingReason).toBe("The agent is over its budget.");
-    expect(t.rows.get(t.task.id)!.waitingReason).toBe("The agent is over its budget.");
-  });
-
-  it("does not retry the wake-up once the issue has left todo, or for a task that was never refused", async () => {
-    const t = await started({ wake: async () => { throw new Error("Agent is not invokable"); } });
-    t.issuesById.get(t.task.id)!.status = "in_progress";
-    t.clock.t += 61_000;
-    await t.service.get(C, APP.id, t.task.id);
-    expect(t.issues.requestWakeup).toHaveBeenCalledTimes(1);
-    const ok = await started();
-    ok.clock.t += 61_000;
-    await ok.service.get(C, APP.id, ok.task.id);
-    expect(ok.issues.requestWakeup).toHaveBeenCalledTimes(1);
   });
 });
 
