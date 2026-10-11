@@ -12,7 +12,39 @@ export interface PublishPreviewData {
   available: boolean;
   /** Absent from an older worker; treated as no connections. */
   connections?: { changed: boolean; list: PublishConnection[] };
+  /** Absent from an older worker; treated as no task templates. */
+  tasks?: { changed: boolean; list: PublishTask[] };
   sets: Array<{ key: string; table: string; fields: string[]; advisory: boolean; questions: Array<{ key: string; type: string; text: string }> }>;
+}
+
+export type PublishTaskInput = { type: "choice"; options: string[] } | { type: "number"; min: number | null; max: number | null } | { type: "text"; maxLength: number };
+
+export interface PublishTask {
+  key: string;
+  /** The agent the template will actually reach (as written when not found). */
+  agent: string;
+  agentFound: boolean;
+  /** Null unless the template writes. */
+  agentCanWrite: boolean | null;
+  title: string;
+  instructions: string;
+  table: string | null;
+  fields: string[];
+  inputs: Record<string, PublishTaskInput>;
+  writes: string[];
+  added: boolean;
+  changed: boolean;
+}
+
+export const tasksOf = (preview: PublishPreviewData): PublishTask[] => preview.tasks?.list ?? [];
+export const tasksChanged = (preview: PublishPreviewData): boolean => tasksOf(preview).length > 0 && preview.tasks?.changed === true;
+
+/** One input as the person reads it: `tone: friendly | formal`, `count: number 1–10`, `note: text ≤ 200`. */
+export function describeTaskInput(name: string, input: PublishTaskInput): string {
+  if (input.type === "choice") return `${name}: ${input.options.join(" | ")}`;
+  if (input.type === "text") return `${name}: text ≤ ${input.maxLength}`;
+  const range = input.min !== null && input.max !== null ? ` ${input.min}–${input.max}` : input.min !== null ? ` ≥ ${input.min}` : input.max !== null ? ` ≤ ${input.max}` : "";
+  return `${name}: number${range}`;
 }
 
 export interface PublishConnection {
@@ -65,8 +97,9 @@ export function sentFields(set: PublishPreviewData["sets"][number]): string[] {
  * set decides anything about people's lives unless it is advisory. Pure, so the unit suite can
  * render it without a host.
  */
-export function PublishDisclosure(props: { preview: PublishPreviewData; appName: string; confirmed: boolean; onConfirmedChange: (next: boolean) => void; connectionsConfirmed?: boolean; onConnectionsConfirmedChange?: (next: boolean) => void }) {
+export function PublishDisclosure(props: { preview: PublishPreviewData; appName: string; confirmed: boolean; onConfirmedChange: (next: boolean) => void; connectionsConfirmed?: boolean; onConnectionsConfirmedChange?: (next: boolean) => void; tasksConfirmed?: boolean; onTasksConfirmedChange?: (next: boolean) => void }) {
   const { preview, appName } = props;
+  const tasks = tasksOf(preview);
   const connections = connectionsOf(preview);
   const provider = providerName(preview.provider);
   return (
@@ -113,6 +146,39 @@ export function PublishDisclosure(props: { preview: PublishPreviewData; appName:
           )}
         </section>
       )}
+      {tasks.length > 0 && (
+        <section className="rounded border p-2" data-kyoube-tasks="">
+          <div className="font-medium">Tasks for agents</div>
+          <ul className="flex flex-col gap-2">
+            {tasks.map((task) => {
+              const mark = task.added ? "added" : task.changed ? "changed" : null;
+              return (
+                <li key={task.key} data-kyoube-task={task.key} {...(mark ? { "data-kyoube-changed": mark, className: "font-medium" } : {})}>
+                  <code>{task.key}</code> → {task.agentFound ? task.agent : <><span>{task.agent}</span> <span className="text-red-600">Agent not found</span></>}
+                  {mark && <span className="text-amber-700"> ({mark === "added" ? "new in this version" : "changed in this version"})</span>}
+                  <div className="font-normal text-foreground/80">
+                    <div className="break-all" data-kyoube-break="">{task.title}</div>
+                    <pre className="whitespace-pre-wrap break-words rounded bg-accent/30 p-1">{task.instructions}</pre>
+                    {task.table && <div>Sees: <code>{task.table}</code> ({task.fields.join(", ")})</div>}
+                    {Object.keys(task.inputs).length > 0 && <div>Inputs: {Object.entries(task.inputs).map(([name, input]) => describeTaskInput(name, input)).join("; ")}</div>}
+                    {task.writes.length > 0 && <div>May change: {task.writes.join(", ")}</div>}
+                    {task.agentCanWrite === false && <div className="text-amber-700">{task.agent} can't write Data yet. Ask an admin to give it write access, or its tasks will be refused.</div>}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          {preview.tasks?.changed && (
+            <>
+              <p className="text-foreground/70">This version adds or changes task templates, so it needs a person to publish it. Agents cannot.</p>
+              <label className="flex items-start gap-2" data-kyoube-confirm="">
+                <input type="checkbox" checked={props.tasksConfirmed === true} onChange={(event) => props.onTasksConfirmedChange?.(event.target.checked)} />
+                <span>These agents may be sent this work by anyone who can open the app</span>
+              </label>
+            </>
+          )}
+        </section>
+      )}
       {!preview.available && preview.sets.length > 0 && <p className="text-foreground/70">Typed decisions for apps are switched off for this company or no provider is set, so these sets will answer <code>disabled</code> until a company admin turns them on under Company Settings → Data access.</p>}
       {preview.changed && (
         <>
@@ -143,11 +209,14 @@ export function PublishDialog(props: { slug: string; appName: string; mode: "pub
   const [connectionsFor, setConnectionsFor] = useState<string | null>(null);
   const connectionsConfirmed = connectionsFor === shown;
   const needsConnections = connectionsChanged(props.preview);
+  const [tasksFor, setTasksFor] = useState<string | null>(null);
+  const tasksConfirmed = tasksFor === shown;
+  const needsTasks = tasksChanged(props.preview);
   const [busy, setBusy] = useState(false);
-  const ready = (!props.preview.changed || confirmed) && (!needsConnections || connectionsConfirmed);
+  const ready = (!props.preview.changed || confirmed) && (!needsConnections || connectionsConfirmed) && (!needsTasks || tasksConfirmed);
   const go = () => {
     setBusy(true);
-    const params = { slug: props.slug, version: props.preview.version, decisionsConfirmed: props.preview.changed && confirmed, ...(needsConnections && connectionsConfirmed ? { connectionsConfirmed: true } : {}) };
+    const params = { slug: props.slug, version: props.preview.version, decisionsConfirmed: props.preview.changed && confirmed, ...(needsConnections && connectionsConfirmed ? { connectionsConfirmed: true } : {}), ...(needsTasks && tasksConfirmed ? { tasksConfirmed: true } : {}) };
     (props.mode === "publish" ? publish(params) : rollback(params))
       .then(() => { toast({ title: props.mode === "publish" ? `Published v${props.preview.version}` : "Rolled back", tone: "success" }); props.onDone(); })
       .catch((err: unknown) => { toast({ title: errorText(err), tone: "error" }); })
@@ -156,7 +225,7 @@ export function PublishDialog(props: { slug: string; appName: string; mode: "pub
   return (
     <div className="flex flex-col gap-2 rounded border p-3 text-sm">
       <div className="font-medium">{props.mode === "publish" ? `Publish version ${props.preview.version}?` : `Roll back to version ${props.preview.version}?`}</div>
-      <PublishDisclosure preview={props.preview} appName={props.appName} confirmed={confirmed} onConfirmedChange={(next) => setConfirmedFor(next ? shown : null)} connectionsConfirmed={connectionsConfirmed} onConnectionsConfirmedChange={(next) => setConnectionsFor(next ? shown : null)} />
+      <PublishDisclosure preview={props.preview} appName={props.appName} confirmed={confirmed} onConfirmedChange={(next) => setConfirmedFor(next ? shown : null)} connectionsConfirmed={connectionsConfirmed} onConnectionsConfirmedChange={(next) => setConnectionsFor(next ? shown : null)} tasksConfirmed={tasksConfirmed} onTasksConfirmedChange={(next) => setTasksFor(next ? shown : null)} />
       <div className="flex gap-2">
         <button type="button" className={button} disabled={!ready || busy} onClick={go}>{props.mode === "publish" ? "Publish" : "Roll back"}</button>
         <button type="button" className={button} onClick={props.onCancel}>Cancel</button>

@@ -3,6 +3,7 @@ import type { PluginCompanySettingsPageProps } from "@paperclipai/plugin-sdk/ui"
 import { usePluginAction, usePluginToast } from "@paperclipai/plugin-sdk/ui";
 import { errorText } from "./format.js";
 import { button, input } from "./forms.js";
+import { AppTasksSection } from "./AppTasksSection.js";
 import { ConnectionsSection } from "./ConnectionsSection.js";
 import { DecisionsSettings } from "./DecisionsSettings.js";
 import { ensurePhoneStyles } from "./phone.js";
@@ -88,6 +89,7 @@ export function DataAccessSettingsPage({ context }: PluginCompanySettingsPagePro
             </table>
           </div>
           <ConnectionsSection />
+          <AppTasksSection />
           <DecisionsSettings companyId={companyId} />
         </>
       )}
