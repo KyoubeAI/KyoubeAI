@@ -150,6 +150,48 @@ describe("publishing task templates (Review Focus 4)", () => {
     await expect(apps.publish(C, OWNER, "t-ambiguous", undefined, { tasksConfirmed: true })).rejects.toMatchObject({ code: "invalid", message: expect.stringContaining("TWIN") });
   });
 
+  it("keeps a published version's agent id through a rename: rollback reaches the same agent", async () => {
+    AGENTS.push({ id: "agent-r1", name: "Renamer", status: "idle" });
+    await published("t-rename", { a: template({ agent: "Renamer" }) });
+    await apps.update(C, OWNER, "t-rename", manifest("t-rename", { a: template() }), SOURCE);
+    await apps.publish(C, OWNER, "t-rename", undefined, { tasksConfirmed: true });
+    expect(await taskStore.getTaskAgents(await versionId("t-rename", 2))).toEqual({ a: "agent-sb" });
+    AGENTS.find((agent) => agent.id === "agent-r1")!.name = "Renamed";
+    expect((await apps.rollback(C, OWNER, "t-rename", 1, { tasksConfirmed: true })).currentVersion).toBe(1);
+    expect(await taskStore.getTaskAgents(await versionId("t-rename", 1))).toEqual({ a: "agent-r1" });
+  });
+
+  it("carries an unchanged template's agent id forward, even when another agent now has its name", async () => {
+    AGENTS.push({ id: "agent-k1", name: "Keeper", status: "idle" });
+    await published("t-rebind", { a: template({ agent: "Keeper" }) });
+    AGENTS.find((agent) => agent.id === "agent-k1")!.name = "Keeper Old";
+    AGENTS.push({ id: "agent-k2", name: "Keeper", status: "idle" });
+    // A source-only change: an agent may publish it, and the template still reaches the agent a person confirmed.
+    await apps.update(C, AGENT, "t-rebind", manifest("t-rebind", { a: template({ agent: "Keeper" }) }), SOURCE.replace("<body>", "<body><!--v2-->"));
+    const preview = await apps.publishPreview(C, OWNER, "t-rebind");
+    expect(preview.tasks.list[0]).toMatchObject({ key: "a", agent: "Keeper Old", agentFound: true, added: false, changed: false });
+    expect((await apps.publish(C, AGENT, "t-rebind")).currentVersion).toBe(2);
+    expect(await taskStore.getTaskAgents(await versionId("t-rebind", 2))).toEqual({ a: "agent-k1" });
+    // A changed template is looked up by name again, after a person reviewed it.
+    await apps.update(C, OWNER, "t-rebind", manifest("t-rebind", { a: template({ agent: "Keeper", instructions: "Reply briefly." }) }), SOURCE);
+    expect((await apps.publishPreview(C, OWNER, "t-rebind")).tasks.list[0]).toMatchObject({ agent: "Keeper", agentFound: true, changed: true });
+    await apps.publish(C, OWNER, "t-rebind", undefined, { tasksConfirmed: true });
+    expect(await taskStore.getTaskAgents(await versionId("t-rebind", 3))).toEqual({ a: "agent-k2" });
+  });
+
+  it("refuses a stored or carried agent id whose agent is now terminated, naming the template and agent", async () => {
+    AGENTS.push({ id: "agent-d1", name: "Doomed", status: "idle" });
+    await published("t-term", { a: template({ agent: "Doomed" }) });
+    AGENTS.find((agent) => agent.id === "agent-d1")!.status = "terminated";
+    // Another live agent taking the name does not rescue the carried id.
+    AGENTS.push({ id: "agent-d2", name: "Doomed", status: "idle" });
+    await apps.update(C, AGENT, "t-term", manifest("t-term", { a: template({ agent: "Doomed" }) }), SOURCE.replace("<body>", "<body><!--v2-->"));
+    await expect(apps.publish(C, AGENT, "t-term")).rejects.toMatchObject({ code: "invalid", message: expect.stringMatching(/"a".*Doomed.*terminated/) });
+    expect((await apps.publishPreview(C, OWNER, "t-term")).tasks.list[0]).toMatchObject({ agentFound: false });
+    // Republishing version 1 itself reuses its stored id, with the same answer.
+    await expect(apps.publish(C, OWNER, "t-term", 1)).rejects.toMatchObject({ code: "invalid", message: expect.stringContaining("terminated") });
+  });
+
   it("refuses a template field the table does not have, at save and at publish", async () => {
     await expect(apps.create(C, OWNER, manifest("t-field", { draft_reply: template({ fields: ["subject", "nope"], writes: [] }) }), SOURCE))
       .rejects.toMatchObject({ code: "invalid", message: expect.stringMatching(/draft_reply.*nope/) });

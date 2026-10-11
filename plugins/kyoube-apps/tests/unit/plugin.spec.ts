@@ -164,6 +164,29 @@ describe("kyoube.apps manifest", () => {
     expect(manifest.capabilities).toContain("events.subscribe");
   });
 
+  it("never enumerates companies, during setup or any skill-install path", async () => {
+    // The worker never enumerates companies itself: a call made outside a host-issued invocation has
+    // no company scope, and the host refuses `skills.managed.reconcile` without one ("company context
+    // is required"). `companies.read` is declared only so that `taskUrl` can `companies.get` the
+    // invocation's own company for its issue prefix (docs/app-tasks.md).
+    let listed = 0;
+    const { harness, plugin } = await setup({
+      before: (h) => {
+        const list = h.ctx.companies.list.bind(h.ctx.companies);
+        h.ctx.companies.list = async (input) => { listed++; return list(input); };
+      },
+    });
+    await plugin.definition.onApiRequest?.(apiRequest({
+      routeKey: "skills.install", method: "POST", path: "/skills/install", body: { companyId: COMPANY },
+      actor: { actorType: "user", actorId: "admin-1", userId: "admin-1" }, companyId: COMPANY,
+    }));
+    await harness.getData("data.access", { companyId: OTHER_COMPANY, userId: "admin-1" });
+    await harness.emit("company.created", { id: "33333333-3333-4333-8333-333333333333", name: "Gamma" }, { companyId: "33333333-3333-4333-8333-333333333333" });
+    await harness.performAction("data.setup_company", {}, { actor: ADMIN, companyId: COMPANY });
+    expect((await harness.ctx.skills.managed.get("kyoube-data", OTHER_COMPANY)).status).toBe("resolved");
+    expect(listed).toBe(0);
+  });
+
   it("declares exactly what app tasks need, and never posting comments on issues (docs/app-tasks.md)", () => {
     expect(manifest.capabilities).toEqual(expect.arrayContaining([
       "issues.create", "issues.update", "issues.wakeup", "issue.comments.read", "authorization.policies.read", "companies.read",
