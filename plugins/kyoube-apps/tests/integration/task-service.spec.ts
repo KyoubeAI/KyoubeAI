@@ -114,12 +114,26 @@ describe("TaskService with the real store", () => {
     expect(await core.service.get(C, app.id, task.id)).toMatchObject({ id: task.id, status: "waiting", rowId: "r1", startedBy: { userId: "user-1" } });
   });
 
-  it("a refused wake-up stores the reason and get returns waiting with it", async () => {
-    const core = fakeCore({ wake: async () => { throw new Error("Agent is not invokable in its current state"); } });
+  it("a refused wake-up cancels the issue, closes the row and audits the start and the cancel", async () => {
+    const core = fakeCore({ ids: ["it-refused"], wake: async () => { throw new Error("Agent is not invokable in its current state"); } });
+    await expect(core.service.start(ctx(), RAW)).rejects.toMatchObject({ code: "disabled", message: "disabled: The agent is paused or not available right now. The task was cancelled; try again later." });
+    expect(core.updates).toEqual([{ issueId: "it-refused", status: "cancelled", actorUserId: "user-1" }]);
+    expect(core.issues.get("it-refused")!.status).toBe("cancelled");
+    expect((await store.get(C, app.id, "it-refused"))?.closed).toBe(true);
+    expect((await store.openRows(C, app.id)).map((r) => r.issueId)).not.toContain("it-refused");
+    const audit = await auditRows("it-refused");
+    expect(audit.rows.map((r) => r.operation)).toEqual(["app_task_start", "app_task_cancel"]);
+    expect(audit.rows[1]).toMatchObject({ actor_kind: "user", actor_id: "user-1" });
+    expect(audit.rows[1]!.details).toEqual({ app: "help-desk", appId: app.id, version: 1, template: "reply", agentId: "agent-1", issueId: "it-refused", via: "app@help-desk@1", reason: "wake_refused" });
+  });
+
+  it("a soft-skipped wake-up keeps the task waiting with its reason", async () => {
+    const core = fakeCore({ wake: async () => ({ queued: false, runId: null }) });
     const task = await core.service.start(ctx(), RAW);
-    expect(task).toMatchObject({ status: "waiting", waitingReason: "The agent is paused or not available right now." });
-    expect((await store.get(C, app.id, task.id))?.waitingReason).toBe("The agent is paused or not available right now.");
-    expect(await core.service.get(C, app.id, task.id)).toMatchObject({ status: "waiting", waitingReason: "The agent is paused or not available right now." });
+    expect(task).toMatchObject({ status: "waiting", waitingReason: "The agent will pick this up when the company's scheduling allows." });
+    expect((await store.get(C, app.id, task.id))?.waitingReason).toBe("The agent will pick this up when the company's scheduling allows.");
+    expect(await core.service.get(C, app.id, task.id)).toMatchObject({ status: "waiting", waitingReason: "The agent will pick this up when the company's scheduling allows." });
+    expect(core.wakes).toEqual([task.id]);
   });
 
   it("a row write that fails (duplicate issue id) cancels the new issue and never wakes it", async () => {

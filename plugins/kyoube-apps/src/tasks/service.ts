@@ -65,8 +65,6 @@ export const LIST_LIMIT = 50;
 /** Issues read at once by `list` and the open-task count. */
 const READ_CONCURRENCY = 10;
 const START_WINDOW_MS = 60_000;
-/** A task left waiting by a refused wake-up is woken again at most this often while the app follows it. */
-const WAKE_RETRY_MS = 60_000;
 const WAKE_REASON = "kyoube_app_task";
 const SCHEDULING_REASON = "The agent will pick this up when the company's scheduling allows.";
 
@@ -74,8 +72,9 @@ const forbidden = (message: string): DataError => new DataError("forbidden", mes
 const noTask = (): DataError => new DataError("not_found", "no task from this app has that id");
 
 /**
- * The person-facing reason for a refused wake-up. The core's own text can name blockers or budget
- * details, so it is never passed on: only these fixed sentences reach the app.
+ * The person-facing reason for a refused wake-up, which fails the start and cancels the task. The
+ * core's own text can name blockers or budget details, so it is never passed on: only these fixed
+ * sentences reach the app.
  */
 export function waitingReasonFor(error: unknown): string {
   const message = (error instanceof Error ? error.message : typeof error === "string" ? error : "").toLowerCase();
@@ -110,9 +109,6 @@ async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Prom
 }
 
 export class TaskService {
-  /** When `get` last tried to wake each waiting task (issue id → epoch ms). Per worker, best effort. */
-  private readonly lastWake = new Map<string, number>();
-
   constructor(private readonly deps: TaskServiceDeps) {}
 
   private now(): number {
@@ -151,6 +147,9 @@ export class TaskService {
     if (!agent || agent.status === "terminated" || agent.status === "pending_approval") {
       throw new DataError("disabled", `This app's agent '${template.agent}' no longer exists. Ask a person to republish it.`);
     }
+    // The core moves a waiting task for a paused agent to `blocked` within a minute and nothing brings
+    // it back on resume, so it is refused here rather than created to strand.
+    if (agent.status === "paused") throw new DataError("disabled", `${agent.name} is paused. Try again when it has been resumed.`);
     if (template.writes.length > 0 && !levelAllows(await deps.levelFor(companyId, { kind: "agent", id: agentId }), "write")) {
       throw forbidden(`Ask an admin to give ${agent.name} write access to Data.`);
     }
@@ -195,8 +194,17 @@ export class TaskService {
       throw error;
     }
 
-    // Only now that the row has committed may the agent see the task.
-    const waitingReason = await this.wake(companyId, issue.id, viewerId);
+    // Only now that the row has committed may the agent see the task. A refused wake-up (a budget
+    // block, a pause since the check above) cancels it: the core would strand it as `blocked`.
+    let woken: { queued: boolean };
+    try {
+      woken = await deps.issues.requestWakeup(issue.id, companyId, { reason: WAKE_REASON, actorUserId: viewerId });
+    } catch (error) {
+      await this.cancelRefused(inserted, viewer, app);
+      throw new DataError("disabled", `${waitingReasonFor(error)} The task was cancelled; try again later.`);
+    }
+    // A soft skip: the core's own scheduling picks the task up later, so it waits with that reason.
+    const waitingReason = woken.queued ? null : SCHEDULING_REASON;
     if (waitingReason !== null) await this.setReason(inserted, waitingReason);
     return {
       id: issue.id, template: ctx.templateKey, rowId: inserted.rowId, status: "waiting", waitingReason,
@@ -237,7 +245,6 @@ export class TaskService {
     await this.deps.issues.update(row.issueId, { status: "cancelled" }, row.companyId, { actorUserId: actorId });
     await this.deps.store.recordAudit(this.audit("app_task_cancel", row.companyId, actor, app, row.template, row.agentId, row.issueId, row.tableName));
     await this.close(row);
-    this.lastWake.delete(row.issueId);
     return {
       ...this.shape(row, issue, "cancelled", null, null, await this.deps.taskUrl(row.companyId, issue)),
       updatedAt: new Date(this.now()).toISOString(),
@@ -246,29 +253,31 @@ export class TaskService {
   }
 
   /** The audit row for a start or cancel: ids only, never row values, inputs or the filled text. */
-  private audit(operation: "app_task_start" | "app_task_cancel", companyId: string, actor: DataActor, app: { id: string; slug: string; version: number }, template: string, agentId: string, issueId: string, table: string | null): AuditEntry {
+  private audit(operation: "app_task_start" | "app_task_cancel", companyId: string, actor: DataActor, app: { id: string; slug: string; version: number }, template: string, agentId: string, issueId: string, table: string | null, extra: Record<string, unknown> = {}): AuditEntry {
     return {
       companyId, actor, operation, table,
-      details: { app: app.slug, appId: app.id, version: app.version, template, agentId, issueId, via: `app@${app.slug}@${app.version}` },
+      details: { app: app.slug, appId: app.id, version: app.version, template, agentId, issueId, via: `app@${app.slug}@${app.version}`, ...extra },
     };
   }
 
   /**
-   * Wakes the agent on a task and records why it did not start, if it didn't. Never throws: a refused
-   * wake-up leaves the task waiting in `todo`, and `get` tries again while the app follows it.
-   * Returns the waiting reason (null when a run was queued).
+   * Cancels a just-started task whose wake-up the core refused, as the viewer, and records that
+   * cancel. Never throws: the start fails either way. When the cancel itself fails the task stays
+   * open (and counted), and only the operator log says so.
    */
-  private async wake(companyId: string, issueId: string, userId: string): Promise<string | null> {
-    this.lastWake.set(issueId, this.now());
-    let reason: string | null;
+  private async cancelRefused(row: AppTaskRow, viewer: DataActor, app: { id: string; slug: string; version: number }): Promise<void> {
     try {
-      const result = await this.deps.issues.requestWakeup(issueId, companyId, { reason: WAKE_REASON, actorUserId: userId });
-      reason = result.queued ? null : SCHEDULING_REASON;
+      await this.deps.issues.update(row.issueId, { status: "cancelled" }, row.companyId, { actorUserId: row.startedBy });
     } catch (error) {
-      reason = waitingReasonFor(error);
+      this.log("app task issue not cancelled after its wake-up was refused", { companyId: row.companyId, appId: row.appId, issueId: row.issueId, error: String(error) });
+      return;
     }
-    if (reason === null) this.lastWake.delete(issueId);
-    return reason;
+    await this.close(row);
+    try {
+      await this.deps.store.recordAudit(this.audit("app_task_cancel", row.companyId, viewer, app, row.template, row.agentId, row.issueId, row.tableName, { reason: "wake_refused" }));
+    } catch (error) {
+      this.log("app task cancel not audited after its wake-up was refused", { companyId: row.companyId, appId: row.appId, issueId: row.issueId, error: String(error) });
+    }
   }
 
   /** Counts the app's open tasks from the issues themselves, caching the closed ones as closed. */
@@ -307,17 +316,6 @@ export class TaskService {
     const issue = await this.deps.issues.get(row.issueId, row.companyId);
     if (!issue) return null;
     const status = mapIssueStatus(issue.status);
-    let waitingReason = row.waitingReason;
-    if (issue.status === "todo" && waitingReason !== null) {
-      const last = this.lastWake.get(row.issueId);
-      if (last === undefined || this.now() - last >= WAKE_RETRY_MS) {
-        const reason = await this.wake(row.companyId, row.issueId, row.startedBy);
-        if (reason !== waitingReason) await this.setReason(row, reason);
-        waitingReason = reason;
-      }
-    } else {
-      this.lastWake.delete(row.issueId);
-    }
     let result: string | null = null;
     if (status === "done" || status === "needs_review") {
       const replies = (await this.deps.issues.listComments(row.issueId, row.companyId))
@@ -326,7 +324,7 @@ export class TaskService {
       result = resultText(replies[0]?.body);
     }
     if (!isOpenStatus(status)) await this.close(row);
-    return this.shape(row, issue, status, status === "waiting" ? waitingReason : null, result, await this.deps.taskUrl(row.companyId, issue));
+    return this.shape(row, issue, status, status === "waiting" ? row.waitingReason : null, result, await this.deps.taskUrl(row.companyId, issue));
   }
 
   private shape(row: AppTaskRow, issue: { updatedAt?: string | Date }, status: AppTaskStatus, waitingReason: string | null, result: string | null, url: string): AppTask {
