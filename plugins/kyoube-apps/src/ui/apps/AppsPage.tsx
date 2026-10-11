@@ -7,7 +7,7 @@ import { button, input } from "../forms.js";
 import { AppRunner } from "./AppRunner.js";
 import { PublishDialog, connectionsOf, type PublishPreviewData } from "./PublishDisclosure.js";
 import { appNameOf, ensurePhoneStyles } from "../phone.js";
-import { appErrorPayload, parseAppsPath } from "./bridge.js";
+import { appErrorPayload, parseAppsPath, taskPagePath, type TaskOp } from "./bridge.js";
 
 interface AppRecord { slug: string; name: string; description: string | null; icon: string | null; status: string; currentVersion: number | null; latestVersion: number }
 interface AppVersion { version: number; manifest: Record<string, unknown>; source: string; notes: string | null; createdAt: string }
@@ -92,14 +92,18 @@ function Runner(props: { companyId: string; userId: string | null; slug: string 
   const decide = usePluginAction("apps.decide");
   const outcome = usePluginAction("apps.decision_outcome");
   const connection = usePluginAction("apps.connection_call");
+  const taskStart = usePluginAction("apps.task_start");
+  const taskGet = usePluginAction("apps.task_get");
+  const taskList = usePluginAction("apps.task_list");
+  const taskCancel = usePluginAction("apps.task_cancel");
   const [state, setState] = useState<{ context: unknown; source: string } | null>(null);
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
   const [showSource, setShowSource] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   // Ruling P1-R15: both actions are read through refs so neither `load` nor
   // the effect below has to depend on an unstable function identity.
-  const actionsRef = useRef({ runtime, data, decide, outcome, connection });
-  actionsRef.current = { runtime, data, decide, outcome, connection };
+  const actionsRef = useRef({ runtime, data, decide, outcome, connection, taskStart, taskGet, taskList, taskCancel });
+  actionsRef.current = { runtime, data, decide, outcome, connection, taskStart, taskGet, taskList, taskCancel };
 
   const load = useCallback(() => {
     setError(null);
@@ -113,6 +117,22 @@ function Runner(props: { companyId: string; userId: string | null; slug: string 
   useEffect(() => { void load(); }, [load]);
 
   const reload = () => { setState(null); void load(); };
+
+  // App tasks: the bridge has already validated `params` and built it from the checked keys only;
+  // the slug is the page's own, never the frame's.
+  const onTask = (op: TaskOp, params: Record<string, unknown>): Promise<unknown> => {
+    const actions = actionsRef.current;
+    const action = op === "start" ? actions.taskStart : op === "get" ? actions.taskGet : op === "list" ? actions.taskList : actions.taskCancel;
+    return action({ ...params, slug: props.slug });
+  };
+  // `open` reads the task through the same gate as `get` (so another app's or company's id is
+  // `not_found`) and goes only to a host path; the url is the worker's, but it steers the top window.
+  const onTaskOpen = async (id: string): Promise<void> => {
+    const task = await actionsRef.current.taskGet({ slug: props.slug, id }) as { url?: unknown } | null;
+    const path = taskPagePath(task?.url);
+    if (!path) throw new Error("invalid: this task has no page to open");
+    navigation.navigate(path);
+  };
 
   return (
     <div className="flex h-full flex-col gap-2 p-4" data-kyoube-page="apps" data-kyoube-runner="">
@@ -144,6 +164,8 @@ function Runner(props: { companyId: string; userId: string | null; slug: string 
           onDecide={(set, input) => actionsRef.current.decide({ slug: props.slug, set, input })}
           onConnection={(name, request) => actionsRef.current.connection({ slug: props.slug, name, request })}
           onDecisionOutcome={(decisionId, question, value) => actionsRef.current.outcome({ slug: props.slug, decisionId, question, value })}
+          onTask={onTask}
+          onTaskOpen={onTaskOpen}
         />
       )}
     </div>

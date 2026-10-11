@@ -10,7 +10,13 @@ export type RoutedRequest =
   | { kind: "decide"; set: string; input: Record<string, unknown> }
   | { kind: "connection"; name: string; request: Record<string, unknown> }
   | { kind: "outcome"; decisionId: string; question: string; value: string | boolean }
+  | { kind: "task"; op: TaskOp; params: Record<string, unknown> }
+  | { kind: "taskOpen"; id: string }
+  | { kind: "taskWatch"; id: string; on: boolean }
   | { kind: "reject"; code: string; message: string };
+
+/** The task calls that become a plugin action (`apps.task_<op>`); open and watch are the host's own. */
+export type TaskOp = "start" | "get" | "list" | "cancel";
 
 /** Mirrors `APP_SLUG_RE` in `src/apps/manifest.ts` — the host side of the same rule. */
 const SLUG_RE = /^[a-z][a-z0-9-]{1,48}$/;
@@ -18,6 +24,18 @@ const SLUG_RE = /^[a-z][a-z0-9-]{1,48}$/;
 const DECISION_KEY_RE = /^[a-z][a-z0-9_]{0,39}$/;
 /** Mirrors `CONNECTION_NAME_RE` in `src/connections/config.ts` (not imported: that module is worker-only). */
 const CONNECTION_NAME_RE = /^[a-z][a-z0-9_-]{0,39}$/;
+/** Mirrors `TASK_KEY_RE` in `src/apps/manifest.ts` (template keys and input names; not imported: that module is worker-only). */
+const TASK_KEY_RE = /^[a-z][a-z0-9_]{0,39}$/;
+/** A task id: the issue's uuid, as the worker returns it. Nothing else can name a task. */
+const TASK_ID_RE = /^[A-Za-z0-9-]{1,100}$/;
+const MAX_ROW_ID = 100;
+/**
+ * The manifest's own ceilings on task inputs (src/apps/manifest.ts): at most 5 declared, every one
+ * required, a text value at most 200 characters and a choice option at most 100. Anything past
+ * them could never be a valid start, so it is refused here rather than carried to the worker.
+ */
+const MAX_TASK_INPUTS = 5;
+const MAX_TASK_INPUT_TEXT = 200;
 const MAX_TOAST_TITLE = 200;
 
 /**
@@ -99,6 +117,60 @@ export function isAppHello(request: KyoubeRequest): boolean {
   return request.method === "ui.toast" && request.params.__hello === true;
 }
 
+const isTaskId = (value: unknown): value is string => typeof value === "string" && TASK_ID_RE.test(value);
+const isRowId = (value: unknown): value is string => typeof value === "string" && value.length <= MAX_ROW_ID;
+
+/** `inputs` for a start: a plain object of at most 5 declared-looking names to a short string or a finite number. */
+function taskInputsError(inputs: unknown): string | null {
+  if (!isPlainObject(inputs)) return "task inputs must be an object";
+  const names = Object.keys(inputs);
+  if (names.length > MAX_TASK_INPUTS) return `a task takes at most ${MAX_TASK_INPUTS} inputs`;
+  for (const name of names) {
+    if (!TASK_KEY_RE.test(name)) return `"${name.slice(0, 40)}" is not a task input name`;
+    const value = inputs[name];
+    if (typeof value === "string" ? value.length > MAX_TASK_INPUT_TEXT : !(typeof value === "number" && Number.isFinite(value))) {
+      return `task input "${name}" must be text of at most ${MAX_TASK_INPUT_TEXT} characters or a number`;
+    }
+  }
+  return null;
+}
+
+/**
+ * The `tasks.*` methods. Every branch builds a fresh `params` from the keys it checked, so nothing
+ * the app adds alongside them travels on to the action.
+ */
+function routeTaskRequest(method: string, params: Record<string, unknown>): RoutedRequest {
+  const invalid = (message: string): RoutedRequest => ({ kind: "reject", code: "invalid", message });
+  switch (method) {
+    case "tasks.start": {
+      const { template, rowId, inputs } = params;
+      if (typeof template !== "string" || !TASK_KEY_RE.test(template)) return invalid("tasks.start needs the key of a task template the manifest declares");
+      if (rowId !== undefined && !isRowId(rowId)) return invalid(`rowId must be a string of at most ${MAX_ROW_ID} characters`);
+      if (inputs !== undefined) {
+        const reason = taskInputsError(inputs);
+        if (reason) return invalid(reason);
+      }
+      return { kind: "task", op: "start", params: { template, ...(rowId !== undefined ? { rowId } : {}), ...(inputs !== undefined ? { inputs } : {}) } };
+    }
+    case "tasks.list": {
+      const { template, rowId } = params;
+      if (template !== undefined && (typeof template !== "string" || !TASK_KEY_RE.test(template))) return invalid("tasks.list: template must be the key of a task template");
+      if (rowId !== undefined && !isRowId(rowId)) return invalid(`rowId must be a string of at most ${MAX_ROW_ID} characters`);
+      return { kind: "task", op: "list", params: { ...(template !== undefined ? { template } : {}), ...(rowId !== undefined ? { rowId } : {}) } };
+    }
+    default: {
+      const id = params.id;
+      if (!isTaskId(id)) return invalid(`${method} needs a task id`);
+      if (method === "tasks.get") return { kind: "task", op: "get", params: { id } };
+      if (method === "tasks.cancel") return { kind: "task", op: "cancel", params: { id } };
+      if (method === "tasks.open") return { kind: "taskOpen", id };
+      if (method === "tasks.watch") return { kind: "taskWatch", id, on: true };
+      if (method === "tasks.unwatch") return { kind: "taskWatch", id, on: false };
+      return invalid(`unknown method "${method}"`);
+    }
+  }
+}
+
 export function routeAppRequest(request: KyoubeRequest): RoutedRequest {
   // Before the method is even looked at: whatever this turns out to be, these
   // params are not going anywhere.
@@ -135,6 +207,7 @@ export function routeAppRequest(request: KyoubeRequest): RoutedRequest {
     if (raw !== undefined && !isPlainObject(raw)) return { kind: "reject", code: "invalid", message: "the connection request must be an object" };
     return { kind: "connection", name, request: raw ?? {} };
   }
+  if (request.method.startsWith("tasks.")) return routeTaskRequest(request.method, request.params);
   const method = request.method.startsWith("data.") ? request.method.slice("data.".length) : "";
   if (!DATA_METHODS.has(method)) return { kind: "reject", code: "invalid", message: `unknown method "${request.method}"` };
   return { kind: "data", method, params: request.params };
@@ -217,6 +290,10 @@ const MAX_NONCE_MISMATCHES = 3;
  * ten per window. A decision also takes one of the 60 requests; a reported outcome takes only that.
  * `connections` is a fourth ceiling: each call reaches an external service, so thirty per window,
  * on top of the 60.
+ * `taskStarts` is a fifth: each start hands an agent work (and spends its budget), so five per window,
+ * on top of the 60 and of the worker's own ten a minute per viewer. `watches` is not a rate but a
+ * ceiling on the tasks the host polls for one frame at once, and `openMs` the gap between two task
+ * opens — each takes the person's whole window somewhere else.
  *
  * The numbers are deliberately far above what a hand-written UI does and far
  * below what a loop does: 60 requests in 10 s is six a second — more than any
@@ -225,7 +302,9 @@ const MAX_NONCE_MISMATCHES = 3;
  * patience: an app that keeps hitting the ceiling for three windows running is
  * not busy, it is looping, and is stopped rather than served forever.
  */
-export const APP_BUDGET = { windowMs: 10_000, requests: 60, toasts: 5, decisions: 10, connections: 30, limitedWindows: 3 } as const;
+export const APP_BUDGET = { windowMs: 10_000, requests: 60, toasts: 5, decisions: 10, connections: 30, taskStarts: 5, watches: 10, openMs: 10_000, limitedWindows: 3 } as const;
+
+type SpendKind = "request" | "toast" | "decision" | "connection" | "taskStart";
 
 /**
  * The per-mount state the bridge keeps for one running app: the handshake
@@ -239,9 +318,15 @@ export interface AppGuard {
   /** True when `nonce` is this mount's. A mismatch is counted, and the third one stops the runner. */
   accepts(nonce: unknown): boolean;
   /** True when this call fits the frame's budget. A refusal is counted; three limited windows running stop the runner. */
-  spend(kind: "request" | "toast" | "decision" | "connection"): boolean;
+  spend(kind: SpendKind): boolean;
   /** True the first time this mount sees a connection answer `disabled`, so the person is told once. */
   firstDisabled(name: string): boolean;
+  /** True when `id` is watched now or may be: at most `APP_BUDGET.watches` live at once; an id already watched takes no second slot. */
+  watchStart(id: string): boolean;
+  /** Frees `id`'s slot — the app unwatched it, or the host's watcher ended it. Idempotent. */
+  watchEnd(id: string): void;
+  /** True when no task was opened in the last `APP_BUDGET.openMs`; a true answer counts as an open. */
+  openAllowed(): boolean;
   /** The reason this runner stopped, or null while it is still running. */
   stopped(): StopReason | null;
   /** Records a stop the runner decided on itself (a second frame load). Idempotent. */
@@ -254,8 +339,10 @@ export function createAppGuard(nonce: string, opts: { onStop: (reason: StopReaso
   let reason: StopReason | null = null;
   // The calls still inside the window, oldest first; never longer than the
   // budget itself, because a call over the ceiling is refused rather than kept.
-  const spent: Record<"request" | "toast" | "decision" | "connection", number[]> = { request: [], toast: [], decision: [], connection: [] };
+  const spent: Record<SpendKind, number[]> = { request: [], toast: [], decision: [], connection: [], taskStart: [] };
   const disabledSeen = new Set<string>();
+  const watched = new Set<string>();
+  let lastOpen: number | null = null;
   // The start of the window the last refusal fell in, and how many windows in a
   // row have had one.
   let limitedAt: number | null = null;
@@ -300,10 +387,25 @@ export function createAppGuard(nonce: string, opts: { onStop: (reason: StopReaso
       disabledSeen.add(name);
       return true;
     },
-    spend(kind: "request" | "toast" | "decision" | "connection"): boolean {
+    watchStart(id: string): boolean {
+      if (watched.has(id)) return true;
+      if (watched.size >= APP_BUDGET.watches) return false;
+      watched.add(id);
+      return true;
+    },
+    watchEnd(id: string): void {
+      watched.delete(id);
+    },
+    openAllowed(): boolean {
+      const at = now();
+      if (lastOpen !== null && at - lastOpen < APP_BUDGET.openMs) return false;
+      lastOpen = at;
+      return true;
+    },
+    spend(kind: SpendKind): boolean {
       const at = now();
       const times = spent[kind];
-      const max = kind === "request" ? APP_BUDGET.requests : kind === "toast" ? APP_BUDGET.toasts : kind === "connection" ? APP_BUDGET.connections : APP_BUDGET.decisions;
+      const max = kind === "request" ? APP_BUDGET.requests : kind === "toast" ? APP_BUDGET.toasts : kind === "connection" ? APP_BUDGET.connections : kind === "taskStart" ? APP_BUDGET.taskStarts : APP_BUDGET.decisions;
       while (times.length > 0 && at - times[0]! >= APP_BUDGET.windowMs) times.shift();
       if (times.length >= max) {
         refused(at);
@@ -338,6 +440,12 @@ export interface AppBridgeCallbacks {
   onConnection?: (name: string, request: Record<string, unknown>) => Promise<unknown>;
   /** What the person chose in a review lane (`apps.decision_outcome`). */
   onDecisionOutcome?: (decisionId: string, question: string, value: string | boolean) => Promise<unknown>;
+  /** `apps.task_<op>` with the routed params. Absent, the app is told tasks are not available here. */
+  onTask?: (op: TaskOp, params: Record<string, unknown>) => Promise<unknown>;
+  /** Takes the person to the task's page (after `get`, and only to a host path — see `taskPagePath`). */
+  onTaskOpen?: (id: string) => Promise<void>;
+  /** Starts (`on`) or stops the host's poll of one task for this frame; `AppRunner` owns the `TaskWatcher`. */
+  onWatch?: (id: string, on: boolean) => void;
   /** False once the runner has torn down, or once the app navigated its frame — nothing runs after that. */
   isLive: () => boolean;
   /** This mount's nonce and strike count (ruling P4-R18). */
@@ -365,6 +473,28 @@ const FRAME_ORIGIN = "*";
  */
 function postAppReady(target: AppMessageTarget, context: unknown): void {
   target.postMessage({ kyoube: KYOUBE_PROTOCOL, event: "ready", context }, FRAME_ORIGIN);
+}
+
+/**
+ * A watched task changed (`kyoube.tasks.watch`). Like the ready event it goes only to the app's own
+ * window — the runner calls this with its frame's `contentWindow`, and only while the runner is live
+ * — and carries only a task the app itself asked to watch, read through the same action as `get`.
+ */
+export function postTaskEvent(target: AppMessageTarget, task: Record<string, unknown>): void {
+  target.postMessage({ kyoube: KYOUBE_PROTOCOL, event: "task", task }, FRAME_ORIGIN);
+}
+
+/** A host path: one leading "/", then path characters only — no "//", "\", scheme, query, fragment or space. */
+const TASK_PAGE_RE = /^\/(?![/\\])[A-Za-z0-9._~/-]{0,500}$/;
+
+/**
+ * The task page `open` may navigate to, or null. The url comes from the worker (`/<prefix>/issues/
+ * <identifier>`, or `/issues/<uuid>`), but it is about to steer the person's top window, so it is
+ * held to a same-origin path anyway: "//host", "/\host" (which browsers read as "//host"), a
+ * scheme or anything else that could leave the host is refused.
+ */
+export function taskPagePath(url: unknown): string | null {
+  return typeof url === "string" && TASK_PAGE_RE.test(url) ? url : null;
 }
 
 /**
@@ -500,6 +630,58 @@ export async function handleAppMessage(event: AppMessageEvent, target: AppMessag
       } catch (error) {
         reply({ error: appErrorPayload(error) });
       }
+      return;
+    case "task": {
+      if (routed.op === "start" && !callbacks.guard.spend("taskStart")) {
+        reply({ error: { code: "limit", message: "limit: too many task starts" } });
+        return;
+      }
+      if (!callbacks.onTask) {
+        reply({ error: { code: "disabled", message: "disabled: app tasks are not available here" } });
+        return;
+      }
+      try {
+        reply({ result: await callbacks.onTask(routed.op, routed.params) });
+      } catch (error) {
+        reply({ error: appErrorPayload(error) });
+      }
+      return;
+    }
+    case "taskOpen":
+      if (!callbacks.guard.openAllowed()) {
+        reply({ error: { code: "limit", message: "limit: one task open per 10 seconds" } });
+        return;
+      }
+      if (!callbacks.onTaskOpen) {
+        reply({ error: { code: "disabled", message: "disabled: app tasks are not available here" } });
+        return;
+      }
+      try {
+        await callbacks.onTaskOpen(routed.id);
+        reply({ result: null });
+      } catch (error) {
+        reply({ error: appErrorPayload(error) });
+      }
+      return;
+    case "taskWatch":
+      if (!callbacks.onWatch) {
+        reply({ error: { code: "disabled", message: "disabled: app tasks are not available here" } });
+        return;
+      }
+      if (!routed.on) {
+        callbacks.guard.watchEnd(routed.id);
+        callbacks.onWatch(routed.id, false);
+        reply({ result: null });
+        return;
+      }
+      if (!callbacks.guard.watchStart(routed.id)) {
+        reply({ error: { code: "limit", message: `limit: at most ${APP_BUDGET.watches} watched tasks at once` } });
+        return;
+      }
+      // The polls that follow are the host's, outside this budget; the watcher ends them on its own
+      // at a final status or after 30 minutes, and the runner ends them all when it stops.
+      callbacks.onWatch(routed.id, true);
+      reply({ result: null });
       return;
     case "data":
       try {

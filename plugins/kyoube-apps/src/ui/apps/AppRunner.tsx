@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { appMountKey, createAppGuard, handleAppMessage, stopNotice, type AppGuard, type StopReason } from "./bridge.js";
+import { appMountKey, createAppGuard, handleAppMessage, postTaskEvent, stopNotice, type AppGuard, type StopReason, type TaskOp } from "./bridge.js";
 import { keepFrameFitted } from "./frame-height.js";
 import { buildSrcdoc, newAppNonce } from "./srcdoc.js";
+import { createTaskWatcher, type TaskWatcher } from "./task-watch.js";
 
 export interface AppRunnerProps {
   source: string;
@@ -12,6 +13,8 @@ export interface AppRunnerProps {
   onDecide?: (set: string, input: Record<string, unknown>) => Promise<unknown>;
   onConnection?: (name: string, request: Record<string, unknown>) => Promise<unknown>;
   onDecisionOutcome?: (decisionId: string, question: string, value: string | boolean) => Promise<unknown>;
+  onTask?: (op: TaskOp, params: Record<string, unknown>) => Promise<unknown>;
+  onTaskOpen?: (id: string) => Promise<void>;
 }
 
 /**
@@ -77,20 +80,40 @@ function AppFrame(props: AppRunnerProps) {
   const [stopped, setStopped] = useState<StopReason | null>(null);
   const stop = useCallback((reason: StopReason) => {
     // `live` is cleared synchronously, before React re-renders, so a message
-    // racing this is already refused.
+    // racing this is already refused. The task polls end here too, not only in
+    // the effect cleanup the re-render brings: a stopped runner polls nothing.
     live.current = false;
+    mount.current?.watcher.stopAll();
     setStopped(reason);
   }, []);
   // The nonce and the guard are minted once per mount and never recomputed:
   // `useMemo` is a hint React may discard, so they are held in a ref (lazily
   // initialised) instead. Both are keyed to this mount, and this component is
   // keyed on the app's identity — so a new document always gets a new pair.
-  const mount = useRef<{ nonce: string; guard: AppGuard } | null>(null);
+  // The task watcher belongs to the mount as well: its polls are for this
+  // frame's watches, and each one it ends frees that watch's slot in the guard.
+  const mount = useRef<{ nonce: string; guard: AppGuard; watcher: TaskWatcher } | null>(null);
   if (!mount.current) {
     const nonce = newAppNonce();
-    mount.current = { nonce, guard: createAppGuard(nonce, { onStop: stop }) };
+    const guard = createAppGuard(nonce, { onStop: stop });
+    const watcher = createTaskWatcher({
+      // The host's own polls (docs/app-tasks.md): `apps.task_get` through the same prop as the
+      // frame's `get`, outside the frame's budget.
+      poll: (id) => latest.current.onTask ? latest.current.onTask("get", { id }) : Promise.reject(new Error("disabled: app tasks are not available here")),
+      // Only into this runner's own frame, and only while it is live: an unmounted or stopped runner
+      // has already ended every watch, and this check covers a poll that resolves in between.
+      post: (task) => {
+        const target = frame.current?.contentWindow;
+        if (live.current && target) postTaskEvent(target, task);
+      },
+      onEnd: (id) => { guard.watchEnd(id); },
+      setInterval: (fn, ms) => window.setInterval(fn, ms),
+      clearInterval: (handle) => { window.clearInterval(handle as number); },
+      now: () => Date.now(),
+    });
+    mount.current = { nonce, guard, watcher };
   }
-  const guard = mount.current.guard;
+  const { guard, watcher } = mount.current;
   const srcdoc = useMemo(() => buildSrcdoc(props.source, __KYOUBE_APP_SDK__, mount.current!.nonce), [props.source]);
 
   useEffect(() => {
@@ -107,6 +130,9 @@ function AppFrame(props: AppRunnerProps) {
         onDecide: (set, input) => latest.current.onDecide ? latest.current.onDecide(set, input) : Promise.reject(new Error("disabled: typed decisions are not available here")),
         onConnection: (name, request) => latest.current.onConnection ? latest.current.onConnection(name, request) : Promise.reject(new Error("disabled: connections are not available here")),
         onDecisionOutcome: (decisionId, question, value) => latest.current.onDecisionOutcome ? latest.current.onDecisionOutcome(decisionId, question, value) : Promise.reject(new Error("disabled: typed decisions are not available here")),
+        onTask: (op, params) => latest.current.onTask ? latest.current.onTask(op, params) : Promise.reject(new Error("disabled: app tasks are not available here")),
+        onTaskOpen: (id) => latest.current.onTaskOpen ? latest.current.onTaskOpen(id) : Promise.reject(new Error("disabled: app tasks are not available here")),
+        onWatch: (id, on) => { if (on) watcher.start(id); else watcher.stop(id); },
         isLive: () => live.current,
         guard,
       });
@@ -115,8 +141,10 @@ function AppFrame(props: AppRunnerProps) {
     return () => {
       live.current = false;
       window.removeEventListener("message", handler);
+      // Unmount and stop both land here: no watch outlives the listener.
+      watcher.stopAll();
     };
-  }, [stopped, guard]);
+  }, [stopped, guard, watcher]);
 
   // The frame's height is measured, not styled — `frame-height.ts` says why
   // neither `h-full` nor a `min-h-[…]` class can size it under upstream's
