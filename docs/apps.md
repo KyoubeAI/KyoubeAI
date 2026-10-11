@@ -276,40 +276,47 @@ kyoube.tasks.watch(id, (task) => …)                 // → stop()
 ```
 
 - `kyoube.ready()` returns `tasks: { available, templates: [{ key, table, inputs, writes }] }`. Hide
-  the button when `available` is false.
+  the button when `available` is false. It means the installation supports tasks and this version
+  declares templates; it is not a per-viewer permission, so a start can still be refused.
 - `watch` calls back with the task now and whenever it changes. The host checks every 5 seconds and
   stops at `done` or `cancelled`, after 30 minutes, when the app closes, or when the task can no longer
-  be read (`not_found`, `forbidden` or `disabled`); passing failures are waited out. At most 10
-  watches per app. Call `stop()` when you no longer need one.
+  be read (`not_found`, `forbidden` or `disabled`); passing failures are waited out. That last stop
+  is silent, so keep showing the last status you saw. At most 10 watches per running app frame (one
+  page showing the app). Call `stop()` when you no longer need one.
 - `result` is the agent's latest reply for `done` and `needs_review`, plain text of at most 20,000
   characters, else `null`. **Show it with `textContent`, never `innerHTML`.** The agent wrote it.
 - When the task is `done`, **re-read the data**: the agent wrote the rows with its own access.
-- A paused or over-budget agent leaves the task `waiting` with a `waitingReason`; while the app
-  follows it, the wake-up is retried at most once a minute, so it starts once the agent is resumed.
+- A paused agent is refused at `start` (`disabled`). If the core refuses to wake the agent once the
+  task exists (over budget, paused a moment earlier), the task is cancelled and `start` fails with
+  `disabled` and the reason. When the core only puts the wake-up off, the task stays `waiting` with a
+  `waitingReason` and the core starts it later.
 - `cancel` cannot stop a run already in progress. `runMayContinue: true` means the agent was working and
   its writes may still land; tell the person. If recording the cancel fails the app gets an error
   although the task is already cancelled, so re-read it with `get`.
 - Errors are `kyoube.Error`: `forbidden` (the viewer can only read Data and the template writes, the
   agent cannot write Data, the core's assignment rule refuses this person that agent, or a cancel by
   someone who is neither the starter nor an admin), `invalid` (row or inputs), `not_found`,
-  `disabled` (the agent no longer exists; a person must republish), `limit` (10 starts a minute per
-  person per app, 25 open tasks per app, 5 `tasks.start` per 10 seconds) and `conflict` (cancelling a
-  task that is already finished).
+  `disabled` (the agent no longer exists and a person must republish, the agent is paused, or the
+  core refused to wake it and the task was cancelled; the message says which), `limit` (10 starts a
+  minute per person per app, 25 open tasks per app, 5 `tasks.start` per 10 seconds) and `conflict`
+  (cancelling a task that is already finished).
 - Only people start or cancel tasks. On core 2026.1005.0 a member with the core `viewer` role cannot
   run apps at all.
 
 A version that adds a template or changes any part of one needs a person to publish it
-(`tasksConfirmed: true`; without it the publish fails with `invalid`). An agent cannot publish or roll
-back to such a version. Removing a template needs no confirmation. The named agent needs Data write
-access for the fields in `writes`: the publish dialog warns, and tasks are refused until an admin
-grants it.
+(`tasksConfirmed: true`; without it the publish fails with `invalid`), and so does one that would send
+a template's work to a different agent than the current published version does (for example a
+rollback to a version published for another agent). An agent cannot publish or roll back to such a
+version. Removing a template needs no confirmation. The named agent needs Data write access for the
+fields in `writes`: the publish dialog warns, and tasks are refused until an admin grants it.
 
 ### Example: a ticket list with a "Draft reply" button
 
 The manifest is the `draft_reply` template above plus
 `"tables": [ { "name": "tickets", "access": "readwrite" } ]` (the table has `subject`, `body` and
 `reply_draft` text fields). The app lists tickets, starts the task for one, follows it, shows the reply
-and reloads the row when the task is done.
+and reloads the row when the task is done. When the agent needs a person or is blocked, it offers the
+task page and lets the person send the ticket again.
 
 ```html
 <!doctype html>
@@ -323,11 +330,12 @@ and reloads the row when the task is done.
 const note = document.getElementById("note");
 const rowsEl = document.getElementById("rows");
 const stops = new Map();                  // ticket id → stop() for its watch
+const tasks = new Map();                  // ticket id → the last task seen for it
 let canTask = false;
 
 const MESSAGES = {
   forbidden: "You can't ask this agent to do that.",
-  disabled: "This app's agent is gone. Ask a person to republish the app.",
+  disabled: "The agent can't take this right now (it may be paused, over its budget or gone). Try again later, or ask a company admin.",
   limit: "Too many requests. Wait a minute.",
   invalid: "That ticket can't be sent.",
   not_found: "That ticket no longer exists.",
@@ -346,7 +354,10 @@ function rowEl(r) {
   const action = document.createElement("td");
   const button = document.createElement("button"); button.textContent = "Draft reply"; button.disabled = !canTask;
   button.addEventListener("click", () => draft(r.id, button));
-  action.append(button);
+  // The task page, once there is a task: where the person answers the agent or checks on it.
+  const open = document.createElement("button"); open.className = "open"; open.textContent = "Open task"; open.hidden = !tasks.has(r.id);
+  open.addEventListener("click", () => { const t = tasks.get(r.id); if (t) kyoube.tasks.open(t.id).catch(fail); });
+  action.append(button, open);
   tr.append(subject, reply, action);
   return tr;
 }
@@ -358,9 +369,15 @@ async function load() {
 }
 
 const LABELS = { waiting: "Waiting for the agent", working: "The agent is working", needs_review: "The agent needs a person", blocked: "The agent is blocked", done: "Done", cancelled: "Cancelled" };
+// The last status seen stays on screen: a watch stops without a word after 30 minutes or when the
+// task can no longer be read, so the line says when it was last updated and "Open task" shows the rest.
 function show(id, task) {
-  const el = rowFor(id)?.querySelector(".status");
-  if (el) el.textContent = LABELS[task.status] + (task.waitingReason ? " (" + task.waitingReason + ")" : "");
+  tasks.set(id, task);
+  const row = rowFor(id);
+  const el = row?.querySelector(".status");
+  if (el) el.textContent = LABELS[task.status] + (task.waitingReason ? " (" + task.waitingReason + ")" : "") + " · updated " + new Date(task.updatedAt).toLocaleTimeString();
+  const open = row?.querySelector(".open");
+  if (open) open.hidden = false;
 }
 
 async function draft(ticketId, button) {
@@ -380,7 +397,8 @@ async function draft(ticketId, button) {
           const status = rowFor(ticketId)?.querySelector(".status");
           if (status && t.result) status.textContent = "Agent's reply: " + t.result;   // textContent, never innerHTML
         } catch (err) { fail(err); }
-      } else if (t.status === "cancelled") {
+      } else if (t.status === "cancelled" || t.status === "needs_review" || t.status === "blocked") {
+        // The agent stopped short: the person can answer it on the task page, or send the ticket again.
         button.disabled = !canTask;
       }
     }));
@@ -392,7 +410,7 @@ async function draft(ticketId, button) {
 
 kyoube.ready().then((ctx) => {
   canTask = ctx.tasks.available && ctx.tasks.templates.some((t) => t.key === "draft_reply");
-  if (!canTask) note.textContent = "Drafting replies is not available to you right now.";
+  if (!canTask) note.textContent = "Drafting replies is not available in this app.";
   return load();
 }).catch(fail);
 </script>

@@ -396,15 +396,22 @@ task as a normal task and acts with its own access.
 - **A person decides what an app may ask.** A version that adds a template or changes any part of one
   must be published by a person who sees the agent, the exact title and instructions, the table and
   fields and the inputs (`tasksConfirmed`). Agents cannot publish or roll back to such a version. A
-  published version keeps the agent ids it was published with, so a rename cannot redirect a template;
-  names are looked up only when a template is added or changed.
+  published version keeps the agent ids it was published with, written in the same transaction as the
+  publish, so a rename cannot redirect a template; names are looked up only when a template is added
+  or changed, or when the agent it reaches would change, which also needs a person. A rollback to a
+  version with the same text but another agent, or a publish over a version with no agent recorded,
+  is held to the same rule.
 - **Prompt injection from Data.** Row values and inputs reach the agent in one labelled JSON block
   inside a `json` fence. Values are JSON-encoded, each cut to 2,000 characters, the block to 16,000
   (`"_cut": true` when anything was cut), and any run of three or more backticks is broken up, so a
   value cannot close the fence or add a heading. Inputs are typed and short. Row values also reach the
-  title and instructions through `{{row.x}}` placeholders, flattened to one line, with braces removed,
-  fence runs broken and cut to 200 characters. Template authors should put row placeholders in the
-  middle of a sentence.
+  title and instructions through `{{row.x}}` placeholders, flattened to one line (every line break,
+  U+2028 and U+2029 included), with braces removed, fence runs broken and cut to 200 characters.
+  Outside the data block the agent reads only text a person confirmed (the template's title and
+  instructions and the fixed sections), the app's slug, version and template key, and those placeholder
+  copies; the app's display name, which an agent can change, is not sent. Template authors should put
+  row placeholders in the middle of a sentence. Residual: a placeholder copy is still up to 200
+  characters of row text in the instructions.
 - **Data shared with the agent** is the declared fields of one row the person can read, and typed
   inputs. The instructions are fixed text a person confirmed.
 - **Residual: a row value can still try to persuade the agent.** A hostile value inside the data block
@@ -417,7 +424,9 @@ task as a normal task and acts with its own access.
 - **The result is untrusted text.** The agent's reply reaches the app as plain text of at most 20,000
   characters; an app must show it with `textContent`.
 - **Spam.** 10 starts a minute per person per app, 25 open tasks per app, 5 `tasks.start` per 10
-  seconds per frame, 10 watches per frame, and the core's own budget checks on wake-ups.
+  seconds per frame, 10 watches per frame, and the core's own budget checks on wake-ups. A start for a
+  paused agent is refused; one whose wake-up the core refuses is cancelled at once (audited as
+  `app_task_cancel` with `reason: "wake_refused"`), so refused work never sits in the agent's queue.
 - **Every start and cancel is audited without contents** (`app_task_start`, `app_task_cancel`: app,
   version, template, agent and task id; never row values or inputs). The core's activity log records
   the person and the plugin on creation.

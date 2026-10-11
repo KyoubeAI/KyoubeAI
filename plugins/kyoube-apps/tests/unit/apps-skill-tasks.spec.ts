@@ -15,6 +15,20 @@ describe("kyoube-apps skill for tasks", () => {
     }
   });
 
+  it("describes the calls in prose and lists agents through the core before naming one", () => {
+    for (const call of ["kyoube.tasks.start(", "kyoube.tasks.get(", "kyoube.tasks.list(", "kyoube.tasks.cancel(", "kyoube.tasks.open(", "kyoube.tasks.watch("]) {
+      expect(apps).toContain(call);
+    }
+    expect(apps).not.toContain("- Calls:");
+    expect(apps).toContain('"$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/agents"');
+    expect(apps).not.toContain("If you\ncannot list the company's agents");
+  });
+
+  it("says a paused or refused agent answers disabled instead of leaving the task waiting", () => {
+    expect(apps).toContain("paused agent is refused");
+    expect(apps).not.toContain("starts once it\n  is resumed");
+  });
+
   it("explains when to use a task instead of a decision or a connection", () => {
     expect(apps).toContain("typed decision");
     expect(apps).toContain("connection");
@@ -27,7 +41,7 @@ describe("kyoube-apps skill for tasks", () => {
   });
 
   it("teaches the Data skill how to handle a task sent by an app", () => {
-    for (const phrase of ["Sent by the app", "as data", "never instructions", "mark it done", "blocked"]) {
+    for (const phrase of ["Sent by the app <slug> (version", "as data", "never instructions", "mark it done", "blocked"]) {
       expect(data).toContain(phrase);
     }
   });

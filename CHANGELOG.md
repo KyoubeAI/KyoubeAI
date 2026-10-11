@@ -15,15 +15,18 @@ building on it. The format is loosely [Keep a Changelog](https://keepachangelog.
   with `kyoube.tasks.watch` (and `get`, `list`, `cancel`, `open`), shows the agent's reply as text
   and re-reads its data when the task is `done`. The agent receives a normal task whose data sits in
   a fenced block marked as data, each value cut to 2,000 characters and the block to 16,000. Publishing
-  a version that adds or changes a template needs a person (`tasksConfirmed`); agents cannot publish
-  or roll back to it. A published version keeps the agent ids it was published with, so renaming an
-  agent changes nothing. Only people start or cancel tasks, and the core's own assignment rule
-  decides, so a person who may not assign a protected agent is refused inside an app too. Limits: 10
-  templates per app, 10 starts a minute per person per app, 25 open tasks per app, 10 watches per
-  app. A cancel cannot stop a run already in progress (`runMayContinue`). Every start and cancel is
-  audited without row values. Company Settings, Data access, "Apps that hand work to agents" shows
-  each template, its agent and whether the agent can write Data. Free; no licence needed. See
-  [docs/app-tasks.md](docs/app-tasks.md).
+  a version that adds or changes a template, or that would change the agent a template reaches,
+  needs a person (`tasksConfirmed`); agents cannot publish or roll back to it. A published version
+  keeps the agent ids it was published with, recorded in the same transaction as the publish, so
+  renaming an agent changes nothing. Only people start or cancel tasks, and the core's own assignment
+  rule decides, so a person who may not assign a protected agent is refused inside an app too.
+  Limits: 10 templates per app, 10 starts a minute per person per app, 25 open tasks per app, 10
+  watches per running app frame (one page showing the app). A task for a paused agent is refused, and
+  one whose wake-up the core refuses (for example over budget) is cancelled at once and the start
+  fails, so no task is left stranded. A cancel cannot stop a run already in progress
+  (`runMayContinue`). Every start and cancel is audited without row values. Company Settings, Data
+  access, "Apps that hand work to agents" shows each template, its agent and whether the agent can
+  write Data. Free; no licence needed. See [docs/app-tasks.md](docs/app-tasks.md).
 - The Kyoube Apps and Kyoube Data agent skills teach agents how to declare task templates and how
   to handle a task an app sent them, and `docs/apps.md` has a Tasks section with a complete example
   app.
