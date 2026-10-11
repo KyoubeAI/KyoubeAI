@@ -484,8 +484,11 @@ export function postTaskEvent(target: AppMessageTarget, task: Record<string, unk
   target.postMessage({ kyoube: KYOUBE_PROTOCOL, event: "task", task }, FRAME_ORIGIN);
 }
 
-/** A host path: one leading "/", then path characters only — no "//", "\", scheme, query, fragment or space. */
-const TASK_PAGE_RE = /^\/(?![/\\])[A-Za-z0-9._~/-]{0,500}$/;
+/**
+ * Exactly the two shapes the worker builds: `/<prefix>/issues/<identifier or id>` or `/issues/<uuid>`.
+ * No dots, so no "." or ".." segment can turn into "//host" once the browser resolves it.
+ */
+const TASK_PAGE_RE = /^\/[A-Za-z0-9_-]{1,100}\/issues\/[A-Za-z0-9_-]{1,100}$|^\/issues\/[0-9a-f-]{36}$/;
 
 /**
  * The task page `open` may navigate to, or null. The url comes from the worker (`/<prefix>/issues/

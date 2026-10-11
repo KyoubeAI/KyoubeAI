@@ -38,7 +38,13 @@ const agentRow = (id: string, name: string, status: string) => ({ id, companyId:
 async function setup(level = "read") {
   const harness = createTestHarness({ manifest });
   harness.seed({ accessMembers: [member("admin-1", "admin"), member("member-1", "operator")], agents: [agentRow("agent-1", "Ada", "idle"), agentRow("agent-2", "Bobby", "idle"), agentRow("agent-9", "Zed", "terminated")] as never });
-  const service = { levelFor: async () => { if (level === "throw") throw new Error("no access"); return level; }, scope: async () => {}, attach: () => {}, myAccess: async () => ({ level }) };
+  const service = {
+    levelFor: async (_c: string, actor: { kind: string }) => {
+      if (level === "throw" || (level === "agent-throws" && actor.kind === "agent")) throw new Error("no access");
+      return level === "agent-throws" ? "read" : level;
+    },
+    scope: async () => {}, attach: () => {}, myAccess: async () => ({ level }),
+  };
   const plugin = createAppsPlugin({
     loadKyoubeConfig: async () => KYOUBE_CONFIG,
     migrationsDir: "/nowhere",
@@ -105,5 +111,16 @@ describe("connections admin actions", () => {
     const { run } = await setup("write");
     const result = (await run("tasks.overview", {}, ADMIN)) as Array<{ templates: Array<{ key: string; status: string }> }>;
     expect(result[0]!.templates.find((t) => t.key === "fix")!.status).toBe("ready");
+  });
+
+  it("tasks.overview keeps the app when one template's agent access can't be read, reporting that agent as unable to write", async () => {
+    const { run } = await setup("agent-throws");
+    const result = (await run("tasks.overview", {}, ADMIN)) as Array<{ slug: string; templates: Array<{ key: string; status: string }> }>;
+    expect(result.map((row) => row.slug)).toEqual(["pay"]);
+    expect(result[0]!.templates.map(({ key, status }) => ({ key, status }))).toEqual([
+      { key: "fix", status: "agent_cannot_write" },
+      { key: "gone", status: "agent_missing" },
+      { key: "plain", status: "ready" },
+    ]);
   });
 });
