@@ -138,13 +138,20 @@ export class AppStore {
    * thing that changes what a viewer sees, so it is the only thing that
    * renames an app — and a rollback, which lands here too, carries the older
    * name, description and icon back with the version it restores.
+   *
+   * `taskAgents`, when given, is the version's template → agent id mapping (null clears it). It is
+   * written in the same transaction, so a version never becomes current without the agents a person
+   * confirmed for it: a failed write rolls the whole publish back.
    */
-  async setCurrent(companyId: string, slug: string, version: number, audit?: AuditPlan<AppRecord>): Promise<AppRecord> {
+  async setCurrent(companyId: string, slug: string, version: number, audit?: AuditPlan<AppRecord>, taskAgents?: Record<string, string> | null): Promise<AppRecord> {
     const app = await this.require(companyId, slug);
     return this.run(() => withMeta(this.pool, async (client) => {
       const target = await client.query<{ manifest: AppManifest }>("SELECT manifest FROM kyoube_meta.app_versions WHERE app_id = $1 AND version = $2", [app.id, version]);
       const manifest = target.rows[0]?.manifest;
       if (!manifest) throw new DataError("not_found", `app "${slug}" has no version ${version}`);
+      if (taskAgents !== undefined) {
+        await client.query("UPDATE kyoube_meta.app_versions SET task_agents = $3::jsonb WHERE app_id = $1 AND version = $2", [app.id, version, taskAgents === null ? null : JSON.stringify(taskAgents)]);
+      }
       const result = await client.query<AppRow>(
         `UPDATE kyoube_meta.apps SET current_version = $2, status = 'published', name = $3, description = $4, icon = $5, updated_at = now() WHERE id = $1 RETURNING ${APP_COLUMNS}`,
         [app.id, version, manifest.name, manifest.description, manifest.icon],

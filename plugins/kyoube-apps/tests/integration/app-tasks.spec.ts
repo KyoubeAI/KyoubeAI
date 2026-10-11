@@ -202,18 +202,61 @@ describe("publishing task templates (Review Focus 4)", () => {
     await expect(apps.publish(C, OWNER, "t-later", undefined, { tasksConfirmed: true })).rejects.toMatchObject({ code: "invalid", message: expect.stringContaining("x") });
   });
 
-  it("reports a failed task_agents write after the publish committed, and a retry writes it", async () => {
-    await apps.create(C, OWNER, manifest("t-retry", { draft_reply: template() }), SOURCE);
-    const failing = new AppService({
-      pool: db.pool, data, tasks: fakeTasks,
-      taskStore: { getTaskAgents: (id) => taskStore.getTaskAgents(id), setTaskAgents: async () => { throw new Error("db down"); } },
-      agents: { list: async () => AGENTS },
-    });
-    await expect(failing.publish(C, OWNER, "t-retry", undefined, { tasksConfirmed: true })).rejects.toThrow("db down");
-    expect((await apps.get(C, OWNER, "t-retry")).app.currentVersion).toBe(1);
-    // The same version is now current, so retrying needs no new confirmation and rewrites the mapping.
-    expect((await apps.publish(C, OWNER, "t-retry", 1)).currentVersion).toBe(1);
-    expect(await taskStore.getTaskAgents(await versionId("t-retry", 1))).toEqual({ draft_reply: "agent-sb" });
+  it("rolls the publish back when the agent mapping cannot be written: the version is not made current", async () => {
+    const created = await apps.create(C, OWNER, manifest("t-atomic", { draft_reply: template() }), SOURCE);
+    await db.pool.query("CREATE FUNCTION kyoube_meta.test_refuse_task_agents() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'task_agents write refused'; END $$");
+    await db.pool.query(`CREATE TRIGGER test_refuse_task_agents BEFORE UPDATE OF task_agents ON kyoube_meta.app_versions FOR EACH ROW WHEN (NEW.app_id::text = '${created.app.id}') EXECUTE FUNCTION kyoube_meta.test_refuse_task_agents()`);
+    try {
+      await expect(apps.publish(C, OWNER, "t-atomic", undefined, { tasksConfirmed: true })).rejects.toThrow("task_agents write refused");
+    } finally {
+      await db.pool.query("DROP TRIGGER test_refuse_task_agents ON kyoube_meta.app_versions");
+      await db.pool.query("DROP FUNCTION kyoube_meta.test_refuse_task_agents()");
+    }
+    expect((await apps.get(C, OWNER, "t-atomic")).app).toMatchObject({ status: "draft", currentVersion: null });
+    expect(await taskStore.getTaskAgents(await versionId("t-atomic", 1))).toBeNull();
+    const audit = await db.pool.query("SELECT 1 FROM kyoube_meta.audit WHERE company_id = $1 AND operation = 'app_publish' AND details->>'app' = 't-atomic'", [C]);
+    expect(audit.rowCount).toBe(0);
+  });
+
+  it("needs a person when the current version's templates have no recorded agent, even for unchanged text", async () => {
+    await published("t-unmapped", { draft_reply: template() });
+    // A version made current with no mapping (as an older build could leave it): no agent may pick one by name.
+    await taskStore.setTaskAgents(await versionId("t-unmapped", 1), null);
+    await apps.update(C, AGENT, "t-unmapped", manifest("t-unmapped", { draft_reply: template() }), SOURCE.replace("<body>", "<body><!--v2-->"));
+    await expect(apps.publish(C, AGENT, "t-unmapped", undefined, { tasksConfirmed: true })).rejects.toMatchObject({ code: "forbidden", message: expect.stringContaining("task templates") });
+    await expect(apps.publish(C, AGENT, "t-unmapped", 1)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(apps.publish(C, OWNER, "t-unmapped")).rejects.toMatchObject({ code: "invalid", message: expect.stringContaining("tasksConfirmed") });
+    const preview = await apps.publishPreview(C, OWNER, "t-unmapped");
+    expect(preview.tasks.changed).toBe(true);
+    expect(preview.tasks.list[0]).toMatchObject({ key: "draft_reply", agent: "Support Bot", added: false, changed: true });
+    expect((await apps.publish(C, OWNER, "t-unmapped", undefined, { tasksConfirmed: true })).currentVersion).toBe(2);
+    expect(await taskStore.getTaskAgents(await versionId("t-unmapped", 2))).toEqual({ draft_reply: "agent-sb" });
+    const audit = await db.pool.query("SELECT details FROM kyoube_meta.audit WHERE company_id = $1 AND operation = 'app_publish' AND details->>'app' = 't-unmapped' ORDER BY id DESC LIMIT 1", [C]);
+    expect(audit.rows[0]!.details).toMatchObject({ version: 2, tasksConfirmed: true });
+  });
+
+  it("needs a person to roll back to the same template text when it reaches a different agent", async () => {
+    AGENTS.push({ id: "agent-s1", name: "Switch", status: "idle" });
+    const v1 = { a: template({ agent: "Switch" }) };
+    await published("t-switch", v1);
+    AGENTS.find((agent) => agent.id === "agent-s1")!.name = "Switch Old";
+    AGENTS.push({ id: "agent-s2", name: "Switch", status: "idle" });
+    // Version 2 changes the text and version 3 restores it: each is looked up by name, reaching agent-s2.
+    await apps.update(C, OWNER, "t-switch", manifest("t-switch", { a: template({ agent: "Switch", instructions: "Reply briefly." }) }), SOURCE);
+    await apps.publish(C, OWNER, "t-switch", undefined, { tasksConfirmed: true });
+    await apps.update(C, OWNER, "t-switch", manifest("t-switch", v1), SOURCE);
+    await apps.publish(C, OWNER, "t-switch", undefined, { tasksConfirmed: true });
+    expect(await taskStore.getTaskAgents(await versionId("t-switch", 3))).toEqual({ a: "agent-s2" });
+    // Version 1 has the same text as version 3 but keeps agent-s1: rolling back changes who gets the work.
+    await expect(apps.rollback(C, AGENT, "t-switch", 1, { tasksConfirmed: true })).rejects.toMatchObject({ code: "forbidden", message: expect.stringContaining("task templates") });
+    await expect(apps.rollback(C, OWNER, "t-switch", 1)).rejects.toMatchObject({ code: "invalid", message: expect.stringContaining("tasksConfirmed") });
+    const preview = await apps.publishPreview(C, OWNER, "t-switch", 1);
+    expect(preview.tasks.changed).toBe(true);
+    expect(preview.tasks.list[0]).toMatchObject({ key: "a", agent: "Switch Old", added: false, changed: true });
+    expect((await apps.rollback(C, OWNER, "t-switch", 1, { tasksConfirmed: true })).currentVersion).toBe(1);
+    expect(await taskStore.getTaskAgents(await versionId("t-switch", 1))).toEqual({ a: "agent-s1" });
+    // Republishing the current version reaches the same agent: no change, so an agent may.
+    expect((await apps.publish(C, AGENT, "t-switch", 1)).currentVersion).toBe(1);
   });
 
   it("refuses to publish templates when the installation has no task support", async () => {

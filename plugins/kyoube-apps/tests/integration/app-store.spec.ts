@@ -115,4 +115,21 @@ describe("AppStore", () => {
     await expect(store.setStatus(C, "audited", "archived", () => { throw new Error("audit exploded"); })).rejects.toThrow("audit exploded");
     expect((await store.get(C, "audited"))?.status).toBe("published");
   });
+
+  it("writes a version's task agents in the publish's own transaction", async () => {
+    const entry = (operation: string): AuditEntry => ({ companyId: C, actor: { kind: "user", id: "u1", runId: null }, operation, table: null, details: { app: "mapped" } });
+    const created = await store.create(C, validateAppManifest({ name: "Mapped", slug: "mapped", tables: [] }), "<html>v1</html>", by);
+    const agents = async () => (await db.pool.query<{ task_agents: unknown }>("SELECT task_agents FROM kyoube_meta.app_versions WHERE id = $1", [created.version.id])).rows[0]!.task_agents;
+    // An audit row Postgres refuses rolls the mapping back with the publish.
+    await expect(store.setCurrent(C, "mapped", 1, () => ({ ...entry("x"), operation: null as unknown as string }), { a: "agent-1" })).rejects.toThrow();
+    expect(await agents()).toBeNull();
+    expect((await store.get(C, "mapped"))?.currentVersion).toBeNull();
+    await store.setCurrent(C, "mapped", 1, () => entry("app_publish"), { a: "agent-1" });
+    expect(await agents()).toEqual({ a: "agent-1" });
+    // Omitted, the mapping is left alone; null clears it.
+    await store.setCurrent(C, "mapped", 1);
+    expect(await agents()).toEqual({ a: "agent-1" });
+    await store.setCurrent(C, "mapped", 1, undefined, null);
+    expect(await agents()).toBeNull();
+  });
 });
