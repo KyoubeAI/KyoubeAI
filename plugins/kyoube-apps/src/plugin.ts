@@ -25,7 +25,7 @@ import { DecisionService, type DecisionServiceDeps } from "./decisions/service.j
 import { purgeDecisionData } from "./decisions/store.js";
 import { registerDecisionTools } from "./decisions/tools.js";
 import { DataError } from "./data/errors.js";
-import { parseLevel, type DataActor } from "./data/permissions.js";
+import { levelAllows, parseLevel, type DataActor } from "./data/permissions.js";
 import { DataService, type DataServiceDeps, type MutationEvent } from "./data/service.js";
 import { GroupService } from "./groups/service.js";
 import { isManagerRole, levelSource } from "./groups/levels.js";
@@ -577,6 +577,32 @@ export function createAppsPlugin(deps: AppsPluginDeps): PaperclipPlugin {
         const usedBy = (name: string) => declared.filter((row) => row.connections.some((entry) => entry.name === name)).map((row) => ({ slug: row.slug, name: row.name, access: row.connections.find((entry) => entry.name === name)!.access }));
         const missing = [...new Set(declared.flatMap((row) => row.connections.map((entry) => entry.name)))].filter((name) => !configured.has(name)).sort().map((name) => ({ name, apps: usedBy(name) }));
         return { connections: status.connections.map((row) => ({ ...row, apps: usedBy(row.name) })), problems: status.problems, missing };
+      });
+      // Which apps hand work to which agents: the current version's templates, each with the agent id that
+      // version stored at publish (never re-resolved from the name) and whether that agent can take the work.
+      action("tasks.overview", async (c, a) => {
+        await assertConnectionsAdmin(c, a);
+        const list = await appService.list(c, a);
+        const rows = await Promise.all(list.filter((app) => app.status === "published" && app.currentVersion !== null).map(async (app) => {
+          try {
+            const { version } = await appService.get(c, a, app.slug, "current");
+            const templates = Object.entries(version?.manifest.tasks ?? {});
+            if (!version || templates.length === 0) return null;
+            const stored = (await taskStore.getTaskAgents(version.id)) ?? {};
+            const out = await Promise.all(templates.map(async ([key, template]) => {
+              const agentId = stored[key] ?? null;
+              const agent = agentId ? await ctx.agents.get(agentId, c).catch(() => null) : null;
+              const usable = agent !== null && agent.status !== "terminated" && agent.status !== "pending_approval";
+              let status: "ready" | "agent_cannot_write" | "agent_missing" = usable ? "ready" : "agent_missing";
+              if (usable && template.writes.length > 0 && !levelAllows(await dataService.levelFor(c, { kind: "agent", id: agentId! }), "write")) status = "agent_cannot_write";
+              return { key, agentId, agentName: agent?.name ?? null, table: template.table, writes: template.writes, status };
+            }));
+            return { slug: app.slug, name: app.name, templates: out };
+          } catch {
+            return null;
+          }
+        }));
+        return rows.filter((row) => row !== null);
       });
       action("connections.grants", async (c, a) => {
         await assertConnectionsAdmin(c, a);
