@@ -105,4 +105,33 @@ describe("the app's Source & versions panel", () => {
     expect(sent("apps.publish")).toEqual([{ slug: "triage", version: 3 }]);
     expect(button("Publish latest")!.disabled).toBe(false);
   });
+
+  it("opens the dialog for changed task templates alone, to publish and to roll back", async () => {
+    const withTasks = (version: number, changed: boolean): PublishPreviewData => ({
+      ...withSets(version), changed: false, sets: [],
+      tasks: { changed, list: [{ key: "draft_reply", agent: "Support Bot", agentFound: true, agentCanWrite: true, title: "Reply", instructions: "Draft a reply.", table: "tickets", fields: ["subject"], inputs: {}, writes: ["subject"], added: changed, changed: false }] },
+    });
+    await openSource();
+    await click(button("Publish latest"));
+    await answerPreview(withTasks(3, true));
+    expect(sent("apps.publish")).toEqual([]);
+    expect(container.textContent).toContain("Publish version 3?");
+    expect(button("Publish")!.disabled).toBe(true);
+    await click(checkbox());
+    await click(button("Publish"));
+    expect(sent("apps.publish")).toEqual([{ slug: "triage", version: 3, decisionsConfirmed: false, tasksConfirmed: true }]);
+
+    await click(button("Roll back one version"));
+    await answerPreview(withTasks(1, true));
+    expect(sent("apps.rollback")).toEqual([]);
+    expect(container.textContent).toContain("Roll back to version 1?");
+    await click(checkbox());
+    await click(button("Roll back"));
+    expect(sent("apps.rollback")).toEqual([{ slug: "triage", version: 1, decisionsConfirmed: false, tasksConfirmed: true }]);
+
+    // Unchanged templates need no confirmation: one click, as before.
+    await click(button("Publish latest"));
+    await answerPreview(withTasks(3, false));
+    expect(sent("apps.publish").at(-1)).toEqual({ slug: "triage", version: 3 });
+  });
 });
