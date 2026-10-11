@@ -29,7 +29,7 @@ when publishing the version, and supplies the inputs the template declares.
 |---|---|
 | Templates | At most 10 per app. The key matches `^[a-z][a-z0-9_]{0,39}$`. |
 | `agent` | An agent's name, 1 to 120 characters. It must exist, and not be terminated or pending approval, when the version is published. |
-| `title` | At most 200 characters after filling. |
+| `title` | At most 200 characters after filling. One that fills to nothing becomes the template key. |
 | `instructions` | 1 to 4,000 characters. |
 | `table` | Optional. Must be a table the manifest declares in `tables`. Without it the template takes no row. |
 | `fields` | With `table`: 1 to 20 fields that exist on it at publish. Only these fields' values go to the agent. |
@@ -38,15 +38,19 @@ when publishing the version, and supplies the inputs the template declares.
 
 **Placeholders.** `{{row.<field>}}` (a field in `fields`) and `{{input.<name>}}` (a declared input) may
 appear in `title` and `instructions`. Anything else that looks like `{{...}}` fails validation at
-publish. A filled value is flattened to one line, has `{{` and `}}` removed, has any run of three or
-more backticks broken up, and is cut to 200 characters. Put row placeholders in the middle of a
+publish. A filled value is flattened to one line (every kind of line break, including U+2028, U+2029,
+U+0085, vertical tab and form feed, becomes a space), has `{{` and `}}` removed, has any run of three
+or more backticks broken up, and is cut to 200 characters. Put row placeholders in the middle of a
 sentence rather than at the start of a line, and use them for readable titles. The agent also gets the
 full values in the data block below.
 
 **The agent is kept by id.** A published version stores the agent ids it was published with. Renaming
 the agent changes nothing for that version. Names are looked up only when a template is added or
-changed, which needs a person. If the agent is deleted or terminated, `start` answers `disabled`
-("This app's agent '<name>' no longer exists. Ask a person to republish it.").
+changed, which needs a person, or when the agent it reaches would change, which also needs a person.
+That covers rolling back to a version whose template text is the same but which reaches another
+agent, and a current version with no agent recorded for a template. If the agent is deleted or
+terminated, `start` answers `disabled` ("This app's agent '<name>' no longer exists. Ask a person to
+republish it.").
 
 ## What the agent receives
 
@@ -66,16 +70,18 @@ When you are finished, reply on this task with a short summary and mark it done.
 ask on this task and mark it blocked.
 
 —
-Sent by the app "Support desk" (support-desk, version 3, template draft_reply).
+Sent by the app support-desk (version 3, template draft_reply).
 ```
 
 - Values appear only inside the JSON block, which is encoded, so a value cannot close the fence. Each
   string value is cut to 2,000 characters. The block is at most 16,000 characters: when it is longer
   the longest values are cut further. `"_cut": true` is added at the top level whenever any value was
   cut.
-- A row value also reaches the title and instructions through its placeholders, flattened, cut to 200
-  characters and stripped of braces. That is why a template author should put row placeholders in the
-  middle of a sentence.
+- Outside the block there is only text a person confirmed (the template's title and instructions,
+  and the fixed sections), the app's slug, version and template key, and the copies of values that
+  placeholders put into the title and instructions. Those copies are flattened, cut to 200 characters
+  and stripped of braces. That is why a template author should put row placeholders in the middle of a
+  sentence. The app's display name is not sent: an agent can change it without a person.
 - Without `table` the block holds only `inputs`, and the agent is asked only for a reply.
 - The agent writes with its **own** data grant, through the normal Data tools, so the guardrail and
   the audit apply to those writes as to any others. Nothing limits the agent to the named fields
@@ -93,8 +99,9 @@ this order and the first failure is returned:
 4. A template with `writes` needs the viewer's data level `write` or higher: `forbidden` ("You can only
    read Data, so you can't ask an agent to change it.").
 5. Inputs: exactly the declared ones, each valid for its type: `invalid`.
-6. Agent: it exists and is not terminated (`disabled`); with `writes` its own data level must be `write`
-   or higher (`forbidden`, "Ask an admin to give <agent> write access to Data.").
+6. Agent: it exists and is not terminated (`disabled`), and it is not paused (`disabled`, "<agent> is
+   paused. Try again when it has been resumed."); with `writes` its own data level must be `write` or
+   higher (`forbidden`, "Ask an admin to give <agent> write access to Data.").
 7. Assignment: the core's own rule for giving this person's work to this agent
    (`previewAssignment`). If it says no, `forbidden` with the core's explanation. See below.
 8. Limits: `limit`.
@@ -130,10 +137,15 @@ For `done` and `needs_review`, `result` is the newest comment by the assigned ag
 cut to 20,000 characters with `…`. Otherwise it is `null`. An app must show it as text
 (`textContent`), never as HTML.
 
-If the agent is paused or over budget, the task waits and `waitingReason` says why. While the app
-follows the task, the wake-up is retried at most once a minute, as the person who started it, so the
-task starts once the agent is resumed. Status, result and times are always read live from the task;
-the plugin stores only which app a task came from.
+A task does not wait for an agent that cannot run. A paused agent is refused before the task is
+created (step 6 above). If the core refuses to wake the agent once the task exists (the agent is over
+its budget, was paused a moment earlier, or anything else), the task is cancelled at once and `start`
+answers `disabled` with the reason and "The task was cancelled; try again later." On this core a task
+left waiting for an agent that cannot run is moved to `blocked` by the core, and resuming the agent
+does not bring it back, so the plugin does not leave one behind. When the core only puts the wake-up
+off (its own scheduling), the task stays `waiting` with `waitingReason` and the core starts it later;
+the plugin does not try again. Status, result and times are always read live from the task; the plugin
+stores only which app a task came from.
 
 ## Limits
 
@@ -163,8 +175,14 @@ it writes. The REST body carries `tasksConfirmed: true`; without it that publish
 Removing a template needs no confirmation. Every named agent must exist and not be terminated or
 pending approval, or the publish fails with `invalid` naming it.
 
+A version whose template text is unchanged but that would send a template's work to a different agent
+than the current published version does is treated the same way. That happens when rolling back to a
+version published for another agent, or when the current version has no agent recorded for a
+template. The dialog marks those templates changed.
+
 Agents cannot publish, or roll back to, a version whose templates differ from the current published
-version's (`forbidden`). They save the draft and ask a person.
+version's, or that would change the agent a template reaches (`forbidden`). They save the draft and
+ask a person.
 
 For a template with `writes`, the dialog warns when the agent's data level is below `write`: the
 publish is still allowed, but tasks are refused until an admin gives the agent write access. Access
@@ -181,8 +199,10 @@ published app's templates: the template, its agent, the table and the fields it 
 One `kyoube_meta.audit` row per start and per cancel (`app_task_start`, `app_task_cancel`): the
 viewer, the agent, the app as `app@<slug>@<version>`, the template and the task id. Row values and
 inputs are never recorded. The start's audit row is written in the same transaction as the link
-between the task and the app. The core's activity log records the person who created the task and
-the plugin that did it. The agent's own writes are audited like any other agent write.
+between the task and the app. A start whose wake-up the core refused gets a second row,
+`app_task_cancel` with `reason: "wake_refused"`, for the cancel that follows. The core's activity log
+records the person who created the task and the plugin that did it. The agent's own writes are
+audited like any other agent write.
 
 ## What app tasks do not do
 

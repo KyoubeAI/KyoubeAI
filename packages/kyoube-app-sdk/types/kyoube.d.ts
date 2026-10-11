@@ -25,7 +25,11 @@ export interface KyoubeContext {
   decisions: { available: boolean; sets: string[] };
   /** The external API connections this app declares, and whether each can be called right now. */
   connections: Array<{ name: string; access: "read" | "read-write"; available: boolean }>;
-  /** The task templates this app declares (`kyoube.tasks.start`), and whether this viewer may start tasks right now. */
+  /**
+   * The task templates this app declares (`kyoube.tasks.start`). `available` means the installation
+   * supports tasks and this version declares templates; it is not a per-viewer permission, so a start
+   * can still be refused for this viewer (`forbidden`, `disabled`).
+   */
   tasks: { available: boolean; templates: Array<{ key: string; table: string | null; inputs: Record<string, KyoubeTaskInput>; writes: string[] }> };
 }
 /** One input a task template declares; every declared input is required at start. */

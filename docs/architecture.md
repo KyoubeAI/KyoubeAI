@@ -187,8 +187,8 @@ There is no REST route: only a person using an app starts a task. `AppService` h
 `TaskService.start` (`src/tasks/service.ts`) under the viewer's identity:
 
 1. Check the app is open to the viewer, the template is in the published version, the row, the
-   writes level, the inputs and the agent (`disabled` if it is gone; `forbidden` if `writes` needs
-   write access it lacks).
+   writes level, the inputs and the agent (`disabled` if it is gone or paused; `forbidden` if `writes`
+   needs write access it lacks).
 2. Ask the core whether this person may assign this agent (`ctx.authorization.policies.previewAssignment`).
 3. Check the per-person and per-app limits.
 4. Build the title and description (`src/tasks/template.ts`, pure): placeholders filled, the data block
@@ -196,8 +196,11 @@ There is no REST route: only a person using an app starts a task. `AppService` h
 5. `ctx.issues.create` in `todo` for the agent, as the viewer.
 6. In one transaction write the `kyoube_meta.app_tasks` row and the `app_task_start` audit row; if that
    fails, the issue is set `cancelled` and the start fails.
-7. Only then `ctx.issues.requestWakeup`. A refusal (paused or over-budget agent) is kept as the task's
-   `waitingReason`, and `get` retries it at most once a minute while the app follows the task.
+7. Only then `ctx.issues.requestWakeup`. A refusal (an over-budget agent, one paused since the check)
+   cancels the issue as the person, closes the row, writes an `app_task_cancel` audit row
+   (`reason: "wake_refused"`) and fails the start with `disabled`; the core would otherwise move the
+   task to `blocked` and never resume it. A soft skip (`queued: false`) keeps it `waiting` with its
+   reason for the core's scheduling.
 
 `get` reads the issue live (status mapped to `waiting`, `working`, `needs_review`, `blocked`, `done`,
 `cancelled`) and, for `done` and `needs_review`, the assigned agent's newest comment as `result`. The
@@ -285,7 +288,7 @@ DDL through the core's plugin database API, so Kyoube connects to its own databa
 | `agent_grants` | Per-agent, per-company access level (`none`/`read`/`write`/`schema`). |
 | `tables` / `fields` | Metadata for every user table and column: display name, description, field kind, status (`active`/`trashed`), trash bookkeeping. |
 | `apps` / `app_versions` | App records (slug, status, current/latest version) and every saved version's manifest, source, and notes. |
-| `app_tasks` | One row per task an app handed to an agent: the issue id, app, version, template, agent, row, who started it and the last wake-up refusal. Status and result are read live from the issue. |
+| `app_tasks` | One row per task an app handed to an agent: the issue id, app, version, template, agent, row, who started it and the reason the core put off its wake-up. Status and result are read live from the issue. |
 | `audit` | One row per mutation, schema change, grant change, or app lifecycle change. |
 
 (There is no separate `indexes` metadata table — a company's indexes are created directly as ordinary

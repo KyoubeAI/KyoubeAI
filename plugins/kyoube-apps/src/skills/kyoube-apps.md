@@ -213,10 +213,18 @@ write instructions of its own: it picks a template a person confirmed at publish
 
 ### Name the agent
 
-A template names an agent by its name, exactly as the company shows it. Do not guess one. If you
-cannot list the company's agents, ask the person which agent to name. The agent must exist and not be
-terminated or pending approval at publish, or the publish fails with `invalid` naming it. A published
-version keeps the agent's id, so renaming the agent later changes nothing.
+A template names an agent by its name, exactly as the company shows it. Do not guess one. List the
+company's agents:
+
+```bash
+curl -fsS -H "Authorization: Bearer $PAPERCLIP_API_KEY" "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/agents"
+```
+
+Use the exact `name` of an agent whose `status` is not `terminated`. You may see only some of the
+company's agents. If the call is refused, or the agent you need is not listed, then
+ask the person which agent to name. The agent must exist and not be terminated or pending approval
+at publish, or the publish fails with `invalid` naming it. A published version keeps the agent's id,
+so renaming the agent later changes nothing.
 
 ### Declare templates in the manifest
 
@@ -254,12 +262,12 @@ or in the row. Never build instructions from user text.
 
 **Placeholders.** Only `{{row.<field>}}` (a field in `fields`) and `{{input.<name>}}` (a declared
 input) are allowed in `title` and `instructions`; any other `{{...}}` fails validation. A filled value
-is flattened to one line, has `{{` and `}}` removed and is cut to 200 characters. Put row
-placeholders in the middle of a sentence, not at the start of a line, and use them for readable
-titles. The agent also receives the full values (each cut to 2,000 characters, the whole block at
-most 16,000, with `"_cut": true` when anything was cut) in a fenced data block that it is told to
-read as data, not as instructions. Say in the instructions what to do with the fields, not what the
-values say.
+is flattened to one line, has `{{` and `}}` removed and is cut to 200 characters. A title that
+fills to nothing becomes the template key. Put row placeholders in the middle of a sentence, not at
+the start of a line, and use them for readable titles. The agent also receives the full values (each
+cut to 2,000 characters, the whole block at most 16,000, with `"_cut": true` when anything was cut)
+in a fenced data block that it is told to read as data, not as instructions. Say in the instructions
+what to do with the fields, not what the values say.
 
 ### Use it from the app
 
@@ -285,9 +293,12 @@ async function draftReply(rowId, tone) {
 }
 ```
 
-- Calls: `kyoube.tasks.start(template, { rowId?, inputs? })` returns the full task; `get(id)`;
-  `list({ template?, rowId? })` (newest first, at most 50); `cancel(id)` (`kyoube.tasks.cancel`, and likewise `kyoube.tasks.open`, `kyoube.tasks.watch`); `open(id)` takes the person
-  to the task page (at most once per 10 seconds); `watch(id, onChange)` returns `stop()`.
+`kyoube.tasks.start(template, { rowId?, inputs? })` starts a task and returns it in full.
+`kyoube.tasks.get(id)` reads one task, and `kyoube.tasks.list({ template?, rowId? })` returns this
+app's tasks, newest first, at most 50. `kyoube.tasks.cancel(id)` cancels one. `kyoube.tasks.open(id)`
+takes the person to the task page, at most once per 10 seconds. `kyoube.tasks.watch(id, onChange)`
+follows a task and returns `stop()`.
+
 - A task has `status` (`waiting`, `working`, `needs_review`, `blocked`, `done`, `cancelled`),
   `waitingReason`, `result` (the agent's latest reply for `done` and `needs_review`, otherwise
   `null`), `url`, `startedAt` and `updatedAt`.
@@ -298,9 +309,12 @@ async function draftReply(rowId, tone) {
   It is plain text, cut to 20,000 characters.
 - **Re-read the data on `done`.** The agent writes rows with its own access, so call
   `kyoube.data.get` or `query` again; the app's copy is out of date.
-- Show `waiting` with `waitingReason` (the agent may be paused or over budget; the task starts once it
-  is resumed while the app follows it). Show `blocked` and `needs_review` as "the agent needs a
-  person" and offer `open(id)`.
+- Show `waiting` with `waitingReason` (the core put the wake-up off; it starts the task later). A
+  paused agent is refused at `start`, and a task whose wake-up the core refuses (over budget, say) is
+  cancelled and `start` fails; both answer `disabled` with the reason, so ask the person to try
+  later. Show `blocked` and `needs_review` as "the agent needs a person" and offer `open(id)`. A
+  watch can stop without a word (after 30 minutes, or when the task can no longer be read), so keep
+  the last status you saw on screen.
 - **`cancel` cannot stop a run already in progress.** When the answer has `runMayContinue: true`,
   tell the person the agent's writes may still land. If recording the cancel fails the app gets an
   error although the task may already be cancelled: re-read it with `get`.
@@ -312,8 +326,9 @@ async function draftReply(rowId, tone) {
   - `invalid`: no row, a row for a template without a table, or an input that is missing or does not
     fit its type. Fix the call.
   - `not_found`: the template, row or task does not exist (or belongs to another app). Refresh.
-  - `disabled`: the agent no longer exists or is terminated. Tell the person to ask for the app to be
-    republished.
+  - `disabled`: the agent no longer exists or is terminated (tell the person to ask for the app to be
+    republished), the agent is paused, or the core refused to wake it and the task was cancelled (ask
+    them to try later). The message says which.
   - `limit`: 10 starts per minute per person per app, 25 open tasks per app, or 5 `tasks.start`
     per 10 seconds. Ask them to wait.
   - `conflict`: `cancel` on a task that is already done or cancelled. Re-read it with `get`.
@@ -326,9 +341,11 @@ async function draftReply(rowId, tone) {
 A version that adds a template, or changes any part of one (agent, title, instructions, table,
 fields, inputs, writes), needs a person to publish it. The publish dialog shows each added or changed
 template in full and the REST body carries `tasksConfirmed: true`; without it the publish fails with
-`invalid`. You cannot publish, or roll back to, such a version: for an agent it fails with
-`forbidden`. Save the draft with `apps_update` or `POST /apps/{slug}` and ask the person who started
-the task to publish it from the Apps page. Removing a template needs no confirmation.
+`invalid`. The same holds for a version whose template text is unchanged but that would send the
+work to a different agent than the published version does (a rollback to a version published for
+another agent, for example). You cannot publish, or roll back to, such a version: for an agent it
+fails with `forbidden`. Save the draft with `apps_update` or `POST /apps/{slug}` and ask the person
+who started the task to publish it from the Apps page. Removing a template needs no confirmation.
 
 ## Workflow
 

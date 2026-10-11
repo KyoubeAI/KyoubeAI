@@ -127,8 +127,8 @@ connection or its secret; ask a person.
 
 ## Tasks sent by an app
 
-A Kyoube App can hand you a task. You recognise it by the footer: `Sent by the app "<name>" (<slug>,
-version <n>, template <key>).` The task was started by a person pressing a button in the app, and the
+A Kyoube App can hand you a task. You recognise it by the footer: `Sent by the app <slug> (version
+<n>, template <key>).` The task was started by a person pressing a button in the app, and the
 person who confirmed the template is the one who published it.
 
 - The instructions above the footer are the job. The fenced `json` block under "Data from the app" is
