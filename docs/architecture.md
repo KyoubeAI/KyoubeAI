@@ -179,6 +179,31 @@ to `handleConnectionsApiRequest` (`src/connections/api-routes.ts`), the tools ar
 An app's calls run on the same bridge budget as data calls, with a ceiling of 30 connection calls per
 10 seconds. See [`connections.md`](connections.md).
 
+### App task → agent
+
+A running app sends `tasks.start` over the bridge (`apps.task_start`; `get`, `list` and `cancel` are
+`apps.task_get`, `apps.task_list` and `apps.task_cancel`, and the host page polls `get` for `watch`).
+There is no REST route: only a person using an app starts a task. `AppService` hands it to
+`TaskService.start` (`src/tasks/service.ts`) under the viewer's identity:
+
+1. Check the app is open to the viewer, the template is in the published version, the row, the
+   writes level, the inputs and the agent (`disabled` if it is gone; `forbidden` if `writes` needs
+   write access it lacks).
+2. Ask the core whether this person may assign this agent (`ctx.authorization.policies.previewAssignment`).
+3. Check the per-person and per-app limits.
+4. Build the title and description (`src/tasks/template.ts`, pure): placeholders filled, the data block
+   fenced and bounded.
+5. `ctx.issues.create` in `todo` for the agent, as the viewer.
+6. In one transaction write the `kyoube_meta.app_tasks` row and the `app_task_start` audit row; if that
+   fails, the issue is set `cancelled` and the start fails.
+7. Only then `ctx.issues.requestWakeup`. A refusal (paused or over-budget agent) is kept as the task's
+   `waitingReason`, and `get` retries it at most once a minute while the app follows the task.
+
+`get` reads the issue live (status mapped to `waiting`, `working`, `needs_review`, `blocked`, `done`,
+`cancelled`) and, for `done` and `needs_review`, the assigned agent's newest comment as `result`. The
+agent works under its own grant, so its writes go through the normal Data path and the guardrail. See
+[`app-tasks.md`](app-tasks.md).
+
 ### App runtime → data
 
 A published app opens as a sandboxed `<iframe sandbox="allow-scripts allow-forms allow-modals">` with an
@@ -260,6 +285,7 @@ DDL through the core's plugin database API, so Kyoube connects to its own databa
 | `agent_grants` | Per-agent, per-company access level (`none`/`read`/`write`/`schema`). |
 | `tables` / `fields` | Metadata for every user table and column: display name, description, field kind, status (`active`/`trashed`), trash bookkeeping. |
 | `apps` / `app_versions` | App records (slug, status, current/latest version) and every saved version's manifest, source, and notes. |
+| `app_tasks` | One row per task an app handed to an agent: the issue id, app, version, template, agent, row, who started it and the last wake-up refusal. Status and result are read live from the issue. |
 | `audit` | One row per mutation, schema change, grant change, or app lifecycle change. |
 
 (There is no separate `indexes` metadata table — a company's indexes are created directly as ordinary
@@ -400,6 +426,7 @@ beside the core's. Like the theme, it checks every anchor first. See [`mobile.md
 
 - [`apps.md`](apps.md) — app authoring guide: the manifest, `window.kyoube`, the sandbox in full detail.
 - [`connections.md`](connections.md) — connections to outside services: setup, who may call, limits, audit.
+- [`app-tasks.md`](app-tasks.md) — apps handing work to agents: templates, what the agent receives, who may start, limits, audit.
 - [`operations.md`](operations.md) — volumes, backups/restore, logs, health, key rotation, resource limits.
 - [`upgrading.md`](upgrading.md) — upgrading KyoubeAI and the core, and rolling back.
 - [`governance.md`](governance.md) — Kyoube's grant levels alongside the core's tool profiles/policies.

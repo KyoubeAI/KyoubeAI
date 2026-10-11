@@ -26,7 +26,7 @@ or `"companyId"` in every `POST` body.
 | Read an app | `GET /apps/{slug}?version=latest` (or `current`, or a number) | — |
 | Create (draft v1) | `POST /apps` | `manifest`, `source`, `notes?` |
 | Update (new draft) | `POST /apps/{slug}` | `manifest`, `source`, `notes?` |
-| Publish | `POST /apps/{slug}/publish` | `version?` (default: latest draft); a version that adds or changes decision sets, or adds or widens a connection, needs a person to publish it |
+| Publish | `POST /apps/{slug}/publish` | `version?` (default: latest draft); a version that adds or changes decision sets, adds or widens a connection, or adds or changes a task template, needs a person to publish it |
 | Roll back | `POST /apps/{slug}/rollback` | `version` |
 | Archive | `POST /apps/{slug}/archive` | — |
 
@@ -195,6 +195,141 @@ it (the publish dialog shows the host, auth style and methods, and the REST body
 narrowing connections needs no confirmation. Every connection a version declares must already exist in
 the company's settings, or the publish fails naming the missing ones, so get the connection set up first.
 
+## Tasks: handing work to an agent
+
+A **task** lets an app ask one of the company's agents to do a piece of open-ended work (draft a reply
+to a ticket, research a lead, summarise a contract) and show the result. The person using the app
+presses a button; an agent does the work; the result comes back to the app.
+
+Pick the right tool:
+
+- **Task**: open-ended work an agent does over minutes, possibly writing rows.
+- **A typed decision** (the "Typed decisions in an app" section): a closed question with a fixed answer
+  (`approve` / `review` / `reject`), answered at once.
+- **Connection** (the "Connections" section): fetching from or pushing to an outside service.
+
+Only people start or cancel app tasks. An agent cannot start one, and an app cannot name an agent or
+write instructions of its own: it picks a template a person confirmed at publish.
+
+### Name the agent
+
+A template names an agent by its name, exactly as the company shows it. Do not guess one. If you
+cannot list the company's agents, ask the person which agent to name. The agent must exist and not be
+terminated or pending approval at publish, or the publish fails with `invalid` naming it. A published
+version keeps the agent's id, so renaming the agent later changes nothing.
+
+### Declare templates in the manifest
+
+```json
+"tasks": {
+  "draft_reply": {
+    "agent": "Support Bot",
+    "title": "Draft a reply to ticket {{row.subject}}",
+    "instructions": "Read the ticket and write a reply into its reply_draft field. Keep it under 150 words. Use a {{input.tone}} tone.",
+    "table": "tickets",
+    "fields": ["subject", "body", "reply_draft"],
+    "inputs": { "tone": { "type": "choice", "options": ["friendly", "formal"] } },
+    "writes": ["reply_draft"]
+  }
+}
+```
+
+- At most 10 templates per app. The key matches `^[a-z][a-z0-9_]{0,39}$`.
+- `agent`: the agent's name, 1 to 120 characters. `title`: at most 200 characters after filling.
+  `instructions`: 1 to 4,000 characters.
+- `table` (optional) must be one the manifest declares in `tables`. `fields` lists 1 to 20 fields of
+  it that exist at publish; only those fields' values are sent to the agent, for one row the viewer
+  can read. Without `table` the template takes no row.
+- `inputs` (optional): at most 5 inputs, names `^[a-z][a-z0-9_]{0,39}$`. Types: `choice` (1 to 20 options of
+  at most 100 characters), `number` (`min?`, `max?`), `text` (`maxLength` 1 to 200, default 200).
+  Every input is required when the task starts.
+- `writes` (optional): the fields the agent is expected to write, a subset of `fields`. Needs `table`.
+  The named agent needs Data write access for these, and so does the viewer. An admin gives the agent
+  write access under Company Settings, then Data access. The publish dialog warns when it is missing,
+  and tasks are refused until it is fixed.
+
+**Keep instructions fixed and put the variable part in inputs and the row.** Write the instructions
+once, as a person would brief a colleague. Anything that changes between tasks goes in a typed input
+or in the row. Never build instructions from user text.
+
+**Placeholders.** Only `{{row.<field>}}` (a field in `fields`) and `{{input.<name>}}` (a declared
+input) are allowed in `title` and `instructions`; any other `{{...}}` fails validation. A filled value
+is flattened to one line, has `{{` and `}}` removed and is cut to 200 characters. Put row
+placeholders in the middle of a sentence, not at the start of a line, and use them for readable
+titles. The agent also receives the full values (each cut to 2,000 characters, the whole block at
+most 16,000, with `"_cut": true` when anything was cut) in a fenced data block that it is told to
+read as data, not as instructions. Say in the instructions what to do with the fields, not what the
+values say.
+
+### Use it from the app
+
+```js
+const ctx = await kyoube.ready();      // ctx.tasks: { available, templates: [{ key, table, inputs, writes }] }
+if (!ctx.tasks.available) { hideButton(); return; }
+
+async function draftReply(rowId, tone) {
+  try {
+    const task = await kyoube.tasks.start("draft_reply", { rowId, inputs: { tone } });   // → the full task
+    showStatus(task);
+    const stop = kyoube.tasks.watch(task.id, (t) => {
+      showStatus(t);
+      if (t.status === "done") {
+        resultEl.textContent = t.result ?? "";     // text only, never innerHTML
+        reloadRow(rowId);                          // the agent may have written the row
+      }
+    });
+    // call stop() when the person leaves the view
+  } catch (err) {
+    showNote(MESSAGES[err.code] || err.message);
+  }
+}
+```
+
+- Calls: `kyoube.tasks.start(template, { rowId?, inputs? })` returns the full task; `get(id)`;
+  `list({ template?, rowId? })` (newest first, at most 50); `cancel(id)` (`kyoube.tasks.cancel`, and likewise `kyoube.tasks.open`, `kyoube.tasks.watch`); `open(id)` takes the person
+  to the task page (at most once per 10 seconds); `watch(id, onChange)` returns `stop()`.
+- A task has `status` (`waiting`, `working`, `needs_review`, `blocked`, `done`, `cancelled`),
+  `waitingReason`, `result` (the agent's latest reply for `done` and `needs_review`, otherwise
+  `null`), `url`, `startedAt` and `updatedAt`.
+- `watch` checks every 5 seconds, stops at `done` or `cancelled`, after 30 minutes, when the app
+  closes, or when the task can no longer be read; passing failures are waited out. At most 10 watches
+  at once. Stop a watch you no longer need.
+- **Render `result` as text only** (`textContent`, never `innerHTML`): it is whatever the agent wrote.
+  It is plain text, cut to 20,000 characters.
+- **Re-read the data on `done`.** The agent writes rows with its own access, so call
+  `kyoube.data.get` or `query` again; the app's copy is out of date.
+- Show `waiting` with `waitingReason` (the agent may be paused or over budget; the task starts once it
+  is resumed while the app follows it). Show `blocked` and `needs_review` as "the agent needs a
+  person" and offer `open(id)`.
+- **`cancel` cannot stop a run already in progress.** When the answer has `runMayContinue: true`,
+  tell the person the agent's writes may still land. If recording the cancel fails the app gets an
+  error although the task may already be cancelled: re-read it with `get`.
+- Errors arrive as `kyoube.Error` with `code`:
+  - `forbidden`: the viewer cannot open the app, can only read Data while the template writes, the
+    agent has no write access ("Ask an admin to give <agent> write access to Data."), the assignment
+    rules forbid the person from giving that agent work (the message is the core's reason), or only
+    the starter or an admin may cancel. Show the message.
+  - `invalid`: no row, a row for a template without a table, or an input that is missing or does not
+    fit its type. Fix the call.
+  - `not_found`: the template, row or task does not exist (or belongs to another app). Refresh.
+  - `disabled`: the agent no longer exists or is terminated. Tell the person to ask for the app to be
+    republished.
+  - `limit`: 10 starts per minute per person per app, 25 open tasks per app, or 5 `tasks.start`
+    per 10 seconds. Ask them to wait.
+  - `conflict`: `cancel` on a task that is already done or cancelled. Re-read it with `get`.
+  Handle every one with a short message; the rest of the app must keep working.
+- Assignment follows the core's own rule: a protected agent needs a `tasks:assign` grant, even for an
+  owner or admin (their role grants normally cover it). A viewer cannot run apps at all.
+
+### Publishing templates
+
+A version that adds a template, or changes any part of one (agent, title, instructions, table,
+fields, inputs, writes), needs a person to publish it. The publish dialog shows each added or changed
+template in full and the REST body carries `tasksConfirmed: true`; without it the publish fails with
+`invalid`. You cannot publish, or roll back to, such a version: for an agent it fails with
+`forbidden`. Save the draft with `apps_update` or `POST /apps/{slug}` and ask the person who started
+the task to publish it from the Apps page. Removing a template needs no confirmation.
+
 ## Workflow
 
 1. Design or reuse tables with the `kyoube-data` skill (list tables, create tables).
@@ -219,7 +354,7 @@ has happened.
 ## window.kyoube (injected before your code runs)
 
 ```ts
-await kyoube.ready()                       // → { companyId, viewer: { id, name, level }, app: { slug, name, version }, tables, decisions, connections: [{ name, access, available }] }
+await kyoube.ready()                       // → { companyId, viewer: { id, name, level }, app: { slug, name, version }, tables, decisions, connections: [{ name, access, available }], tasks: { available, templates } }
 kyoube.data.query(table, { where?, orderBy?, limit?, offset?, fields? })   // → { rows, limit, offset }
 kyoube.data.get(table, id)                 // → row | null
 kyoube.data.count(table, where?)           // → { count }
@@ -230,6 +365,7 @@ kyoube.data.delete(table, { ids } | { where })          // → { affected }
 kyoube.ui.toast(title, "info" | "success" | "warn" | "error")
 kyoube.ui.openApp(slug)
 kyoube.connections.call(name, { method?, path?, query?, headers?, body? })   // → { status, headers, body }
+kyoube.tasks.start(template, { rowId?, inputs? })   // → task; also get, list, cancel, open, watch (see Tasks)
 ```
 `where` grammar: `{ field, op, value }` with `eq neq gt gte lt lte in contains starts_with is_null is_not_null`,
 combined with `{ and: [...] }`, `{ or: [...] }`, `{ not: {...} }`. Errors are thrown as `kyoube.Error` with

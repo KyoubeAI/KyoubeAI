@@ -38,12 +38,13 @@ it in the gallery or can open it ([groups.md](groups.md)).
 level still applies: a `viewer` can never write, whatever the app declares.
 
 An optional `decisions` key declares typed-decision sets; see [Typed decisions](#typed-decisions). An
-optional `connections` key declares the outside services the app may call; see [Connections](#connections).
+optional `connections` key declares the outside services the app may call; see [Connections](#connections). An optional `tasks` key declares task templates for agents; see
+[Tasks](#tasks).
 
 ## window.kyoube (injected before your code runs)
 
 ```ts
-await kyoube.ready()                       // → { companyId, viewer: { id, name, level }, app: { slug, name, version }, tables, decisions: { available, sets }, connections: [{ name, access, available }] }
+await kyoube.ready()                       // → { companyId, viewer: { id, name, level }, app: { slug, name, version }, tables, decisions: { available, sets }, connections: [{ name, access, available }], tasks: { available, templates } }
 kyoube.data.query(table, { where?, orderBy?, limit?, offset?, fields? })   // → { rows, limit, offset }
 kyoube.data.get(table, id)                 // → row | null
 kyoube.data.count(table, where?)           // → { count }
@@ -56,10 +57,11 @@ kyoube.ui.openApp(slug)
 kyoube.decide(set, { rowId } | { values })                 // → { decisionId, model, answers: { [q]: { type, value, confidence, status } } }
 kyoube.decideOutcome(decisionId, question, value)          // → { outcome: "human_confirmed" | "human_changed" }
 kyoube.connections.call(name, { method?, path?, query?, headers?, body? })   // → { status, headers, body }
+kyoube.tasks.start(template, { rowId?, inputs? })          // → task; also get, list, cancel, open, watch (see Tasks)
 ```
 `where` grammar: `{ field, op, value }` with `eq neq gt gte lt lte in contains starts_with is_null is_not_null`,
 combined with `{ and: [...] }`, `{ or: [...] }`, `{ not: {...} }`. Errors are thrown as `kyoube.Error` with
-`code` (`forbidden`, `invalid`, `not_found`, `conflict`, `limit`, `disabled`, `budget_exceeded`, `too_large`, `provider_rejected`, `provider_unavailable`, `timeout`; connection calls use `forbidden`, `invalid`, `disabled`, `too_large`, `timeout`, `provider_unavailable` and `limit`). Every row has `id`, `created_at`, `updated_at`.
+`code` (`forbidden`, `invalid`, `not_found`, `conflict`, `limit`, `disabled`, `budget_exceeded`, `too_large`, `provider_rejected`, `provider_unavailable`, `timeout`; connection calls use `forbidden`, `invalid`, `disabled`, `too_large`, `timeout`, `provider_unavailable` and `limit`; task calls use `forbidden`, `invalid`, `not_found`, `disabled`, `limit` and `conflict`). Every row has `id`, `created_at`, `updated_at`.
 
 `viewer.name` is always `""` in v1 — the host gives the worker ids, not display names — so greet the
 viewer with `viewer.id` or with nothing at all, and never print `viewer.name` expecting a person's name.
@@ -232,6 +234,171 @@ kyoube.ready().then((ctx) => {
 
 The manifest for it is `{ "name": "CRM customers", "slug": "crm-customers", "tables": [], "connections": [ { "name": "crm", "access": "read" } ] }`.
 
+## Tasks
+
+An app can hand a piece of work to one of the company's agents and show the result. The manifest
+declares named **templates** (the agent, the title and instructions, the table and fields, the inputs
+the app may fill in, and the fields the agent writes); a person confirms them at publish. The app can
+only pick a template and fill its declared inputs; it cannot write instructions or name an agent. The
+full rules, limits and logging are in [app-tasks.md](app-tasks.md).
+
+```json
+"tasks": {
+  "draft_reply": {
+    "agent": "Support Bot",
+    "title": "Draft a reply to ticket {{row.subject}}",
+    "instructions": "Read the ticket and write a reply into its reply_draft field. Keep it under 150 words. Use a {{input.tone}} tone.",
+    "table": "tickets",
+    "fields": ["subject", "body", "reply_draft"],
+    "inputs": { "tone": { "type": "choice", "options": ["friendly", "formal"] } },
+    "writes": ["reply_draft"]
+  }
+}
+```
+
+At most 10 templates per app; `instructions` 1 to 4,000 characters; `fields` 1 to 20 fields that exist on
+a declared `table`; at most 5 `inputs` (`choice`, `number` or `text`, all required when the task
+starts); `writes` is a subset of `fields`. Only `{{row.<field>}}` and `{{input.<name>}}` placeholders
+are allowed. Filled values land in the title and instructions flattened to one line, with braces
+removed and cut to 200 characters, so put row placeholders in the middle of a sentence, not at the
+start of a line. The agent also gets the values in a fenced data block (each cut to 2,000 characters,
+the block to 16,000, `"_cut": true` when anything was cut), which it is told to read as data.
+
+```ts
+kyoube.tasks.start(template, { rowId?, inputs? })   // → the task
+kyoube.tasks.get(id)                                // → task
+kyoube.tasks.list({ template?, rowId? })            // → task[] (newest first, at most 50)
+kyoube.tasks.cancel(id)                             // → task & { runMayContinue }
+kyoube.tasks.open(id)                               // takes the person to the task page
+kyoube.tasks.watch(id, (task) => …)                 // → stop()
+// task: { id, template, rowId, status, waitingReason, startedBy, startedAt, updatedAt, result, url }
+// status: "waiting" | "working" | "needs_review" | "blocked" | "done" | "cancelled"
+```
+
+- `kyoube.ready()` returns `tasks: { available, templates: [{ key, table, inputs, writes }] }`. Hide
+  the button when `available` is false.
+- `watch` calls back with the task now and whenever it changes. The host checks every 5 seconds and
+  stops at `done` or `cancelled`, after 30 minutes, when the app closes, or when the task can no longer
+  be read (`not_found`, `forbidden` or `disabled`); passing failures are waited out. At most 10
+  watches per app. Call `stop()` when you no longer need one.
+- `result` is the agent's latest reply for `done` and `needs_review`, plain text of at most 20,000
+  characters, else `null`. **Show it with `textContent`, never `innerHTML`.** The agent wrote it.
+- When the task is `done`, **re-read the data**: the agent wrote the rows with its own access.
+- A paused or over-budget agent leaves the task `waiting` with a `waitingReason`; while the app
+  follows it, the wake-up is retried at most once a minute, so it starts once the agent is resumed.
+- `cancel` cannot stop a run already in progress. `runMayContinue: true` means the agent was working and
+  its writes may still land; tell the person. If recording the cancel fails the app gets an error
+  although the task is already cancelled, so re-read it with `get`.
+- Errors are `kyoube.Error`: `forbidden` (the viewer can only read Data and the template writes, the
+  agent cannot write Data, the core's assignment rule refuses this person that agent, or a cancel by
+  someone who is neither the starter nor an admin), `invalid` (row or inputs), `not_found`,
+  `disabled` (the agent no longer exists; a person must republish), `limit` (10 starts a minute per
+  person per app, 25 open tasks per app, 5 `tasks.start` per 10 seconds) and `conflict` (cancelling a
+  task that is already finished).
+- Only people start or cancel tasks. On core 2026.1005.0 a member with the core `viewer` role cannot
+  run apps at all.
+
+A version that adds a template or changes any part of one needs a person to publish it
+(`tasksConfirmed: true`; without it the publish fails with `invalid`). An agent cannot publish or roll
+back to such a version. Removing a template needs no confirmation. The named agent needs Data write
+access for the fields in `writes`: the publish dialog warns, and tasks are refused until an admin
+grants it.
+
+### Example: a ticket list with a "Draft reply" button
+
+The manifest is the `draft_reply` template above plus
+`"tables": [ { "name": "tickets", "access": "readwrite" } ]` (the table has `subject`, `body` and
+`reply_draft` text fields). The app lists tickets, starts the task for one, follows it, shows the reply
+and reloads the row when the task is done.
+
+```html
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Support tickets</title>
+<style>body{font:14px system-ui;margin:16px}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #ddd;padding:6px;text-align:left;vertical-align:top}.scroll{overflow-x:auto}button{min-height:44px}#note{margin:12px 0}.reply{white-space:pre-wrap;margin:4px 0}@media(prefers-color-scheme:dark){body{background:#111;color:#eee}td,th{border-color:#333}}</style>
+</head><body>
+<h1>Support tickets</h1>
+<p id="note" role="status"></p>
+<div class="scroll"><table><thead><tr><th>Subject</th><th>Reply</th><th></th></tr></thead><tbody id="rows"></tbody></table></div>
+<script>
+const note = document.getElementById("note");
+const rowsEl = document.getElementById("rows");
+const stops = new Map();                  // ticket id → stop() for its watch
+let canTask = false;
+
+const MESSAGES = {
+  forbidden: "You can't ask this agent to do that.",
+  disabled: "This app's agent is gone. Ask a person to republish the app.",
+  limit: "Too many requests. Wait a minute.",
+  invalid: "That ticket can't be sent.",
+  not_found: "That ticket no longer exists.",
+  conflict: "That task has already finished.",
+};
+function fail(err) { note.textContent = MESSAGES[err.code] || err.message; }
+
+function rowEl(r) {
+  const tr = document.createElement("tr");
+  tr.dataset.id = r.id;
+  const subject = document.createElement("td"); subject.textContent = r.subject ?? "";
+  const reply = document.createElement("td");
+  const text = document.createElement("div"); text.className = "reply"; text.textContent = r.reply_draft ?? "";
+  const status = document.createElement("div"); status.className = "status";
+  reply.append(text, status);
+  const action = document.createElement("td");
+  const button = document.createElement("button"); button.textContent = "Draft reply"; button.disabled = !canTask;
+  button.addEventListener("click", () => draft(r.id, button));
+  action.append(button);
+  tr.append(subject, reply, action);
+  return tr;
+}
+function rowFor(id) { return rowsEl.querySelector(`tr[data-id="${CSS.escape(id)}"]`); }
+
+async function load() {
+  const { rows } = await kyoube.data.query("tickets", { orderBy: [{ field: "created_at", direction: "desc" }], limit: 50 });
+  rowsEl.replaceChildren(...rows.map(rowEl));
+}
+
+const LABELS = { waiting: "Waiting for the agent", working: "The agent is working", needs_review: "The agent needs a person", blocked: "The agent is blocked", done: "Done", cancelled: "Cancelled" };
+function show(id, task) {
+  const el = rowFor(id)?.querySelector(".status");
+  if (el) el.textContent = LABELS[task.status] + (task.waitingReason ? " (" + task.waitingReason + ")" : "");
+}
+
+async function draft(ticketId, button) {
+  button.disabled = true;
+  try {
+    const task = await kyoube.tasks.start("draft_reply", { rowId: ticketId, inputs: { tone: "friendly" } });
+    show(ticketId, task);
+    stops.get(ticketId)?.();
+    stops.set(ticketId, kyoube.tasks.watch(task.id, async (t) => {
+      show(ticketId, t);
+      if (t.status === "done") {
+        // The agent wrote the row with its own access: read it again, then show its reply as text.
+        try {
+          const fresh = await kyoube.data.get("tickets", ticketId);
+          const old = rowFor(ticketId);
+          if (fresh && old) old.replaceWith(rowEl(fresh));
+          const status = rowFor(ticketId)?.querySelector(".status");
+          if (status && t.result) status.textContent = "Agent's reply: " + t.result;   // textContent, never innerHTML
+        } catch (err) { fail(err); }
+      } else if (t.status === "cancelled") {
+        button.disabled = !canTask;
+      }
+    }));
+  } catch (err) {
+    button.disabled = !canTask;
+    fail(err);
+  }
+}
+
+kyoube.ready().then((ctx) => {
+  canTask = ctx.tasks.available && ctx.tasks.templates.some((t) => t.key === "draft_reply");
+  if (!canTask) note.textContent = "Drafting replies is not available to you right now.";
+  return load();
+}).catch(fail);
+</script>
+</body></html>
+```
+
 ## Rules for the source
 
 - Start with `<!doctype html>`; put CSS in `<style>` and JS in `<script>` — no `src=`, `href=` to the network, no `fetch`.
@@ -303,7 +470,7 @@ company as `?companyId=…` on `GET` or `"companyId"` in every `POST` body. Ever
 | Read an app | `GET /apps/{slug}?version=latest` (or `current`, or a number) | — |
 | Create (draft v1) | `POST /apps` | `manifest`, `source`, `notes?` |
 | Update (new draft) | `POST /apps/{slug}` | `manifest`, `source`, `notes?` |
-| Publish | `POST /apps/{slug}/publish` | `version?` (default: latest draft), `decisionsConfirmed?`, `connectionsConfirmed?` |
+| Publish | `POST /apps/{slug}/publish` | `version?` (default: latest draft), `decisionsConfirmed?`, `connectionsConfirmed?`, `tasksConfirmed?` |
 | Roll back | `POST /apps/{slug}/rollback` | `version` |
 | Archive | `POST /apps/{slug}/archive` | — |
 

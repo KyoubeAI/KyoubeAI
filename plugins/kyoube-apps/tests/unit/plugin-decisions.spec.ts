@@ -94,7 +94,7 @@ describe("plugin wiring for typed decisions", () => {
 
 describe("the kyoube-decisions skill", () => {
   it("ships as a third managed skill and installs with the other two", async () => {
-    expect(PLUGIN_VERSION).toBe("0.11.0");
+    expect(PLUGIN_VERSION).toBe("0.12.0");
     expect(manifest.skills?.map((skill) => skill.skillKey)).toEqual(["kyoube-data", "kyoube-apps", DECISIONS_SKILL_KEY]);
     const { harness, plugin } = await setup();
     await plugin.definition.onApiRequest!({ routeKey: "skills.install", method: "POST", path: "/skills/install", params: {}, query: {}, body: { companyId: COMPANY }, actor: { actorType: "user", actorId: "admin-1", userId: "admin-1" }, companyId: COMPANY, headers: {} });

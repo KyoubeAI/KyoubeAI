@@ -384,6 +384,44 @@ the company stores. The plugin worker makes every call; the app's frame keeps `c
   A service that returns secrets in a body can show them to the caller that asked, which is why
   access is narrow.
 
+## App tasks
+
+App tasks (`docs/app-tasks.md`) let a Kyoube App hand work to a company agent. The agent receives the
+task as a normal task and acts with its own access.
+
+- **No new authority.** The task is created as the person using the app, after the same assignment
+  decision the core makes for that person (`previewAssignment`), so a protected agent still needs a
+  `tasks:assign` grant, even for an owner or admin. The agent works under its own data grant, with the
+  guardrail and the audit applying to its writes. Only people start or cancel tasks; agents cannot.
+- **A person decides what an app may ask.** A version that adds a template or changes any part of one
+  must be published by a person who sees the agent, the exact title and instructions, the table and
+  fields and the inputs (`tasksConfirmed`). Agents cannot publish or roll back to such a version. A
+  published version keeps the agent ids it was published with, so a rename cannot redirect a template;
+  names are looked up only when a template is added or changed.
+- **Prompt injection from Data.** Row values and inputs reach the agent in one labelled JSON block
+  inside a `json` fence. Values are JSON-encoded, each cut to 2,000 characters, the block to 16,000
+  (`"_cut": true` when anything was cut), and any run of three or more backticks is broken up, so a
+  value cannot close the fence or add a heading. Inputs are typed and short. Row values also reach the
+  title and instructions through `{{row.x}}` placeholders, flattened to one line, with braces removed,
+  fence runs broken and cut to 200 characters. Template authors should put row placeholders in the
+  middle of a sentence.
+- **Data shared with the agent** is the declared fields of one row the person can read, and typed
+  inputs. The instructions are fixed text a person confirmed.
+- **Residual: a row value can still try to persuade the agent.** A hostile value inside the data block
+  can ask the agent to do something else. The agent is told to treat the block as data, and its own
+  data access and the guardrail bound the damage; nothing stops an agent from writing outside the
+  named fields except its instructions.
+- **Residual: cancel is not a stop.** The core cannot stop a run already in progress; a cancelled
+  task's agent may still write before it ends (`runMayContinue`). If recording the cancel fails, the
+  task is already cancelled although the app saw an error.
+- **The result is untrusted text.** The agent's reply reaches the app as plain text of at most 20,000
+  characters; an app must show it with `textContent`.
+- **Spam.** 10 starts a minute per person per app, 25 open tasks per app, 5 `tasks.start` per 10
+  seconds per frame, 10 watches per frame, and the core's own budget checks on wake-ups.
+- **Every start and cancel is audited without contents** (`app_task_start`, `app_task_cancel`: app,
+  version, template, agent and task id; never row values or inputs). The core's activity log records
+  the person and the plugin on creation.
+
 ## Files
 
 The **Files** tab on a project page lets company members browse and change the project's working
