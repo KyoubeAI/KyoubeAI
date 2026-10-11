@@ -6,22 +6,30 @@
  * never two in flight for the same id, at most 30 minutes per watch, and an end at `done` or
  * `cancelled`. The bridge's guard caps a frame at 10 watches.
  *
- * Pure: the timers and the clock are injected, so the stop conditions are unit-tested without a DOM.
+ * A failed poll ends the watch only when the worker refused outright — `not_found`, `forbidden` or
+ * `disabled`, which no later poll will answer differently. Anything else (a plugin restart, a
+ * timeout, a dropped connection) is waited out: the next tick tries again, and the 30-minute cap
+ * and the no-overlap rule bound what that costs.
+ *
+ * Pure apart from the error mapping: the timers and the clock are injected, so the stop conditions
+ * are unit-tested without a DOM.
  */
+import { appErrorPayload } from "./bridge.js";
 
 export const TASK_WATCH = {
   intervalMs: 5_000,
   maxMs: 30 * 60_000,
-  /** Failed polls in a row before a watch ends (a deleted task, a lost permission, a worker down). */
-  maxFailures: 3,
 } as const;
+
+/** The worker's answers that are final for this viewer and this id: the watch ends on them. */
+const REFUSALS: ReadonlySet<string> = new Set(["not_found", "forbidden", "disabled"]);
 
 export interface TaskWatchDeps {
   /** `apps.task_get` for this id; resolves with the worker's `AppTask`. */
   poll(id: string): Promise<unknown>;
   /** Hands a changed task to the frame. Called only for a watch still running. */
   post(task: Record<string, unknown>): void;
-  /** A watch ended — by `stop`, `stopAll`, a final status, the time limit or failures — so its slot can be freed. */
+  /** A watch ended — by `stop`, `stopAll`, a final status, the time limit or a refusal — so its slot can be freed. */
   onEnd?(id: string): void;
   setInterval(fn: () => void, ms: number): unknown;
   clearInterval(handle: unknown): void;
@@ -36,7 +44,7 @@ export interface TaskWatcher {
   stopAll(): void;
 }
 
-interface Watch { handle: unknown; startedAt: number; last: string | null; inFlight: boolean; failures: number }
+interface Watch { handle: unknown; startedAt: number; last: string | null; inFlight: boolean }
 
 const FINAL = new Set(["done", "cancelled"]);
 
@@ -65,8 +73,8 @@ export function createTaskWatcher(deps: TaskWatchDeps): TaskWatcher {
     deps.poll(id).then((task) => {
       watch.inFlight = false;
       if (watches.get(id) !== watch) return;
-      if (!isRecord(task) || task.id !== id) { failed(id, watch); return; }
-      watch.failures = 0;
+      // Not the watched task: nothing to post, and nothing that says the next poll will differ.
+      if (!isRecord(task) || task.id !== id) return;
       // What the app can act on: a new status, a new result, or any other update the issue records.
       const seen = JSON.stringify([task.status, task.updatedAt, task.result]);
       if (seen !== watch.last) {
@@ -74,16 +82,12 @@ export function createTaskWatcher(deps: TaskWatchDeps): TaskWatcher {
         deps.post(task);
       }
       if (typeof task.status === "string" && FINAL.has(task.status)) end(id);
-    }, () => {
+    }, (error: unknown) => {
       watch.inFlight = false;
       if (watches.get(id) !== watch) return;
-      failed(id, watch);
+      // The host's rejection carries the worker's code inside its message (see `appErrorPayload`).
+      if (REFUSALS.has(appErrorPayload(error).code)) end(id);
     });
-  };
-
-  const failed = (id: string, watch: Watch): void => {
-    watch.failures += 1;
-    if (watch.failures >= TASK_WATCH.maxFailures) end(id);
   };
 
   return {
@@ -96,7 +100,7 @@ export function createTaskWatcher(deps: TaskWatchDeps): TaskWatcher {
         poll(id, existing);
         return;
       }
-      const watch: Watch = { handle: null, startedAt: deps.now(), last: null, inFlight: false, failures: 0 };
+      const watch: Watch = { handle: null, startedAt: deps.now(), last: null, inFlight: false };
       watches.set(id, watch);
       watch.handle = deps.setInterval(() => { poll(id, watch); }, TASK_WATCH.intervalMs);
       poll(id, watch);

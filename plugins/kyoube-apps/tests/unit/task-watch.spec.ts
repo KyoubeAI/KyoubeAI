@@ -127,28 +127,54 @@ describe("TaskWatcher", () => {
     expect(h.polls).toHaveLength(2);
   });
 
-  it("ends a watch after three failed polls in a row", async () => {
+  it("keeps polling through transient failures, so an update after a worker blip still arrives", async () => {
     let fail = true;
-    const h = harness(async () => { if (fail) throw new Error("not_found: no such task"); return task("working"); });
+    const h = harness(async () => {
+      // The host bridge's own rejection shape: a transport code, no worker code in the message.
+      if (fail) throw { code: "WORKER_ERROR", message: "worker restarting" };
+      return task("done", "2026-10-11T10:05:00Z", "All done");
+    });
     h.watcher.start("t1");
     await h.flush();
-    await h.tick();
+    // 25 s of failures: six polls, far more than a 10–15 s blip.
+    for (let i = 0; i < 5; i += 1) await h.tick();
+    expect(h.polls).toHaveLength(6);
     expect(h.ended).toEqual([]);
+    expect(h.posted).toEqual([]);
     fail = false;
     await h.tick();
-    fail = true;
-    await h.tick();
-    await h.tick();
-    expect(h.ended).toEqual([]);
-    await h.tick();
+    expect(h.posted).toEqual([task("done", "2026-10-11T10:05:00Z", "All done")]);
     expect(h.ended).toEqual(["t1"]);
   });
 
-  it("ignores a reply that is not the watched task", async () => {
+  it("treats a timeout as transient too", async () => {
+    const h = harness(async () => { throw { code: "TIMEOUT", message: "timeout: the worker took too long" }; });
+    h.watcher.start("t1");
+    await h.flush();
+    for (let i = 0; i < 6; i += 1) await h.tick();
+    expect(h.ended).toEqual([]);
+    expect(h.intervals.size).toBe(1);
+  });
+
+  it("ends the watch, freeing its slot, on a definitive refusal", async () => {
+    for (const message of ["not_found: no such task", "forbidden: You don't have access to this app. Ask a company admin.", "disabled: app tasks are not available here"]) {
+      const h = harness(async () => { throw { code: "WORKER_ERROR", message }; });
+      h.watcher.start("t1");
+      await h.flush();
+      expect(h.ended).toEqual(["t1"]);
+      expect(h.intervals.size).toBe(0);
+      const polls = h.polls.length;
+      await h.tick();
+      expect(h.polls).toHaveLength(polls);
+    }
+  });
+
+  it("ignores a reply that is not the watched task, and keeps watching", async () => {
     const h = harness(async () => ({ id: "other", status: "done" }));
     h.watcher.start("t1");
     await h.flush();
     expect(h.posted).toEqual([]);
+    expect(h.ended).toEqual([]);
   });
 
   it("re-watching an id posts its current state again without a second timer", async () => {

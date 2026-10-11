@@ -61,8 +61,10 @@ export interface KyoubeTasks {
   open(id: string): Promise<void>;
   /**
    * Calls `onChange` with the task now and whenever it changes; the host checks every 5 seconds and
-   * stops at `done` or `cancelled`, after 30 minutes, or when the app closes. At most 10 watched tasks
-   * at once. Returns `stop()`.
+   * stops at `done` or `cancelled`, after 30 minutes, or when the app closes. It also stops, without
+   * calling `onChange`, when the task can no longer be read (`not_found`, `forbidden` or `disabled`
+   * from `get`); a passing failure such as a timeout is waited out. At most 10 watched tasks at once.
+   * Returns `stop()`.
    */
   watch(id: string, onChange: (task: KyoubeTask) => void): () => void;
 }
