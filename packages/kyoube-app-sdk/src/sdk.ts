@@ -1,5 +1,5 @@
 import { startHello } from "./handshake.js";
-import { isKyoubeReady, isKyoubeResponse, KYOUBE_PROTOCOL, type KyoubeMethod } from "./protocol.js";
+import { isKyoubeReady, isKyoubeResponse, isKyoubeTaskEvent, KYOUBE_PROTOCOL, type KyoubeMethod } from "./protocol.js";
 
 interface Pending { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
 
@@ -48,6 +48,9 @@ function scrubNonceScript(): void {
   const pending = new Map<string, Pending>();
   let context: unknown = null;
   const readyListeners: Array<(context: unknown) => void> = [];
+  // `kyoube.tasks.watch` callbacks by task id. The host polls each watched id and posts a `task`
+  // event when it changes; it is only told to stop once the last callback for an id is gone.
+  const taskWatchers = new Map<string, Set<(task: unknown) => void>>();
   let counter = 0;
   // Assigned once the handshake starts, below; the listener is registered first so a `ready` that
   // answers the very first hello is never missed.
@@ -63,6 +66,14 @@ function scrubNonceScript(): void {
       helloAnswered();
       context = message.context;
       for (const listener of readyListeners.splice(0)) listener(context);
+      return;
+    }
+    if (isKyoubeTaskEvent(message)) {
+      // A copy, so a callback that stops its own watch does not change the set mid-loop; each runs
+      // on its own, so one that throws cannot keep the others from hearing about the change.
+      for (const listener of [...(taskWatchers.get(message.task.id) ?? [])]) {
+        try { listener(message.task); } catch { /* the app's own bug; the other watchers still run */ }
+      }
       return;
     }
     if (!isKyoubeResponse(message)) return;
@@ -81,6 +92,30 @@ function scrubNonceScript(): void {
       pending.set(id, { resolve, reject, timer });
       parentWindow.postMessage({ kyoube: KYOUBE_PROTOCOL, id, method, params, nonce }, "*");
     });
+  }
+
+  /** Removes one watch callback; when it was the last for that id, tells the host to stop polling. */
+  function unwatch(id: string, listener: (task: unknown) => void): void {
+    const listeners = taskWatchers.get(id);
+    if (!listeners || !listeners.delete(listener)) return;
+    if (listeners.size > 0) return;
+    taskWatchers.delete(id);
+    call("tasks.unwatch", { id }).catch(() => {});
+  }
+
+  function watch(id: string, onChange: (task: unknown) => void): () => void {
+    let listeners = taskWatchers.get(id);
+    if (!listeners) { listeners = new Set(); taskWatchers.set(id, listeners); }
+    // A fresh wrapper per call, so watching the same id twice with one function gives two stops.
+    const listener = (task: unknown): void => { onChange(task); };
+    listeners.add(listener);
+    // A refused watch (`limit`, `invalid`, `disabled`) is never polled, so its callback could only
+    // ever sit there: it is dropped, without an unwatch for a watch the host never started.
+    call("tasks.watch", { id }).catch(() => {
+      const current = taskWatchers.get(id);
+      if (current && current.delete(listener) && current.size === 0) taskWatchers.delete(id);
+    });
+    return () => { unwatch(id, listener); };
   }
 
   const kyoube = {
@@ -105,6 +140,23 @@ function scrubNonceScript(): void {
     decide: (set: string, input: { rowId: string } | { values: Record<string, unknown> }) => call("decisions.decide", { set, input }),
     decideOutcome: (decisionId: string, question: string, value: string | boolean) => call("decisions.outcome", { decisionId, question, value }),
     connections: { call: (name: string, request: Record<string, unknown> = {}) => call("connections.call", { name, request }) },
+    // App tasks (docs/app-tasks.md): a person asks an agent to do a template the manifest declares.
+    // Options the app leaves out are left out of the request rather than sent as `undefined`.
+    tasks: {
+      start: (template: string, opts: { rowId?: string; inputs?: Record<string, string | number> } = {}) => call("tasks.start", {
+        template,
+        ...(opts.rowId !== undefined ? { rowId: opts.rowId } : {}),
+        ...(opts.inputs !== undefined ? { inputs: opts.inputs } : {}),
+      }),
+      get: (id: string) => call("tasks.get", { id }),
+      list: (filter: { template?: string; rowId?: string } = {}) => call("tasks.list", {
+        ...(filter.template !== undefined ? { template: filter.template } : {}),
+        ...(filter.rowId !== undefined ? { rowId: filter.rowId } : {}),
+      }),
+      cancel: (id: string) => call("tasks.cancel", { id }),
+      open: (id: string) => call("tasks.open", { id }).then(() => undefined),
+      watch,
+    },
     Error: KyoubeAppError,
   };
   Object.defineProperty(window, "kyoube", { value: Object.freeze(kyoube), writable: false, configurable: false });

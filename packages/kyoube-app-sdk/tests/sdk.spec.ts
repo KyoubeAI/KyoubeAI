@@ -127,3 +127,105 @@ describe("connections", () => {
     await expect(done).resolves.toEqual({ status: 200, headers: {}, body: "" });
   });
 });
+
+type TaskApi = {
+  start(template: string, opts?: Record<string, unknown>): Promise<unknown>;
+  get(id: string): Promise<unknown>;
+  list(filter?: Record<string, unknown>): Promise<unknown>;
+  cancel(id: string): Promise<unknown>;
+  open(id: string): Promise<unknown>;
+  watch(id: string, onChange: (task: unknown) => void): () => void;
+};
+const tasksOf = (env: Awaited<ReturnType<typeof install>>) => (env.sdk() as unknown as { tasks: TaskApi }).tasks;
+
+describe("tasks", () => {
+  it("posts start, get, list, cancel and open as protocol requests", async () => {
+    vi.useFakeTimers();
+    const env = await install("nonce-abcdefghijklmnop");
+    const tasks = tasksOf(env);
+    const started = tasks.start("summarise", { rowId: "r1", inputs: { tone: "short" } });
+    const sent = env.posts.at(-1)!.message;
+    expect(sent).toMatchObject({ method: "tasks.start", nonce: "nonce-abcdefghijklmnop", params: { template: "summarise", rowId: "r1", inputs: { tone: "short" } } });
+    env.deliver({ source: env.parent, data: { kyoube: 1, id: sent.id, result: { id: "t1", status: "waiting" } } });
+    await expect(started).resolves.toEqual({ id: "t1", status: "waiting" });
+
+    // Absent options are left out rather than sent as undefined.
+    void tasks.start("plain");
+    expect(env.posts.at(-1)!.message.params).toEqual({ template: "plain" });
+    void tasks.get("t1");
+    expect(env.posts.at(-1)!.message).toMatchObject({ method: "tasks.get", params: { id: "t1" } });
+    void tasks.list({ template: "summarise", rowId: "r1" });
+    expect(env.posts.at(-1)!.message).toMatchObject({ method: "tasks.list", params: { template: "summarise", rowId: "r1" } });
+    void tasks.list();
+    expect(env.posts.at(-1)!.message).toMatchObject({ method: "tasks.list", params: {} });
+    void tasks.cancel("t1");
+    expect(env.posts.at(-1)!.message).toMatchObject({ method: "tasks.cancel", params: { id: "t1" } });
+    const opened = tasks.open("t1");
+    const open = env.posts.at(-1)!.message;
+    expect(open).toMatchObject({ method: "tasks.open", params: { id: "t1" } });
+    env.deliver({ source: env.parent, data: { kyoube: 1, id: open.id, result: null } });
+    await expect(opened).resolves.toBeUndefined();
+  });
+
+  it("watch posts tasks.watch once and calls back only for its own id, from the host only", async () => {
+    vi.useFakeTimers();
+    const env = await install("nonce-abcdefghijklmnop");
+    const seen: unknown[] = [];
+    const stop = tasksOf(env).watch("t1", (task) => { seen.push(task); });
+    expect(env.posts.at(-1)!.message).toMatchObject({ method: "tasks.watch", params: { id: "t1" } });
+    const posted = env.posts.length;
+
+    env.deliver({ source: env.parent, data: { kyoube: 1, event: "task", task: { id: "t2", status: "done" } } });
+    env.deliver({ source: { postMessage: () => {} }, data: { kyoube: 1, event: "task", task: { id: "t1", status: "done" } } });
+    expect(seen).toEqual([]);
+    env.deliver({ source: env.parent, data: { kyoube: 1, event: "task", task: { id: "t1", status: "working" } } });
+    expect(seen).toEqual([{ id: "t1", status: "working" }]);
+    expect(env.posts).toHaveLength(posted);
+
+    stop();
+    expect(env.posts.at(-1)!.message).toMatchObject({ method: "tasks.unwatch", params: { id: "t1" } });
+    env.deliver({ source: env.parent, data: { kyoube: 1, event: "task", task: { id: "t1", status: "done" } } });
+    expect(seen).toHaveLength(1);
+    // stop() is idempotent: a second call posts nothing more.
+    const after = env.posts.length;
+    stop();
+    expect(env.posts).toHaveLength(after);
+  });
+
+  it("keeps the host watching while another watcher of the same id is left", async () => {
+    vi.useFakeTimers();
+    const env = await install("nonce-abcdefghijklmnop");
+    const a: unknown[] = [];
+    const b: unknown[] = [];
+    const stopA = tasksOf(env).watch("t1", (task) => { a.push(task); });
+    tasksOf(env).watch("t1", (task) => { b.push(task); });
+    stopA();
+    expect(env.posts.some((post) => post.message.method === "tasks.unwatch")).toBe(false);
+    env.deliver({ source: env.parent, data: { kyoube: 1, event: "task", task: { id: "t1", status: "done" } } });
+    expect(a).toEqual([]);
+    expect(b).toHaveLength(1);
+  });
+
+  it("a callback that throws does not stop the others", async () => {
+    vi.useFakeTimers();
+    const env = await install("nonce-abcdefghijklmnop");
+    const seen: unknown[] = [];
+    tasksOf(env).watch("t1", () => { throw new Error("app bug"); });
+    tasksOf(env).watch("t1", (task) => { seen.push(task); });
+    env.deliver({ source: env.parent, data: { kyoube: 1, event: "task", task: { id: "t1", status: "done" } } });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("drops the listener when the host refuses the watch", async () => {
+    vi.useFakeTimers();
+    const env = await install("nonce-abcdefghijklmnop");
+    const seen: unknown[] = [];
+    tasksOf(env).watch("t1", (task) => { seen.push(task); });
+    const sent = env.posts.at(-1)!.message;
+    env.deliver({ source: env.parent, data: { kyoube: 1, id: sent.id, error: { code: "limit", message: "limit: too many watches" } } });
+    await Promise.resolve();
+    await Promise.resolve();
+    env.deliver({ source: env.parent, data: { kyoube: 1, event: "task", task: { id: "t1", status: "done" } } });
+    expect(seen).toEqual([]);
+  });
+});

@@ -25,6 +25,46 @@ export interface KyoubeContext {
   decisions: { available: boolean; sets: string[] };
   /** The external API connections this app declares, and whether each can be called right now. */
   connections: Array<{ name: string; access: "read" | "read-write"; available: boolean }>;
+  /** The task templates this app declares (`kyoube.tasks.start`), and whether this viewer may start tasks right now. */
+  tasks: { available: boolean; templates: Array<{ key: string; table: string | null; inputs: Record<string, KyoubeTaskInput>; writes: string[] }> };
+}
+/** One input a task template declares; every declared input is required at start. */
+export type KyoubeTaskInput =
+  | { type: "choice"; options: string[] }
+  | { type: "number"; min: number | null; max: number | null }
+  | { type: "text"; maxLength: number };
+/** A task an app handed to an agent. `url` is the task's page in the host. */
+export interface KyoubeTask {
+  id: string;
+  template: string;
+  rowId: string | null;
+  status: "waiting" | "working" | "needs_review" | "blocked" | "done" | "cancelled";
+  /** Why the agent hasn't started yet, when known. */
+  waitingReason: string | null;
+  /** The host passes ids, not names; the task page shows the person. */
+  startedBy: { userId: string };
+  startedAt: string;
+  updatedAt: string;
+  /** The agent's latest reply for `done` and `needs_review`, as plain text. Render it as text — never insert it as HTML. */
+  result: string | null;
+  url: string;
+}
+export interface KyoubeTasks {
+  /** Ask the template's agent to do the task, about a row of the template's table when it has one. */
+  start(template: string, opts?: { rowId?: string; inputs?: Record<string, string | number> }): Promise<KyoubeTask>;
+  get(id: string): Promise<KyoubeTask>;
+  /** This app's tasks, newest first, at most 50. */
+  list(filter?: { template?: string; rowId?: string }): Promise<KyoubeTask[]>;
+  /** `runMayContinue`: the agent was already working, and the core cannot stop a run in progress — tell the person its writes may still land. */
+  cancel(id: string): Promise<KyoubeTask & { runMayContinue: boolean }>;
+  /** Takes the person to the task's page. At most one per 10 seconds. */
+  open(id: string): Promise<void>;
+  /**
+   * Calls `onChange` with the task now and whenever it changes; the host checks every 5 seconds and
+   * stops at `done` or `cancelled`, after 30 minutes, or when the app closes. At most 10 watched tasks
+   * at once. Returns `stop()`.
+   */
+  watch(id: string, onChange: (task: KyoubeTask) => void): () => void;
 }
 export type Where = { field: string; op: "eq" | "neq" | "gt" | "gte" | "lt" | "lte" | "in" | "contains" | "starts_with" | "is_null" | "is_not_null"; value?: unknown } | { and: Where[] } | { or: Where[] } | { not: Where };
 export interface QuerySpec { where?: Where; orderBy?: Array<{ field: string; direction?: "asc" | "desc" }>; limit?: number; offset?: number; fields?: string[] }
@@ -61,6 +101,8 @@ export interface Kyoube {
   decideOutcome(decisionId: string, question: string, value: string | boolean): Promise<{ outcome: "human_confirmed" | "human_changed" }>;
   /** Call an external API the manifest declares, through the host. Failures reject with `kyoube.Error`. */
   connections: { call(name: string, request?: KyoubeConnectionRequest): Promise<KyoubeConnectionResponse> };
+  /** Hand a task the manifest declares to an agent, and follow it. Failures reject with `kyoube.Error`. */
+  tasks: KyoubeTasks;
   Error: new (code: string, message: string) => Error & { code: string };
 }
 declare global {

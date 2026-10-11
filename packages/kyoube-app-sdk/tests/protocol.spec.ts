@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ALLOWED_METHODS, isKyoubeReady, isKyoubeRequest, isKyoubeResponse } from "../src/protocol.js";
+import { ALLOWED_METHODS, isKyoubeReady, isKyoubeRequest, isKyoubeResponse, isKyoubeTaskEvent } from "../src/protocol.js";
 
 /** A well-formed request, which every guard case below varies one field of. */
 const request = (overrides: Record<string, unknown> = {}) => ({ kyoube: 1, id: "a", method: "data.query", params: { table: "x" }, nonce: "n0123456789abcdef", ...overrides });
@@ -54,5 +54,23 @@ describe("protocol guards", () => {
     expect(isKyoubeRequest(request({ method: "decisions.decide", params: { set: "triage", input: { rowId: "r1" } } }))).toBe(true);
     expect(isKyoubeRequest(request({ method: "decisions.outcome", params: { decisionId: "d", question: "q", value: true } }))).toBe(true);
     expect(isKyoubeRequest(request({ method: "decisions.ask" }))).toBe(false);
+  });
+  it("allows the seven task methods", () => {
+    for (const method of ["tasks.start", "tasks.get", "tasks.list", "tasks.cancel", "tasks.open", "tasks.watch", "tasks.unwatch"]) {
+      expect(ALLOWED_METHODS).toContain(method);
+      expect(isKyoubeRequest(request({ method, params: { id: "t1" } }))).toBe(true);
+    }
+    expect(isKyoubeRequest(request({ method: "tasks.delete", params: { id: "t1" } }))).toBe(false);
+  });
+  it("recognises task events: a task object with a string id, nothing else", () => {
+    expect(isKyoubeTaskEvent({ kyoube: 1, event: "task", task: { id: "t1", status: "working" } })).toBe(true);
+    expect(isKyoubeTaskEvent({ kyoube: 1, event: "task", task: { status: "working" } })).toBe(false);
+    expect(isKyoubeTaskEvent({ kyoube: 1, event: "task", task: { id: 5 } })).toBe(false);
+    expect(isKyoubeTaskEvent({ kyoube: 1, event: "task", task: [] })).toBe(false);
+    expect(isKyoubeTaskEvent({ kyoube: 1, event: "task" })).toBe(false);
+    expect(isKyoubeTaskEvent({ kyoube: 2, event: "task", task: { id: "t1" } })).toBe(false);
+    expect(isKyoubeTaskEvent({ kyoube: 1, event: "ready", task: { id: "t1" } })).toBe(false);
+    expect(isKyoubeTaskEvent(JSON.parse('{"kyoube":1,"event":"task","task":{"id":"t1","__proto__":{"x":1}}}'))).toBe(false);
+    expect(isKyoubeTaskEvent(null)).toBe(false);
   });
 });
