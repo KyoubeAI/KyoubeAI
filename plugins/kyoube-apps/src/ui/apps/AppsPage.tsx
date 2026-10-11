@@ -5,7 +5,7 @@ import { appsPagePath } from "../../apps/page-route.js";
 import { errorText } from "../format.js";
 import { button, input } from "../forms.js";
 import { AppRunner } from "./AppRunner.js";
-import { PublishDialog, connectionsOf, type PublishPreviewData } from "./PublishDisclosure.js";
+import { PublishDialog, connectionsOf, tasksChanged, type PublishPreviewData } from "./PublishDisclosure.js";
 import { appNameOf, ensurePhoneStyles } from "../phone.js";
 import { appErrorPayload, parseAppsPath, taskPagePath, type TaskOp } from "./bridge.js";
 
@@ -211,15 +211,15 @@ function SourcePanel(props: { companyId: string; userId: string | null; slug: st
   const act = (promise: Promise<unknown>, title: string) => promise
     .then(() => { toast({ title, tone: "success" }); props.onChanged(); return reload(); })
     .catch((err: unknown) => { toast({ title: errorText(err), tone: "error" }); });
-  // Spec §5: anything with decision sets goes through the disclosure dialog; an app without sets
-  // publishes in one click, as before.
+  // Spec §5: anything with decision sets or connections, or with task templates that changed (or
+  // whose agent would), goes through the disclosure dialog; anything else publishes in one click.
   // Either way the request names the version the preview resolved, never "latest".
   const start = (mode: "publish" | "rollback", version: number | "latest") => {
     if (previewing || pending) return;
     setPreviewing(true);
     preview({ slug: props.slug, version }).then((result) => {
       const data = result as PublishPreviewData;
-      if (data.sets.length === 0 && connectionsOf(data).length === 0) {
+      if (data.sets.length === 0 && connectionsOf(data).length === 0 && !tasksChanged(data)) {
         const params = { slug: props.slug, version: data.version };
         return act(mode === "publish" ? publish(params) : rollback(params), mode === "publish" ? `Published v${data.version}` : "Rolled back");
       }
