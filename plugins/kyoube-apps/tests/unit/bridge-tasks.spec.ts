@@ -208,7 +208,7 @@ describe("opening a task", () => {
   it("navigates only to a same-origin host path", () => {
     expect(taskPagePath("/ABC/issues/ABC-12")).toBe("/ABC/issues/ABC-12");
     expect(taskPagePath("/issues/6f1c2b9e-7a1d-4c4b-9a55-1c2d3e4f5a6b")).toBe("/issues/6f1c2b9e-7a1d-4c4b-9a55-1c2d3e4f5a6b");
-    for (const url of ["//evil.example/x", "/\\evil.example", "https://evil.example/", "javascript:alert(1)", "ABC/issues/1", "", "/a b", "/x?y", "/x#y", "/x\n", 5, null, `/${"a".repeat(600)}`]) {
+    for (const url of ["//evil.example/x", "/\\evil.example", "https://evil.example/", "javascript:alert(1)", "ABC/issues/1", "", "/a b", "/x?y", "/x#y", "/x\n", 5, null, `/${"a".repeat(600)}`, "/..//evil.example", "/.//x", "/ABC/issues/..", "/ABC/../issues/1", "/ABC/issues/ABC-12/x", "/issues/ABC-12", "/a/b"]) {
       expect(taskPagePath(url)).toBeNull();
     }
   });

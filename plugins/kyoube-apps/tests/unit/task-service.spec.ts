@@ -305,7 +305,7 @@ describe("TaskService.start success", () => {
     expect(input).toMatchObject({ companyId: C, status: "todo", assigneeAgentId: "agent-1", actor: { actorUserId: "viewer" }, title: `Reply to ${SECRET_VALUE}` });
     expect(input.actor).toEqual({ actorUserId: "viewer" });
     expect(input.description).toContain("## Data from the app");
-    expect(input.description).toContain("Sent by the app \"Help Desk\" (help-desk, version 3, template reply).");
+    expect(input.description).toContain("Sent by the app help-desk (version 3, template reply).");
     expect(t.calls).toEqual(["create", "insert", "wake"]);
     expect(t.store.insert).toHaveBeenCalledWith(
       { issueId: "issue-1", companyId: C, appId: "app-1", appSlug: "help-desk", appVersion: 3, template: "reply", agentId: "agent-1", tableName: "tickets", rowId: "r1", startedBy: "viewer" },

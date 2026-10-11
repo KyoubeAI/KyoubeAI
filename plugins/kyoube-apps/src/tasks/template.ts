@@ -18,7 +18,6 @@ export const DATA_BLOCK_MAX = 16000;
 /** The result shown to the person is cut to this many characters. */
 export const RESULT_MAX = 20000;
 const TITLE_MAX = 200;
-const APP_NAME_MAX = 120;
 const MIN_CUT = 100;
 const ZWSP = "​";
 
@@ -73,7 +72,8 @@ export function validateInputs(declared: Record<string, TaskInput>, raw: unknown
 
 function placeholderText(value: unknown): string {
   if (value === null || value === undefined) return "";
-  let text = String(value).replace(/[\r\n]/g, " ");
+  // Every line break a reader or a model may honour, not only \r and \n.
+  let text = String(value).replace(/[\r\n\u2028\u2029\u0085\v\f]/g, " ");
   // Repeat: removing one pair can bring two stray braces together.
   for (let previous = ""; previous !== text;) {
     previous = text;
@@ -104,7 +104,8 @@ export function fillPlaceholders(text: string, row: Record<string, unknown> | nu
 export interface DescriptionInput {
   template: AppTaskTemplate;
   templateKey: string;
-  app: { name: string; slug: string; version: number };
+  /** By slug only: the display name is the app author's text, which no person confirmed for the agent. */
+  app: { slug: string; version: number };
   row: { table: string; id: string; values: Record<string, unknown> } | null;
   inputs: Record<string, string | number>;
 }
@@ -176,15 +177,15 @@ function dataBlock(input: DescriptionInput): string {
   return json;
 }
 
-/** The task title: filled, on one line, at most 200 characters. */
+/** The task title: filled, on one line, at most 200 characters; the template key when it fills to nothing. */
 export function buildTitle(input: DescriptionInput): string {
-  return fillPlaceholders(input.template.title, input.row?.values ?? null, input.inputs).replace(/\s+/g, " ").trim().slice(0, TITLE_MAX);
+  const title = fillPlaceholders(input.template.title, input.row?.values ?? null, input.inputs).replace(/\s+/g, " ").trim().slice(0, TITLE_MAX);
+  return title.length > 0 ? title : input.templateKey;
 }
 
 export function buildDescription(input: DescriptionInput): string {
   const { template, app } = input;
   const instructions = fillPlaceholders(template.instructions, input.row?.values ?? null, input.inputs);
-  const appName = app.name.replace(/[\r\n"]/g, "").slice(0, APP_NAME_MAX);
   const todo = [
     ...(input.row && template.writes.length > 0 ? [`Write only these fields of that row with the Kyoube Data tools: ${template.writes.join(", ")}.`] : []),
     "When you are finished, reply on this task with a short summary and mark it done. If you need a person, ask on this task and mark it blocked.",
@@ -202,7 +203,7 @@ export function buildDescription(input: DescriptionInput): string {
     ...todo,
     "",
     "—",
-    `Sent by the app "${appName}" (${app.slug}, version ${app.version}, template ${input.templateKey}).`,
+    `Sent by the app ${app.slug} (version ${app.version}, template ${input.templateKey}).`,
   ].join("\n");
 }
 

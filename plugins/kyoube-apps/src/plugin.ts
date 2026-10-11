@@ -589,12 +589,17 @@ export function createAppsPlugin(deps: AppsPluginDeps): PaperclipPlugin {
             const templates = Object.entries(version?.manifest.tasks ?? {});
             if (!version || templates.length === 0) return null;
             const stored = (await taskStore.getTaskAgents(version.id)) ?? {};
+            // Each template answers on its own: one that can't be checked never drops the rest of the app.
             const out = await Promise.all(templates.map(async ([key, template]) => {
               const agentId = stored[key] ?? null;
               const agent = agentId ? await ctx.agents.get(agentId, c).catch(() => null) : null;
               const usable = agent !== null && agent.status !== "terminated" && agent.status !== "pending_approval";
               let status: "ready" | "agent_cannot_write" | "agent_missing" = usable ? "ready" : "agent_missing";
-              if (usable && template.writes.length > 0 && !levelAllows(await dataService.levelFor(c, { kind: "agent", id: agentId! }), "write")) status = "agent_cannot_write";
+              if (usable && template.writes.length > 0) {
+                // An agent whose access can't be read can't be confirmed to write.
+                const canWrite = await dataService.levelFor(c, { kind: "agent", id: agentId! }).then((level) => levelAllows(level, "write"), () => false);
+                if (!canWrite) status = "agent_cannot_write";
+              }
               return { key, agentId, agentName: agent?.name ?? null, table: template.table, writes: template.writes, status };
             }));
             return { slug: app.slug, name: app.name, templates: out };

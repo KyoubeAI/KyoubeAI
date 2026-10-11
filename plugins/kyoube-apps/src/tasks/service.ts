@@ -165,7 +165,7 @@ export class TaskService {
       throw new DataError("limit", `this app already has ${MAX_OPEN_PER_APP} open tasks`);
     }
 
-    const described: DescriptionInput = { template, templateKey: ctx.templateKey, app: { name: app.name, slug: app.slug, version: app.version }, row, inputs };
+    const described: DescriptionInput = { template, templateKey: ctx.templateKey, app: { slug: app.slug, version: app.version }, row, inputs };
     const issue = await deps.issues.create({
       companyId,
       title: buildTitle(described),
