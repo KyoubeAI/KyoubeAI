@@ -13,7 +13,9 @@ import type { GuardAgentAction, GuardContext, GuardedAction } from "../decisions
 import type { DecisionService } from "../decisions/service.js";
 import { getLoggedDecision, recordOutcome, type Outcome } from "../decisions/store.js";
 import type { ConnectionResponse, ConnectionService } from "../connections/service.js";
-import { assertAppSource, connectionChanges, connectionsChanged, decisionSetsChanged, validateAppManifest, type AppManifest } from "./manifest.js";
+import type { AppTask, TaskService } from "../tasks/service.js";
+import type { AppTaskStore } from "../tasks/store.js";
+import { assertAppSource, connectionChanges, connectionsChanged, decisionSetsChanged, taskTemplatesChanged, templateChanges, validateAppManifest, type AppManifest, type TaskInput } from "./manifest.js";
 import { AppStore, type AppRecord, type AppVersion } from "./store.js";
 
 /** What a running app is told about itself, its viewer, and the tables it may touch. */
@@ -26,6 +28,11 @@ export interface AppContext {
   decisions: { available: boolean; sets: string[] };
   /** The connections this version declares, and whether each can be called right now. */
   connections: Array<{ name: string; access: "read" | "read-write"; available: boolean }>;
+  /**
+   * The task templates this version declares (docs/app-tasks.md), and whether the installation can
+   * start tasks. Never the instructions or the agent: those are fixed at publish and stay server-side.
+   */
+  tasks: { available: boolean; templates: Array<{ key: string; table: string | null; inputs: Record<string, TaskInput>; writes: string[] }> };
 }
 
 export type RuntimeMethod = "query" | "get" | "count" | "describe" | "insert" | "update" | "delete";
@@ -63,6 +70,14 @@ export interface AppServiceDeps {
    * (docs/groups.md). Absent, every app is open as before. People only: an agent's calls never ask.
    */
   hiddenApps?: (companyId: string, userId: string) => Promise<Set<string>>;
+  /** App tasks (docs/app-tasks.md). Absent, an app's task calls answer `disabled`. */
+  tasks?: Pick<TaskService, "start" | "get" | "list" | "cancel">;
+  /** The company's agents, to resolve each template's agent name to an id at publish. */
+  agents?: { list(companyId: string): Promise<Array<{ id: string; name: string; status: string }>> };
+  /** Where a published version's template → agent id mapping lives. */
+  taskStore?: Pick<AppTaskStore, "getTaskAgents" | "setTaskAgents">;
+  /** Operator log for failures the caller is told about only in general terms. Ids only, never contents. */
+  log?: (message: string, meta: Record<string, unknown>) => void;
 }
 
 /** What publishing and rolling back accept besides the version. */
@@ -71,8 +86,22 @@ export interface PublishOptions {
   decisionsConfirmed?: boolean;
   /** The publisher reviewed the version's new or changed connections and the services they reach. */
   connectionsConfirmed?: boolean;
+  /** The publisher reviewed the version's new or changed task templates: which agent each reaches and what it is told. */
+  tasksConfirmed?: boolean;
   /** The guardrail's task and confirmation ids; only an agent's call carries them. */
   guard?: GuardContext;
+}
+
+/**
+ * The confirmations a publish or rollback request carries, for every entry point (action, tool, REST).
+ * Only a literal `true` confirms anything; the flags besides `decisionsConfirmed` appear only when set.
+ */
+export function confirmations(raw: { decisionsConfirmed?: unknown; connectionsConfirmed?: unknown; tasksConfirmed?: unknown }): Pick<PublishOptions, "decisionsConfirmed" | "connectionsConfirmed" | "tasksConfirmed"> {
+  return {
+    decisionsConfirmed: raw.decisionsConfirmed === true,
+    ...(raw.connectionsConfirmed === true ? { connectionsConfirmed: true } : {}),
+    ...(raw.tasksConfirmed === true ? { tasksConfirmed: true } : {}),
+  };
 }
 
 export type DecideInputRef = { rowId: string } | { values: Record<string, unknown> };
@@ -110,6 +139,37 @@ export interface PublishPreview {
      */
     list: Array<{ name: string; access: "read" | "read-write"; baseUrl: string | null; auth: string | null; methods: string | null; available: boolean; missing: boolean; added: boolean; widened: boolean }>;
   };
+  tasks: {
+    /** The version adds or changes task templates: a person must publish it, with `tasksConfirmed`. */
+    changed: boolean;
+    /**
+     * Each declared template as the dialog shows it, unfilled. `agentFound` says whether the name
+     * resolves to an agent that can take work today; `agentCanWrite` is null unless the template `writes`.
+     */
+    list: Array<{ key: string; agent: string; agentFound: boolean; agentCanWrite: boolean | null; title: string; instructions: string; table: string | null; fields: string[]; inputs: Record<string, TaskInput>; writes: string[]; added: boolean; changed: boolean }>;
+  };
+}
+
+type CompanyAgent = { id: string; name: string; status: string };
+/** Agents the core never assigns work to. */
+const UNUSABLE_AGENT = new Set(["terminated", "pending_approval"]);
+
+/**
+ * The agent a template's name means: an exact match first, then a case-insensitive one. A terminated
+ * or pending agent left behind under the same name as a live one does not make the name ambiguous;
+ * two live candidates do. Returns the agent (possibly unusable, for the caller to report), or why not.
+ */
+export function findAgentByName(agents: CompanyAgent[], name: string): CompanyAgent | "missing" | "ambiguous" {
+  const pick = (matches: CompanyAgent[]): CompanyAgent | "missing" | "ambiguous" => {
+    if (matches.length <= 1) return matches[0] ?? "missing";
+    const live = matches.filter((agent) => !UNUSABLE_AGENT.has(agent.status));
+    if (live.length === 1) return live[0]!;
+    return live.length === 0 ? matches[0]! : "ambiguous";
+  };
+  const exact = agents.filter((agent) => agent.name === name);
+  if (exact.length > 0) return pick(exact);
+  const folded = name.toLowerCase();
+  return pick(agents.filter((agent) => agent.name.toLowerCase() === folded));
 }
 
 // ---- runtime parameter shapes ------------------------------------------
@@ -192,6 +252,10 @@ export class AppService {
   private readonly now: () => number;
   private readonly guardAgentAction: AppServiceDeps["guardAgentAction"];
   private readonly hiddenApps: AppServiceDeps["hiddenApps"];
+  private readonly tasks: AppServiceDeps["tasks"];
+  private readonly agents: AppServiceDeps["agents"];
+  private readonly taskStore: AppServiceDeps["taskStore"];
+  private readonly log: AppServiceDeps["log"];
 
   constructor(deps: AppServiceDeps) {
     this.pool = deps.pool;
@@ -204,6 +268,10 @@ export class AppService {
     this.now = deps.now ?? Date.now;
     this.guardAgentAction = deps.guardAgentAction;
     this.hiddenApps = deps.hiddenApps;
+    this.tasks = deps.tasks;
+    this.agents = deps.agents;
+    this.taskStore = deps.taskStore;
+    this.log = deps.log;
   }
 
   /** Live apps for this company: drafts are visible only to those who can edit them. */
@@ -236,6 +304,7 @@ export class AppService {
     const manifest = validateAppManifest(rawManifest);
     const source = assertAppSource(rawSource);
     await this.assertDecisionFields(companyId, actor, manifest, true);
+    await this.assertTaskFields(companyId, actor, manifest, true);
     const created = await this.store.create(companyId, manifest, source, { kind: actor.kind, id: actor.id }, notes,
       (result) => this.entry(companyId, actor, "app_create", result.app, { version: result.version.version }));
     await this.notify(companyId, actor, "app_create", created.app, `created app ${manifest.slug} (draft)`);
@@ -250,6 +319,7 @@ export class AppService {
     if (manifest.slug !== slug) throw new DataError("invalid", "the manifest slug must match the app being updated");
     const source = assertAppSource(rawSource);
     await this.assertDecisionFields(companyId, actor, manifest, true);
+    await this.assertTaskFields(companyId, actor, manifest, true);
     const saved = await this.store.addVersion(companyId, slug, manifest, source, { kind: actor.kind, id: actor.id }, notes,
       (result) => this.entry(companyId, actor, "app_update", result.app, { version: result.version.version }));
     await this.notify(companyId, actor, "app_update", saved.app, `saved app ${slug} version ${saved.version.version} (draft)`);
@@ -300,6 +370,7 @@ export class AppService {
       try { available = (await this.decisions.status(companyId, actor, "apps")).available; } catch { available = false; }
     }
     const declaredConnections = version.manifest.connections ?? [];
+    const templates = Object.entries(version.manifest.tasks ?? {});
     let connectionRows: Array<{ name: string; available: boolean }> = [];
     if (declaredConnections.length > 0 && this.connections) {
       // As with decisions, a context is never refused over this.
@@ -313,6 +384,10 @@ export class AppService {
         tables: version.manifest.tables.map((table) => table.name),
         decisions: { available, sets },
         connections: declaredConnections.map((entry) => ({ name: entry.name, access: entry.access, available: connectionRows.find((row) => row.name === entry.name)?.available === true })),
+        tasks: {
+          available: this.tasks !== undefined && templates.length > 0,
+          templates: templates.map(([key, template]) => ({ key, table: template.table, inputs: template.inputs, writes: template.writes })),
+        },
       },
       source: version.source,
     };
@@ -400,6 +475,45 @@ export class AppService {
   }
 
   /**
+   * Starts one task from a running app (docs/app-tasks.md). The app must be published to this viewer
+   * and its *current published* version must declare the template; the agent is the one resolved when
+   * a person published that version, never a name the app sends. Everything after that — the row, the
+   * inputs, the agent's state, the core's assignment decision and the limits — is `TaskService`'s.
+   */
+  async runtimeTaskStart(companyId: string, actor: DataActor, slug: string, template: string, raw: { rowId?: unknown; inputs?: unknown }): Promise<AppTask> {
+    const { app, version, level } = await this.open(companyId, actor, slug);
+    const templates = version.manifest.tasks ?? {};
+    if (!Object.hasOwn(templates, template)) throw new DataError("not_found", `app "${slug}" has no task template "${String(template)}"`);
+    const declared = templates[template]!;
+    const tasks = this.requireTasks();
+    const agents = this.taskStore ? await this.taskStore.getTaskAgents(version.id) : null;
+    // Every version published with templates has its agents stored, so this is a guard, not a path.
+    const agentId = agents && Object.hasOwn(agents, template) ? agents[template] : undefined;
+    if (!agentId) throw new DataError("disabled", `This app's agent '${declared.agent}' isn't set up. Ask a person to republish it.`);
+    return tasks.start({
+      companyId, viewer: actor,
+      app: { id: app.id, slug: app.slug, name: app.name, version: version.version, versionId: version.id },
+      templateKey: template, template: declared, agentId, viewerLevel: level,
+    }, raw);
+  }
+
+  /** One task this app started. The app gate runs here: `TaskService` only checks that the task is this app's. */
+  async runtimeTaskGet(companyId: string, actor: DataActor, slug: string, id: string): Promise<AppTask> {
+    const { app } = await this.open(companyId, actor, slug);
+    return this.requireTasks().get(companyId, app.id, id);
+  }
+
+  async runtimeTaskList(companyId: string, actor: DataActor, slug: string, filter: { template?: string; rowId?: string }): Promise<AppTask[]> {
+    const { app } = await this.open(companyId, actor, slug);
+    return this.requireTasks().list(companyId, app.id, filter);
+  }
+
+  async runtimeTaskCancel(companyId: string, actor: DataActor, slug: string, id: string): Promise<AppTask & { runMayContinue: boolean }> {
+    const { app, version } = await this.open(companyId, actor, slug);
+    return this.requireTasks().cancel(companyId, actor, { id: app.id, slug: app.slug, version: version.version }, id);
+  }
+
+  /**
    * What the viewer chose in an app's review lane. Only for a decision this app made for this
    * viewer in the last 24 hours, once; every other case gets the same `not_found`, so the call
    * cannot be used to probe other people's decisions. Logged as `outcome_via: app`, apart from the
@@ -450,9 +564,30 @@ export class AppService {
     if (declared.length > 0 && this.connections) {
       try { configured = (await this.connections.status(companyId)).connections; } catch { configured = []; }
     }
+    const templateRows = templateChanges(current, target.manifest);
+    let companyAgents: CompanyAgent[] = [];
+    if (templateRows.length > 0 && this.agents) {
+      // As with connections, the dialog still shows the templates when the directory cannot be read.
+      try { companyAgents = await this.agents.list(companyId); } catch { companyAgents = []; }
+    }
+    const taskList = await Promise.all(templateRows.map(async (entry) => {
+      const template = target.manifest.tasks![entry.key]!;
+      const found = findAgentByName(companyAgents, template.agent);
+      const agent = typeof found === "object" && !UNUSABLE_AGENT.has(found.status) ? found : null;
+      let agentCanWrite: boolean | null = null;
+      if (agent && template.writes.length > 0) {
+        try { agentCanWrite = levelAllows(await this.data.levelFor(companyId, { kind: "agent", id: agent.id, runId: null }), "write"); } catch { agentCanWrite = null; }
+      }
+      return {
+        key: entry.key, agent: template.agent, agentFound: agent !== null, agentCanWrite,
+        title: template.title, instructions: template.instructions, table: template.table, fields: template.fields, inputs: template.inputs, writes: template.writes,
+        added: entry.added, changed: entry.changed,
+      };
+    }));
     return {
       version: target.version,
       changed: decisionSetsChanged(current, target.manifest),
+      tasks: { changed: taskList.some((entry) => entry.added || entry.changed), list: taskList },
       connections: {
         changed: declared.some((entry) => entry.added || entry.widened),
         list: declared.map((entry) => {
@@ -531,6 +666,17 @@ export class AppService {
       throw new DataError("invalid", "this version adds or changes connections; review which services it calls, then publish with connectionsConfirmed: true");
     }
     await this.assertDeclaredConnections(companyId, target.manifest);
+    // Task templates hand work to an agent in every viewer's name, with instructions fixed here, so
+    // they too need a person who has read them — a change to the instructions alone included.
+    const tasksChange = taskTemplatesChanged(currentManifest, target.manifest);
+    if (tasksChange && actor.kind !== "user") {
+      throw new DataError("forbidden", "this version adds or changes task templates, which need a person to publish; save the draft and ask a company admin to publish it from the Apps page");
+    }
+    if (tasksChange && opts.tasksConfirmed !== true) {
+      throw new DataError("invalid", "this version adds or changes task templates; review which agent each one reaches and what it is told, then publish with tasksConfirmed: true");
+    }
+    await this.assertTaskFields(companyId, actor, target.manifest, false);
+    const taskAgents = await this.resolveTaskAgents(companyId, target.manifest);
     // Milestone 4: the guardrail screens an agent's publish or rollback of this exact version. The
     // version's own id is in the fingerprint, so a person's "Allow once" covers the version they were
     // shown: never a newer draft saved in between, nor a same-numbered version of a replacement app
@@ -541,12 +687,25 @@ export class AppService {
     }), opts.guard);
     const sets = Object.keys(target.manifest.decisions ?? {});
     const connectionNames = (target.manifest.connections ?? []).map((entry) => entry.name);
+    const taskKeys = Object.keys(target.manifest.tasks ?? {});
     const app = await this.store.setCurrent(companyId, slug, target.version,
       (published) => this.entry(companyId, actor, operation, published, {
         version: target.version,
         ...(sets.length > 0 ? { decisionSets: sets, decisionsConfirmed: changed } : {}),
         ...(connectionNames.length > 0 ? { connections: connectionNames, connectionsConfirmed: connectionsChange } : {}),
+        ...(taskKeys.length > 0 ? { tasks: taskKeys, tasksConfirmed: tasksChange } : {}),
       }));
+    if (this.taskStore) {
+      try {
+        await this.taskStore.setTaskAgents(target.id, taskAgents);
+      } catch (error) {
+        // The version is already current and this cannot undo that, so the publisher is told it failed;
+        // a retry (the same version, now needing no confirmation) writes the mapping again. Until then
+        // the app's task starts answer `disabled`.
+        this.log?.("app task agents not recorded after publish", { companyId, appId: app.id, version: target.version, error: String(error) });
+        throw error;
+      }
+    }
     return { app, version: target.version };
   }
 
@@ -596,6 +755,52 @@ export class AppService {
         throw new DataError("invalid", `decision set "${key}" names field(s) ${missing.join(", ")} that table "${set.table}" does not have`);
       }
     }
+  }
+
+  /** The task-template sibling of `assertDecisionFields`, with the same `tolerateMissingTable` rule. */
+  private async assertTaskFields(companyId: string, actor: DataActor, manifest: AppManifest, tolerateMissingTable: boolean): Promise<void> {
+    for (const [key, template] of Object.entries(manifest.tasks ?? {})) {
+      if (!template.table) continue;
+      let info: TableInfo;
+      try {
+        info = await this.data.describeTable(companyId, actor, template.table);
+      } catch (error) {
+        if (tolerateMissingTable && error instanceof DataError && error.code === "not_found") continue;
+        throw error;
+      }
+      const known = new Set(info.fields.map((field) => field.name));
+      const missing = template.fields.filter((field) => !known.has(field));
+      if (missing.length > 0) {
+        throw new DataError("invalid", `task template "${key}" names field(s) ${missing.join(", ")} that table "${template.table}" does not have`);
+      }
+    }
+  }
+
+  /**
+   * Each template's agent name → that agent's id as it stands at publish (null without templates).
+   * Every name must mean exactly one agent that can take work; otherwise `invalid`, naming each one.
+   */
+  private async resolveTaskAgents(companyId: string, manifest: AppManifest): Promise<Record<string, string> | null> {
+    const templates = Object.entries(manifest.tasks ?? {});
+    if (templates.length === 0) return null;
+    if (!this.agents || !this.taskStore) throw new DataError("invalid", "this version declares task templates, which are not available in this installation");
+    const agents = await this.agents.list(companyId);
+    const resolved: Record<string, string> = {};
+    const problems: string[] = [];
+    for (const [key, template] of templates) {
+      const found = findAgentByName(agents, template.agent);
+      if (found === "missing") problems.push(`task template "${key}" names agent "${template.agent}", which this company doesn't have`);
+      else if (found === "ambiguous") problems.push(`task template "${key}" names agent "${template.agent}", which matches more than one agent; use the exact name`);
+      else if (UNUSABLE_AGENT.has(found.status)) problems.push(`task template "${key}" names agent "${template.agent}", which is ${found.status === "terminated" ? "terminated" : "waiting for approval"}`);
+      else resolved[key] = found.id;
+    }
+    if (problems.length > 0) throw new DataError("invalid", problems.join("; "));
+    return resolved;
+  }
+
+  private requireTasks(): NonNullable<AppServiceDeps["tasks"]> {
+    if (!this.tasks) throw new DataError("disabled", "app tasks are not available in this installation");
+    return this.tasks;
   }
 
   private async open(companyId: string, actor: DataActor, slug: string): Promise<{ app: AppRecord; version: AppVersion; level: AccessLevel }> {

@@ -4,7 +4,9 @@ import type { Pool } from "pg";
 import { handleApiRequest } from "./api-routes.js";
 import { handleAppsApiRequest } from "./apps/api-routes.js";
 import { MAX_APP_NOTES } from "./apps/manifest.js";
-import { AppService, parseDecideInput, parseRuntimeMethod, type AppServiceDeps } from "./apps/service.js";
+import { AppService, confirmations, parseDecideInput, parseRuntimeMethod, type AppServiceDeps } from "./apps/service.js";
+import { TaskService, type TaskServiceDeps } from "./tasks/service.js";
+import { AppTaskStore } from "./tasks/store.js";
 import { registerAppTools } from "./apps/tools.js";
 import { handleDecisionsApiRequest } from "./decisions/api-routes.js";
 import { handleGroupsApiRequest, keptMemberIds } from "./groups/api-routes.js";
@@ -44,6 +46,7 @@ export interface AppsPluginDeps {
   createAppService?: (deps: AppServiceDeps) => AppService;
   createDecisionService?: (deps: DecisionServiceDeps) => DecisionService;
   createConnectionService?: (deps: ConnectionServiceDeps) => ConnectionService;
+  createTaskService?: (deps: TaskServiceDeps) => TaskService;
   /** Whether this instance may manage groups; tests pass a fake, production reads the licence files. */
   licence?: LicenceGate;
   /** Where the kyoube CLI's rules token lives (ruling R18); tests point it at a temporary file. */
@@ -84,6 +87,14 @@ function versionRef(params: Params): number | "current" | "latest" {
 function versionNumber(params: Params): number {
   const value = params.version;
   if (typeof value !== "number" || !Number.isInteger(value)) throw new DataError("invalid", "version must be an integer");
+  return value;
+}
+
+/** An optional string parameter: absent and null mean "not given"; anything else must be a string. */
+function optionalStr(params: Params, key: string): string | undefined {
+  const value = params[key];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") throw new DataError("invalid", `${key} must be a string`);
   return value;
 }
 
@@ -272,6 +283,56 @@ export function createAppsPlugin(deps: AppsPluginDeps): PaperclipPlugin {
         log: (message, meta) => ctx.logger.warn(message, meta),
       });
       dataService.attach({ guardAgentAction: guardrail.check });
+      // App tasks (docs/app-tasks.md): the issue is created as the person using the app, after the
+      // core's own assignment decision for that person and agent.
+      const taskStore = new AppTaskStore(dbPool);
+      // Company → issue prefix, for the task link; kept for the worker's life (prefixes don't change).
+      const issuePrefixes = new Map<string, string>();
+      const taskUrl = async (companyId: string, issue: { id: string; identifier?: string | null }): Promise<string> => {
+        // Never throws: the link is built after the task has committed, so a failed lookup must not
+        // fail the start. Without a prefix, the bare issue path still opens the task.
+        try {
+          let prefix = issuePrefixes.get(companyId);
+          if (prefix === undefined) {
+            const found = (await ctx.companies.get(companyId))?.issuePrefix;
+            if (typeof found === "string" && found.length > 0) {
+              prefix = found;
+              issuePrefixes.set(companyId, found);
+            }
+          }
+          if (prefix) return `/${encodeURIComponent(prefix)}/issues/${encodeURIComponent(issue.identifier ?? issue.id)}`;
+          ctx.logger.warn("company has no issue prefix; app task links use the issue id", { companyId });
+        } catch (error) {
+          ctx.logger.warn("company issue prefix lookup failed; app task links use the issue id", { companyId, error: String(error) });
+        }
+        return `/issues/${encodeURIComponent(issue.id)}`;
+      };
+      const taskService = (deps.createTaskService ?? ((taskDeps) => new TaskService(taskDeps)))({
+        store: taskStore,
+        issues: {
+          // No `surfaceVisibility`: the task shows in the company's normal task list.
+          create: (input) => ctx.issues.create({
+            companyId: input.companyId, title: input.title, description: input.description, status: input.status,
+            assigneeAgentId: input.assigneeAgentId, actor: { actorUserId: input.actor.actorUserId },
+          }),
+          get: (issueId, companyId) => ctx.issues.get(issueId, companyId),
+          update: (issueId, patch, companyId, actor) => ctx.issues.update(issueId, { status: patch.status }, companyId, { actorUserId: actor.actorUserId }),
+          requestWakeup: (issueId, companyId, opts) => ctx.issues.requestWakeup(issueId, companyId, { reason: opts.reason, actorUserId: opts.actorUserId }),
+          listComments: async (issueId, companyId) => (await ctx.issues.listComments(issueId, companyId)).map((comment) => ({
+            body: comment.body, authorType: comment.authorType, authorAgentId: comment.authorAgentId, createdAt: comment.createdAt, deletedAt: comment.deletedAt ?? null,
+          })),
+        },
+        // The host looks the person's membership up itself; the board actor only names them.
+        previewAssignment: (companyId, userId, agentId) => ctx.authorization.policies.previewAssignment({
+          companyId, actor: { type: "board", userId, companyIds: [companyId] }, target: { assigneeAgentId: agentId },
+        }),
+        agent: (companyId, agentId) => ctx.agents.get(agentId, companyId),
+        levelFor: (companyId, actor) => dataService.levelFor(companyId, actor),
+        readRow: (companyId, actor, table, rowId) => dataService.get(companyId, actor, table, rowId),
+        resolveUserRole: (companyId, userId, fresh) => (fresh ? roles.resolveFresh(companyId, userId) : roles.resolveRole(companyId, userId)),
+        taskUrl,
+        log: (message, meta) => ctx.logger.warn(message, meta),
+      });
       // The apps service resolves every caller's level through this same
       // DataService, so an app can only ever narrow its viewer's access.
       const appService = (deps.createAppService ?? ((appDeps) => new AppService(appDeps)))({
@@ -287,6 +348,10 @@ export function createAppsPlugin(deps: AppsPluginDeps): PaperclipPlugin {
         onMutationError: appsActivity.onError,
         hiddenApps: (companyId, userId) => groupService.hiddenApps(companyId, userId),
         guardAgentAction: guardrail.check,
+        tasks: taskService,
+        taskStore,
+        agents: { list: async (companyId) => (await ctx.agents.list({ companyId })).map((agent) => ({ id: agent.id, name: agent.name, status: agent.status })) },
+        log: (message, meta) => ctx.logger.warn(message, meta),
       });
       apps = appService;
       // Connections: the same secret cache, the same guard and the same level rules as everything else.
@@ -460,8 +525,8 @@ export function createAppsPlugin(deps: AppsPluginDeps): PaperclipPlugin {
       action("apps.get", (c, a, p) => appService.get(c, a, str(p, "slug"), versionRef(p)));
       action("apps.create", (c, a, p) => appService.create(c, a, p.manifest, p.source, optionalNotes(p)));
       action("apps.update", (c, a, p) => appService.update(c, a, str(p, "slug"), p.manifest, p.source, optionalNotes(p)));
-      action("apps.publish", (c, a, p) => appService.publish(c, a, str(p, "slug"), optionalVersionNumber(p), { decisionsConfirmed: p.decisionsConfirmed === true, ...(p.connectionsConfirmed === true ? { connectionsConfirmed: true } : {}), ...guardOption(p) }));
-      action("apps.rollback", (c, a, p) => appService.rollback(c, a, str(p, "slug"), versionNumber(p), { decisionsConfirmed: p.decisionsConfirmed === true, ...(p.connectionsConfirmed === true ? { connectionsConfirmed: true } : {}), ...guardOption(p) }));
+      action("apps.publish", (c, a, p) => appService.publish(c, a, str(p, "slug"), optionalVersionNumber(p), { ...confirmations(p), ...guardOption(p) }));
+      action("apps.rollback", (c, a, p) => appService.rollback(c, a, str(p, "slug"), versionNumber(p), { ...confirmations(p), ...guardOption(p) }));
       action("apps.archive", (c, a, p) => appService.archive(c, a, str(p, "slug"), guardOption(p)));
       // The runner has no viewer name to show yet (the action context carries
       // ids, not display names), so the app sees an empty one.
@@ -475,6 +540,16 @@ export function createAppsPlugin(deps: AppsPluginDeps): PaperclipPlugin {
       // code through the bridge; `parseDecideInput` and AppService check them before anything runs.
       action("apps.decide", (c, a, p) => appService.runtimeDecide(c, a, str(p, "slug"), str(p, "set"), parseDecideInput(p.input)));
       action("apps.connection_call", (c, a, p) => appService.runtimeConnection(c, a, str(p, "slug"), str(p, "name"), p.request));
+      // App tasks (docs/app-tasks.md). `rowId` and `inputs` stay opaque here: TaskService checks them
+      // against the published template. Only the named keys are passed on, never the host's extras.
+      action("apps.task_start", (c, a, p) => appService.runtimeTaskStart(c, a, str(p, "slug"), str(p, "template"), { rowId: p.rowId, inputs: p.inputs }));
+      action("apps.task_get", (c, a, p) => appService.runtimeTaskGet(c, a, str(p, "slug"), str(p, "id")));
+      action("apps.task_list", (c, a, p) => {
+        const template = optionalStr(p, "template");
+        const rowId = optionalStr(p, "rowId");
+        return appService.runtimeTaskList(c, a, str(p, "slug"), { ...(template !== undefined ? { template } : {}), ...(rowId !== undefined ? { rowId } : {}) });
+      });
+      action("apps.task_cancel", (c, a, p) => appService.runtimeTaskCancel(c, a, str(p, "slug"), str(p, "id")));
       // The connections each published app's current version declares, for the viewer's own app list.
       const declaredConnections = async (c: string, a: DataActor): Promise<Array<{ slug: string; name: string; connections: Array<{ name: string; access: string }> }>> => {
         const list = await appService.list(c, a);

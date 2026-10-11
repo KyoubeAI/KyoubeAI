@@ -3,6 +3,7 @@ import { createTestHarness } from "@paperclipai/plugin-sdk/testing";
 import type { PluginApiRequestInput } from "@paperclipai/plugin-sdk";
 import type { PluginPerformActionContext } from "@paperclipai/plugin-sdk/protocol";
 import type { AppServiceDeps } from "../../src/apps/service.js";
+import { TaskService, type TaskServiceDeps } from "../../src/tasks/service.js";
 import type { DataService, DataServiceDeps, MutationEvent } from "../../src/data/service.js";
 import manifest from "../../src/manifest.js";
 import { actorFromAction, createAppsPlugin } from "../../src/plugin.js";
@@ -26,8 +27,9 @@ function appsApiRequest(overrides: Partial<PluginApiRequestInput> = {}): PluginA
   return apiRequest({ routeKey: "apps.list", path: "/apps", ...overrides });
 }
 
-async function setup(opts: { rulesTokenPath?: string } = {}) {
+async function setup(opts: { rulesTokenPath?: string; before?: (harness: ReturnType<typeof createTestHarness>) => void } = {}) {
   const harness = createTestHarness({ manifest });
+  opts.before?.(harness);
   harness.seed({
     accessMembers: [{ id: "m1", companyId: COMPANY, principalType: "user", principalId: "admin-1", status: "active", membershipRole: "admin", grants: [], createdAt: "2026-01-01", updatedAt: "2026-01-01" }],
     agents: [{ id: "agent-1", companyId: COMPANY, name: "Builder", status: "idle" } as never],
@@ -40,6 +42,7 @@ async function setup(opts: { rulesTokenPath?: string } = {}) {
   const fakePool = { query: async () => ({ rows: [{ ok: 1 }] }), end: async () => void poolEnds.push("end") };
   let serviceDeps: DataServiceDeps | null = null;
   let appDeps: AppServiceDeps | null = null;
+  let taskDeps: TaskServiceDeps | null = null;
   const plugin = createAppsPlugin({
     loadKyoubeConfig: async () => KYOUBE_CONFIG,
     migrationsDir: "/nowhere",
@@ -56,12 +59,16 @@ async function setup(opts: { rulesTokenPath?: string } = {}) {
       appDeps = deps;
       return stub.service as never;
     },
+    createTaskService: (deps) => {
+      taskDeps = deps;
+      return new TaskService(deps);
+    },
   });
   await plugin.definition.setup(harness.ctx);
   // Setup itself calls the data service (`attach`, for the guardrail and AI columns); the tests
   // count only what the actions and reads they make reach.
   stub.calls.length = 0;
-  return { harness, plugin, poolEnds, serviceDeps: serviceDeps as unknown as DataServiceDeps, appDeps: appDeps as unknown as AppServiceDeps, ...stub };
+  return { harness, plugin, poolEnds, serviceDeps: serviceDeps as unknown as DataServiceDeps, appDeps: appDeps as unknown as AppServiceDeps, taskDeps: taskDeps as unknown as TaskServiceDeps, ...stub };
 }
 
 type ActionHandler = (params: Record<string, unknown>, context: PluginPerformActionContext) => Promise<unknown>;
@@ -155,10 +162,15 @@ describe("kyoube.apps manifest", () => {
     // `ctx.events.on("company.created")`; without it the host rejects the
     // subscription at runtime, not at install time.
     expect(manifest.capabilities).toContain("events.subscribe");
-    // The worker never enumerates companies itself: a call made outside a
-    // host-issued invocation has no company scope, and the host refuses
-    // `skills.managed.reconcile` without one ("company context is required").
-    expect(manifest.capabilities).not.toContain("companies.read");
+  });
+
+  it("declares exactly what app tasks need, and never posting comments on issues (docs/app-tasks.md)", () => {
+    expect(manifest.capabilities).toEqual(expect.arrayContaining([
+      "issues.create", "issues.update", "issues.wakeup", "issue.comments.read", "authorization.policies.read", "companies.read",
+      "agents.read", "access.members.read",
+    ]));
+    expect(manifest.capabilities).not.toContain("issue.comments.create");
+    expect(new Set(manifest.capabilities).size).toBe(manifest.capabilities.length);
   });
 
   it("declares a board-only route that installs the skills into one company", () => {
@@ -355,6 +367,102 @@ describe("kyoube.apps plugin wiring", () => {
     expect(calls[2]?.args.slice(2)).toEqual([appManifest, source, "first"]);
     expect(calls[3]?.args.slice(2)).toEqual(["crm", appManifest, source, null]);
     expect(calls[5]?.args[3]).toBe(2);
+  });
+
+  it("registers the four task actions and passes each to its runtime method", async () => {
+    const { harness, calls } = await setup();
+    const as = { actor: ADMIN, companyId: COMPANY };
+    const user = { kind: "user", id: "admin-1", runId: null };
+    await harness.performAction("apps.task_start", { slug: "crm", template: "draft_reply", rowId: "r1", inputs: { tone: "formal" } }, as);
+    expect(calls.at(-1)).toEqual({ method: "runtimeTaskStart", args: [COMPANY, user, "crm", "draft_reply", { rowId: "r1", inputs: { tone: "formal" } }] });
+    await harness.performAction("apps.task_get", { slug: "crm", id: "issue-1" }, as);
+    expect(calls.at(-1)).toEqual({ method: "runtimeTaskGet", args: [COMPANY, user, "crm", "issue-1"] });
+    await harness.performAction("apps.task_list", { slug: "crm", template: "draft_reply", rowId: "r1" }, as);
+    expect(calls.at(-1)).toEqual({ method: "runtimeTaskList", args: [COMPANY, user, "crm", { template: "draft_reply", rowId: "r1" }] });
+    await harness.performAction("apps.task_list", { slug: "crm" }, as);
+    expect(calls.at(-1)).toEqual({ method: "runtimeTaskList", args: [COMPANY, user, "crm", {}] });
+    await harness.performAction("apps.task_cancel", { slug: "crm", id: "issue-1" }, as);
+    expect(calls.at(-1)).toEqual({ method: "runtimeTaskCancel", args: [COMPANY, user, "crm", "issue-1"] });
+    const before = calls.length;
+    await expect(harness.performAction("apps.task_start", { slug: "crm" }, as)).rejects.toThrow("template is required");
+    await expect(harness.performAction("apps.task_get", { slug: "crm" }, as)).rejects.toThrow("id is required");
+    await expect(harness.performAction("apps.task_list", { slug: "crm", rowId: 5 }, as)).rejects.toThrow("rowId must be a string");
+    expect(calls).toHaveLength(before);
+  });
+
+  it("passes tasksConfirmed from the publish and rollback actions", async () => {
+    const { harness, calls } = await setup();
+    const as = { actor: ADMIN, companyId: COMPANY };
+    await harness.performAction("apps.publish", { slug: "crm", tasksConfirmed: true }, as);
+    expect(calls.at(-1)!.args.slice(2)).toEqual(["crm", undefined, { decisionsConfirmed: false, tasksConfirmed: true }]);
+    await harness.performAction("apps.rollback", { slug: "crm", version: 2, tasksConfirmed: true }, as);
+    expect(calls.at(-1)!.args.slice(2)).toEqual(["crm", 2, { decisionsConfirmed: false, tasksConfirmed: true }]);
+    await harness.performAction("apps.publish", { slug: "crm", tasksConfirmed: "yes" }, as);
+    expect(calls.at(-1)!.args.slice(2)).toEqual(["crm", undefined, { decisionsConfirmed: false }]);
+  });
+
+  it("hands the app service the task service, the agent directory and the task store", async () => {
+    const { appDeps, taskDeps } = await setup();
+    expect(appDeps.tasks).toBeInstanceOf(TaskService);
+    expect(appDeps.taskStore).toBe(taskDeps.store);
+    expect(await appDeps.agents!.list(COMPANY)).toEqual([{ id: "agent-1", name: "Builder", status: "idle" }]);
+  });
+
+  it("builds task links from the company's issue prefix, and falls back to the issue id without failing", async () => {
+    const PREFIXED = "33333333-3333-4333-8333-333333333333";
+    let lookups = 0;
+    const { harness, taskDeps } = await setup({
+      before: (h) => {
+        h.seed({ companies: [{ id: PREFIXED, name: "Gamma", issuePrefix: "GAM" } as never] });
+        const get = h.ctx.companies.get.bind(h.ctx.companies);
+        h.ctx.companies.get = async (companyId: string) => {
+          lookups++;
+          if (companyId === "boom") throw new Error("host down");
+          return get(companyId);
+        };
+      },
+    });
+    expect(await taskDeps.taskUrl(PREFIXED, { id: "i-1", identifier: "GAM-7" })).toBe("/GAM/issues/GAM-7");
+    expect(await taskDeps.taskUrl(PREFIXED, { id: "i-2", identifier: null })).toBe("/GAM/issues/i-2");
+    expect(lookups).toBe(1);
+    // Seeded without a prefix, and a lookup that throws: the bare issue path, with a warning.
+    expect(await taskDeps.taskUrl(COMPANY, { id: "i-3", identifier: "ACM-1" })).toBe("/issues/i-3");
+    expect(await taskDeps.taskUrl("boom", { id: "i-4" })).toBe("/issues/i-4");
+    const warned = harness.logs.filter((entry) => entry.level === "warn" && entry.message.includes("issue prefix"));
+    expect(warned.length).toBeGreaterThanOrEqual(2);
+    expect(warned.some((entry) => String(entry.meta?.error).includes("host down"))).toBe(true);
+  });
+
+  it("adapts ctx.issues, the assignment preview and the agent lookup to what the task service needs", async () => {
+    const seen: Record<string, unknown[]> = {};
+    const { taskDeps } = await setup({
+      before: (h) => {
+        const spy = <T extends (...args: never[]) => unknown>(name: string, fn: T): T => ((...args: never[]) => { seen[name] = args; return fn(...args); }) as T;
+        h.ctx.issues.create = spy("create", h.ctx.issues.create.bind(h.ctx.issues));
+        h.ctx.issues.requestWakeup = spy("requestWakeup", h.ctx.issues.requestWakeup.bind(h.ctx.issues));
+        h.ctx.issues.update = spy("update", h.ctx.issues.update.bind(h.ctx.issues));
+        h.ctx.authorization.policies.previewAssignment = spy("previewAssignment", h.ctx.authorization.policies.previewAssignment.bind(h.ctx.authorization.policies));
+        h.seed({
+          issues: [{ id: "seeded", companyId: COMPANY, title: "t", status: "done", assigneeAgentId: "agent-1" } as never],
+          issueComments: [{ id: "c1", companyId: COMPANY, issueId: "seeded", authorType: "agent", authorAgentId: "agent-1", authorUserId: null, body: "Done.", createdAt: "2026-10-11T10:00:00.000Z", updatedAt: "2026-10-11T10:00:00.000Z" } as never],
+        });
+      },
+    });
+    const created = await taskDeps.issues.create({ companyId: COMPANY, title: "Reply", description: "Body", status: "todo", assigneeAgentId: "agent-1", actor: { actorUserId: "admin-1" } });
+    expect(seen.create).toEqual([{ companyId: COMPANY, title: "Reply", description: "Body", status: "todo", assigneeAgentId: "agent-1", actor: { actorUserId: "admin-1" } }]);
+    expect(seen.create![0]).not.toHaveProperty("surfaceVisibility");
+    expect(created.id).toEqual(expect.any(String));
+    await expect(taskDeps.issues.requestWakeup(created.id, COMPANY, { reason: "kyoube_app_task", actorUserId: "admin-1" })).resolves.toMatchObject({ queued: true });
+    expect(seen.requestWakeup).toEqual([created.id, COMPANY, { reason: "kyoube_app_task", actorUserId: "admin-1" }]);
+    await taskDeps.issues.update(created.id, { status: "cancelled" }, COMPANY, { actorUserId: "admin-1" });
+    expect(seen.update).toEqual([created.id, { status: "cancelled" }, COMPANY, { actorUserId: "admin-1" }]);
+    expect(await taskDeps.issues.listComments("seeded", COMPANY)).toEqual([
+      { body: "Done.", authorType: "agent", authorAgentId: "agent-1", createdAt: "2026-10-11T10:00:00.000Z", deletedAt: null },
+    ]);
+    expect(await taskDeps.previewAssignment(COMPANY, "admin-1", "agent-1")).toMatchObject({ allowed: true, explanation: expect.any(String) });
+    expect(seen.previewAssignment).toEqual([{ companyId: COMPANY, actor: { type: "board", userId: "admin-1", companyIds: [COMPANY] }, target: { assigneeAgentId: "agent-1" } }]);
+    expect(await taskDeps.agent(COMPANY, "agent-1")).toMatchObject({ id: "agent-1", name: "Builder", status: "idle" });
+    expect(await taskDeps.agent(COMPANY, "nobody")).toBeNull();
   });
 
   // M1: `notes` is stored free text, so the action validates it (the tool

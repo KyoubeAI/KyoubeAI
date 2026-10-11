@@ -72,6 +72,16 @@ const manifest: PaperclipPluginManifestV1 = {
     "issues.read",
     "issue.interactions.create",
     "issue.interactions.read",
+    // App tasks (docs/app-tasks.md): create the task as the person using the app, wake its agent,
+    // cancel it, read the agent's reply, ask the core whether that person may assign the agent, and
+    // read the company's issue prefix for the task link. The plugin never declares
+    // issue.comments.create: it never speaks on a task, it only reads the agent's answer.
+    "issues.create",
+    "issues.update",
+    "issues.wakeup",
+    "issue.comments.read",
+    "authorization.policies.read",
+    "companies.read",
   ],
   entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui" },
   instanceConfigSchema: {

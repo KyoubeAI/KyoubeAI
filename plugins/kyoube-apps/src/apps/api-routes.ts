@@ -4,7 +4,7 @@ import { actorFromRequest, errorBody, statusForError } from "../api-routes.js";
 import { DataError } from "../data/errors.js";
 import { guardOption, guardToolParams } from "../decisions/guardrail.js";
 import { APP_MANIFEST_SCHEMA, MAX_APP_NOTES } from "./manifest.js";
-import type { AppService } from "./service.js";
+import { confirmations, type AppService } from "./service.js";
 
 type Method = "GET" | "POST";
 
@@ -34,8 +34,9 @@ export const APP_API_ROUTES: PluginApiRouteDeclaration[] = [
 // these fields. The manifest itself is the shared strict schema, so a typo
 // inside it is rejected rather than silently dropped.
 const writeBody = z.object({ manifest: APP_MANIFEST_SCHEMA, source: z.string().min(1), notes: z.string().max(MAX_APP_NOTES).nullable().optional() });
-const publishBody = z.object({ version: z.number().int().optional(), decisionsConfirmed: z.boolean().optional(), connectionsConfirmed: z.boolean().optional(), ...guardToolParams });
-const rollbackBody = z.object({ version: z.number().int(), decisionsConfirmed: z.boolean().optional(), connectionsConfirmed: z.boolean().optional(), ...guardToolParams });
+const confirmFields = { decisionsConfirmed: z.boolean().optional(), connectionsConfirmed: z.boolean().optional(), tasksConfirmed: z.boolean().optional() };
+const publishBody = z.object({ version: z.number().int().optional(), ...confirmFields, ...guardToolParams });
+const rollbackBody = z.object({ version: z.number().int(), ...confirmFields, ...guardToolParams });
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
   const parsed = schema.safeParse(body ?? {});
@@ -89,8 +90,8 @@ export async function handleAppsApiRequest(
       case "apps.get": body = await apps.get(companyId, actor, slugOf(input), versionOf(input)); break;
       case "apps.update": { const b = parse(writeBody, input.body); body = await apps.update(companyId, actor, slugOf(input), b.manifest, b.source, b.notes ?? null); break; }
       // The guardrail's ids ride along only when the body carries them (docs/decisions.md).
-      case "apps.publish": { const b = parse(publishBody, input.body); body = await apps.publish(companyId, actor, slugOf(input), b.version, { decisionsConfirmed: b.decisionsConfirmed === true, ...(b.connectionsConfirmed === true ? { connectionsConfirmed: true } : {}), ...guardOption(input.body) }); break; }
-      case "apps.rollback": { const b = parse(rollbackBody, input.body); body = await apps.rollback(companyId, actor, slugOf(input), b.version, { decisionsConfirmed: b.decisionsConfirmed === true, ...(b.connectionsConfirmed === true ? { connectionsConfirmed: true } : {}), ...guardOption(input.body) }); break; }
+      case "apps.publish": { const b = parse(publishBody, input.body); body = await apps.publish(companyId, actor, slugOf(input), b.version, { ...confirmations(b), ...guardOption(input.body) }); break; }
+      case "apps.rollback": { const b = parse(rollbackBody, input.body); body = await apps.rollback(companyId, actor, slugOf(input), b.version, { ...confirmations(b), ...guardOption(input.body) }); break; }
       case "apps.archive": body = await apps.archive(companyId, actor, slugOf(input), guardOption(input.body)); break;
       default: return { status: 404, body: { error: `unknown route ${input.routeKey}`, code: "not_found" } };
     }

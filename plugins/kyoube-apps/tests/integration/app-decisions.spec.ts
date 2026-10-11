@@ -163,7 +163,7 @@ describe("publishing decision sets", () => {
     const service = new AppService({ pool: db.pool, data, decisions: stubDecisions().decisions });
     await service.create(C, OWNER, manifest("pub-preview", { triage: { ...TRIAGE_SET, advisory: true } }), SOURCE);
     expect(await service.publishPreview(C, OWNER, "pub-preview")).toEqual({
-      version: 1, changed: true, provider: "openrouter", available: true, connections: { changed: false, list: [] },
+      version: 1, changed: true, provider: "openrouter", available: true, connections: { changed: false, list: [] }, tasks: { changed: false, list: [] },
       sets: [{ key: "triage", table: "tickets", fields: ["subject", "body"], advisory: true, questions: [{ key: "urgent", type: "check", text: URGENT.statement }] }],
     });
     await expect(service.publishPreview(C, VIEWER, "pub-preview")).rejects.toMatchObject({ code: "forbidden" });

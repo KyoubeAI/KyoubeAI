@@ -53,6 +53,17 @@ describe("app tools", () => {
     expect(calls).toHaveLength(2);
   });
 
+  it("passes tasksConfirmed to publish and rollback and refuses a non-boolean", async () => {
+    const { harness, calls } = setup();
+    await harness.executeTool("apps_publish", { slug: "crm", tasksConfirmed: true }, RUN);
+    expect(calls.at(-1)).toEqual({ method: "publish", args: [RUN.companyId, AGENT, "crm", undefined, { decisionsConfirmed: false, tasksConfirmed: true }] });
+    await harness.executeTool("apps_rollback", { slug: "crm", version: 1, tasksConfirmed: true }, RUN);
+    expect(calls.at(-1)).toEqual({ method: "rollback", args: [RUN.companyId, AGENT, "crm", 1, { decisionsConfirmed: false, tasksConfirmed: true }] });
+    const bad = await harness.executeTool("apps_publish", { slug: "crm", tasksConfirmed: "yes" }, RUN);
+    expect(bad.error).toContain("tasksConfirmed");
+    expect(calls).toHaveLength(2);
+  });
+
   it("rejects notes longer than 2000 characters", async () => {
     const { harness, calls } = setup();
     const tooLong = "x".repeat(2001);
