@@ -143,8 +143,10 @@ export interface PublishPreview {
     /** The version adds or changes task templates: a person must publish it, with `tasksConfirmed`. */
     changed: boolean;
     /**
-     * Each declared template as the dialog shows it, unfilled. `agentFound` says whether the name
-     * resolves to an agent that can take work today; `agentCanWrite` is null unless the template `writes`.
+     * Each declared template as the dialog shows it, unfilled. `agentFound` says whether the template
+     * reaches an agent that can take work today, resolved exactly as publishing will (a kept or carried
+     * id first, else the name); `agent` is that agent's current name, or the name as written when it is
+     * not found. `agentCanWrite` is null unless the template `writes`.
      */
     list: Array<{ key: string; agent: string; agentFound: boolean; agentCanWrite: boolean | null; title: string; instructions: string; table: string | null; fields: string[]; inputs: Record<string, TaskInput>; writes: string[]; added: boolean; changed: boolean }>;
   };
@@ -546,7 +548,8 @@ export class AppService {
     const target = await this.store.getVersion(companyId, slug, version);
     if (!target) throw new DataError("not_found", `app "${slug}" has no version ${version}`);
     await this.assertSlugAccess(companyId, actor, slug);
-    const current = await this.currentManifest(companyId, slug);
+    const currentVersion = await this.currentVersion(companyId, slug);
+    const current = currentVersion?.manifest ?? null;
     const sets = target.manifest.decisions ?? {};
     let provider: string | null = null;
     let available = false;
@@ -565,21 +568,25 @@ export class AppService {
       try { configured = (await this.connections.status(companyId)).connections; } catch { configured = []; }
     }
     const templateRows = templateChanges(current, target.manifest);
-    let companyAgents: CompanyAgent[] = [];
+    // The agent each template would actually reach, resolved exactly as publishing will. As with
+    // connections, the dialog still shows the templates when the directory cannot be read.
+    let reached = new Map<string, CompanyAgent>();
     if (templateRows.length > 0 && this.agents) {
-      // As with connections, the dialog still shows the templates when the directory cannot be read.
-      try { companyAgents = await this.agents.list(companyId); } catch { companyAgents = []; }
+      try {
+        const plan = await this.planTaskAgents(target, currentVersion, await this.agents.list(companyId));
+        reached = new Map(plan.flatMap((entry) => (entry.agent ? [[entry.key, entry.agent] as const] : [])));
+      } catch { reached = new Map(); }
     }
     const taskList = await Promise.all(templateRows.map(async (entry) => {
       const template = target.manifest.tasks![entry.key]!;
-      const found = findAgentByName(companyAgents, template.agent);
-      const agent = typeof found === "object" && !UNUSABLE_AGENT.has(found.status) ? found : null;
+      const agent = reached.get(entry.key) ?? null;
       let agentCanWrite: boolean | null = null;
       if (agent && template.writes.length > 0) {
         try { agentCanWrite = levelAllows(await this.data.levelFor(companyId, { kind: "agent", id: agent.id, runId: null }), "write"); } catch { agentCanWrite = null; }
       }
       return {
-        key: entry.key, agent: template.agent, agentFound: agent !== null, agentCanWrite,
+        // The agent's name today when it resolves (a rename shows), else the name as written.
+        key: entry.key, agent: agent?.name ?? template.agent, agentFound: agent !== null, agentCanWrite,
         title: template.title, instructions: template.instructions, table: template.table, fields: template.fields, inputs: template.inputs, writes: template.writes,
         added: entry.added, changed: entry.changed,
       };
@@ -648,7 +655,8 @@ export class AppService {
     await this.assertDecisionFields(companyId, actor, target.manifest, false);
     // Spec §5: new or changed decision sets change what leaves the server for every viewer, so a
     // person publishes them, after reviewing what they send — never an agent, whatever its grant.
-    const currentManifest = await this.currentManifest(companyId, slug);
+    const currentVersion = await this.currentVersion(companyId, slug);
+    const currentManifest = currentVersion?.manifest ?? null;
     const changed = decisionSetsChanged(currentManifest, target.manifest);
     if (changed && actor.kind !== "user") {
       throw new DataError("forbidden", "decision sets need a person to publish; save the draft and ask a company admin to publish it from the Apps page");
@@ -676,7 +684,7 @@ export class AppService {
       throw new DataError("invalid", "this version adds or changes task templates; review which agent each one reaches and what it is told, then publish with tasksConfirmed: true");
     }
     await this.assertTaskFields(companyId, actor, target.manifest, false);
-    const taskAgents = await this.resolveTaskAgents(companyId, target.manifest);
+    const taskAgents = await this.resolveTaskAgents(companyId, target, currentVersion);
     // Milestone 4: the guardrail screens an agent's publish or rollback of this exact version. The
     // version's own id is in the fingerprint, so a person's "Allow once" covers the version they were
     // shown: never a newer draft saved in between, nor a same-numbered version of a replacement app
@@ -721,11 +729,11 @@ export class AppService {
     if (wide.length > 0) throw new DataError("invalid", `connection(s) ${wide.join(", ")} only allow read access, but the app declares read-write`);
   }
 
-  /** The manifest viewers run today, or null when the app has never been published. */
-  private async currentManifest(companyId: string, slug: string): Promise<AppManifest | null> {
+  /** The version viewers run today, or null when the app has never been published. */
+  private async currentVersion(companyId: string, slug: string): Promise<AppVersion | null> {
     const app = await this.store.get(companyId, slug);
     if (!app || app.currentVersion === null) return null;
-    return (await this.store.getVersion(app, "current"))?.manifest ?? null;
+    return this.store.getVersion(app, "current");
   }
 
   /**
@@ -777,25 +785,47 @@ export class AppService {
   }
 
   /**
-   * Each template's agent name → that agent's id as it stands at publish (null without templates).
-   * Every name must mean exactly one agent that can take work; otherwise `invalid`, naming each one.
+   * The agent each of `target`'s templates reaches if it is published now (spec §8: a version keeps
+   * the agent's id, so a rename never changes who gets the work). In order:
+   * - a version that was published before keeps its stored ids (a rollback or a republish);
+   * - otherwise a template unchanged from the current published version's carries that version's id
+   *   forward, so a source-only change — which an agent may publish — can never rebind it;
+   * - only an added or changed template, which a person confirms, is looked up by name.
+   * Never throws over an agent: each entry has the agent, or the problem to report.
    */
-  private async resolveTaskAgents(companyId: string, manifest: AppManifest): Promise<Record<string, string> | null> {
-    const templates = Object.entries(manifest.tasks ?? {});
-    if (templates.length === 0) return null;
-    if (!this.agents || !this.taskStore) throw new DataError("invalid", "this version declares task templates, which are not available in this installation");
-    const agents = await this.agents.list(companyId);
-    const resolved: Record<string, string> = {};
-    const problems: string[] = [];
-    for (const [key, template] of templates) {
+  private async planTaskAgents(target: AppVersion, current: AppVersion | null, agents: CompanyAgent[]): Promise<Array<{ key: string; agent: CompanyAgent | null; problem: string | null }>> {
+    const templates = Object.entries(target.manifest.tasks ?? {});
+    if (templates.length === 0) return [];
+    const stored = this.taskStore ? await this.taskStore.getTaskAgents(target.id) : null;
+    const previous = !stored && current && this.taskStore ? await this.taskStore.getTaskAgents(current.id) : null;
+    const unchanged = new Set(templateChanges(current?.manifest ?? null, target.manifest).filter((entry) => !entry.added && !entry.changed).map((entry) => entry.key));
+    const unusable = (status: string) => (status === "terminated" ? "terminated" : "waiting for approval");
+    return templates.map(([key, template]) => {
+      let id: string | undefined;
+      if (stored && Object.hasOwn(stored, key)) id = stored[key];
+      else if (previous && unchanged.has(key) && Object.hasOwn(previous, key)) id = previous[key];
+      if (id !== undefined) {
+        const agent = agents.find((candidate) => candidate.id === id);
+        if (!agent) return { key, agent: null, problem: `task template "${key}" reaches agent "${template.agent}", which no longer exists; publish a version that names a current agent` };
+        if (UNUSABLE_AGENT.has(agent.status)) return { key, agent: null, problem: `task template "${key}" reaches agent "${agent.name}", which is ${unusable(agent.status)}` };
+        return { key, agent, problem: null };
+      }
       const found = findAgentByName(agents, template.agent);
-      if (found === "missing") problems.push(`task template "${key}" names agent "${template.agent}", which this company doesn't have`);
-      else if (found === "ambiguous") problems.push(`task template "${key}" names agent "${template.agent}", which matches more than one agent; use the exact name`);
-      else if (UNUSABLE_AGENT.has(found.status)) problems.push(`task template "${key}" names agent "${template.agent}", which is ${found.status === "terminated" ? "terminated" : "waiting for approval"}`);
-      else resolved[key] = found.id;
-    }
+      if (found === "missing") return { key, agent: null, problem: `task template "${key}" names agent "${template.agent}", which this company doesn't have` };
+      if (found === "ambiguous") return { key, agent: null, problem: `task template "${key}" names agent "${template.agent}", which matches more than one agent; use the exact name` };
+      if (UNUSABLE_AGENT.has(found.status)) return { key, agent: null, problem: `task template "${key}" names agent "${template.agent}", which is ${unusable(found.status)}` };
+      return { key, agent: found, problem: null };
+    });
+  }
+
+  /** `planTaskAgents` for a publish: template → agent id (null without templates), or `invalid` naming every problem. */
+  private async resolveTaskAgents(companyId: string, target: AppVersion, current: AppVersion | null): Promise<Record<string, string> | null> {
+    if (Object.keys(target.manifest.tasks ?? {}).length === 0) return null;
+    if (!this.agents || !this.taskStore) throw new DataError("invalid", "this version declares task templates, which are not available in this installation");
+    const plan = await this.planTaskAgents(target, current, await this.agents.list(companyId));
+    const problems = plan.flatMap((entry) => (entry.problem ? [entry.problem] : []));
     if (problems.length > 0) throw new DataError("invalid", problems.join("; "));
-    return resolved;
+    return Object.fromEntries(plan.map((entry) => [entry.key, entry.agent!.id]));
   }
 
   private requireTasks(): NonNullable<AppServiceDeps["tasks"]> {
