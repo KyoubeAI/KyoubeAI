@@ -50,6 +50,16 @@ describe("apps API routes", () => {
     expect(calls.at(-1)).toEqual({ method: "rollback", args: [COMPANY, USER, "crm", 1, { decisionsConfirmed: false }] });
   });
 
+  it("passes tasksConfirmed from the publish and rollback bodies", async () => {
+    const { apps: service, calls } = apps();
+    await handleAppsApiRequest(service, request("apps.publish", { params: { slug: "crm" }, body: { companyId: COMPANY, tasksConfirmed: true } }));
+    expect(calls.at(-1)).toEqual({ method: "publish", args: [COMPANY, USER, "crm", undefined, { decisionsConfirmed: false, tasksConfirmed: true }] });
+    await handleAppsApiRequest(service, request("apps.rollback", { params: { slug: "crm" }, body: { companyId: COMPANY, version: 1, tasksConfirmed: true } }));
+    expect(calls.at(-1)).toEqual({ method: "rollback", args: [COMPANY, USER, "crm", 1, { decisionsConfirmed: false, tasksConfirmed: true }] });
+    const bad = await handleAppsApiRequest(service, request("apps.rollback", { params: { slug: "crm" }, body: { companyId: COMPANY, version: 1, tasksConfirmed: 1 } }));
+    expect(bad?.status).toBe(400);
+  });
+
   it("covers the whole lifecycle with the host's actor and company", async () => {
     const { apps: service, calls } = apps();
     const agent = request("apps.archive", { params: { slug: "crm" }, body: { companyId: COMPANY }, actor: { actorType: "agent", actorId: "a1", agentId: "a1", runId: "r1" } });

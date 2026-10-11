@@ -34,4 +34,26 @@ describe("publishing with the decisions confirmation", () => {
     await harness.executeTool("apps_publish", { slug: "crm", decisionsConfirmed: true }, { agentId: "a1", runId: "r1", companyId: COMPANY, projectId: "p1" } as never);
     expect(calls.at(-1)!.args.slice(2)).toEqual(["crm", undefined, { decisionsConfirmed: true }]);
   });
+
+  it("passes tasksConfirmed from the REST body and the tools only when it is true", async () => {
+    const { service, calls } = createStubService();
+    await handleAppsApiRequest(service as unknown as AppService, request("apps.publish", { tasksConfirmed: true }));
+    expect(calls.at(-1)!.args.slice(2)).toEqual(["crm", undefined, { decisionsConfirmed: false, tasksConfirmed: true }]);
+    await handleAppsApiRequest(service as unknown as AppService, request("apps.rollback", { version: 2, tasksConfirmed: true, connectionsConfirmed: true }));
+    expect(calls.at(-1)!.args.slice(2)).toEqual(["crm", 2, { decisionsConfirmed: false, connectionsConfirmed: true, tasksConfirmed: true }]);
+    await handleAppsApiRequest(service as unknown as AppService, request("apps.publish", { tasksConfirmed: false }));
+    expect(calls.at(-1)!.args.slice(2)).toEqual(["crm", undefined, { decisionsConfirmed: false }]);
+    const bad = await handleAppsApiRequest(service as unknown as AppService, request("apps.publish", { tasksConfirmed: "yes" }));
+    expect(bad!.status).toBe(400);
+
+    const publish = APP_TOOL_DEFINITIONS.find((tool) => tool.name === "apps_publish")!;
+    expect(publish.description).toContain("task templates");
+    const harness = createTestHarness({ manifest });
+    registerAppTools(harness.ctx, service as unknown as AppService);
+    const run = { agentId: "a1", runId: "r1", companyId: COMPANY, projectId: "p1" } as never;
+    await harness.executeTool("apps_publish", { slug: "crm", tasksConfirmed: true }, run);
+    expect(calls.at(-1)!.args.slice(2)).toEqual(["crm", undefined, { decisionsConfirmed: false, tasksConfirmed: true }]);
+    await harness.executeTool("apps_rollback", { slug: "crm", version: 3, tasksConfirmed: true }, run);
+    expect(calls.at(-1)!.args.slice(2)).toEqual(["crm", 3, { decisionsConfirmed: false, tasksConfirmed: true }]);
+  });
 });
