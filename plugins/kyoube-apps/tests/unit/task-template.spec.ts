@@ -153,6 +153,20 @@ describe("buildDescription", () => {
       const d = buildDescription(input({ template: t, row: { table: "tickets", id: "r1", values: { subject: "```json" } } }));
       expect(d.split("```json").length).toBe(2);
     });
+
+    it("keeps a fence that only forms once braces are stripped out of the instructions", () => {
+      const t = { ...template, instructions: "{{row.subject}}\nmore" };
+      const d = buildDescription(input({ template: t, row: { table: "tickets", id: "r1", values: { subject: "``{{}}`json" } } }));
+      expect(d.split("```json").length).toBe(2);
+      expect(d.split("\n").filter((l) => /^(```|~~~)/.test(l))).toEqual(["```json", "```"]);
+    });
+
+    it("keeps a tilde fence out of the instructions, for row values and inputs", () => {
+      const t = { ...template, instructions: "{{row.subject}}\n{{input.tone}}" };
+      const d = buildDescription(input({ template: t, inputs: { tone: "~~~" }, row: { table: "tickets", id: "r1", values: { subject: "~~{{}}~x" } } }));
+      expect(d.split("\n").filter((l) => /^(```|~~~)/.test(l))).toEqual(["```json", "```"]);
+      expect(d.split("```json").length).toBe(2);
+    });
   });
 });
 

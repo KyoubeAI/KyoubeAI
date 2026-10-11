@@ -1,8 +1,11 @@
 // Turns an app's task template into what the agent reads (docs/app-tasks.md). Nothing here talks to
 // the core or the database: it only fills placeholders and builds text, so the rules for what can
-// reach the agent live in one place. Row values are untrusted, so they only ever appear inside the
-// fenced JSON block, cut and with their backtick runs broken up; the instructions around the block
-// are the confirmed template text.
+// reach the agent live in one place. Row values are untrusted. They appear in full (each cut to 2000
+// characters) only inside the fenced JSON block, with their backtick runs broken up. A `{{row.x}}`
+// placeholder also puts a copy into the title and instructions, but flattened to one line, with
+// braces removed, fence runs (backticks, tildes) broken up and cut to 200 characters, so a template
+// author should place row placeholders mid-sentence. The rest of the instructions is the confirmed
+// template text.
 import { placeholdersIn, type AppTaskTemplate, type TaskInput } from "../apps/manifest.js";
 import { DataError } from "../data/errors.js";
 
@@ -76,7 +79,8 @@ function placeholderText(value: unknown): string {
     previous = text;
     text = text.replace(/\{\{|\}\}/g, "");
   }
-  return text.slice(0, PLACEHOLDER_MAX);
+  // Break fence runs last: the removal above can join two runs. Then cut, so the value stays within the limit.
+  return text.replace(/`{3,}|~{3,}/g, (run) => run.split("").join(ZWSP)).slice(0, PLACEHOLDER_MAX);
 }
 
 /**
@@ -172,21 +176,14 @@ function dataBlock(input: DescriptionInput): string {
   return json;
 }
 
-function fillRow(input: DescriptionInput, safe: boolean): Record<string, unknown> | null {
-  if (!input.row) return null;
-  if (!safe) return input.row.values;
-  return Object.fromEntries(Object.entries(input.row.values).map(([key, value]) => [key, typeof value === "string" ? breakFences(value) : value]));
-}
-
 /** The task title: filled, on one line, at most 200 characters. */
 export function buildTitle(input: DescriptionInput): string {
-  return fillPlaceholders(input.template.title, fillRow(input, false), input.inputs).replace(/\s+/g, " ").trim().slice(0, TITLE_MAX);
+  return fillPlaceholders(input.template.title, input.row?.values ?? null, input.inputs).replace(/\s+/g, " ").trim().slice(0, TITLE_MAX);
 }
 
 export function buildDescription(input: DescriptionInput): string {
   const { template, app } = input;
-  // A value that lands in the instructions can carry a fence of its own, so it is broken up here too.
-  const instructions = fillPlaceholders(template.instructions, fillRow(input, true), input.inputs);
+  const instructions = fillPlaceholders(template.instructions, input.row?.values ?? null, input.inputs);
   const appName = app.name.replace(/[\r\n"]/g, "").slice(0, APP_NAME_MAX);
   const todo = [
     ...(input.row && template.writes.length > 0 ? [`Write only these fields of that row with the Kyoube Data tools: ${template.writes.join(", ")}.`] : []),
