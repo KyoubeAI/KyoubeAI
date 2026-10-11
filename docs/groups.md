@@ -67,6 +67,11 @@ An app in a group is listed and opened only by members of one of its groups. Eve
 see it in the gallery. Following a direct link shows "You don't have access to this app. Ask a company
 admin." This applies to opening, running, saving data from and deciding in the app.
 
+Apps that hand work to an agent ([app-tasks.md](app-tasks.md)) follow the same assignment rules as the
+rest of KyoubeAI. When a person presses the button, the task is created as them, after the core's own
+check of whether they may assign that agent. In a group that cannot assign a protected agent, the
+person can open the app but the button is refused with the core's reason, and no task is created.
+
 Restricting an app hides and refuses the app only. Its tables stay reachable on the Data page and
 through any other app that declares them, at the person's own data level.
 

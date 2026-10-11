@@ -4,6 +4,33 @@ All notable changes to KyoubeAI are recorded here, in terms of what changed for 
 building on it. The format is loosely [Keep a Changelog](https://keepachangelog.com/); versioning is
 [SemVer](https://semver.org/).
 
+## 1.9.0 (unreleased)
+
+### Added
+
+- App tasks: a Kyoube App can hand a task to a company agent and show the result. The manifest
+  declares named task templates (the agent's name, a title and instructions with `{{row.x}}` and
+  `{{input.x}}` placeholders, a table and up to 20 fields, up to 5 typed inputs, and the fields the
+  agent writes). The app calls `kyoube.tasks.start(template, { rowId?, inputs? })`, follows the task
+  with `kyoube.tasks.watch` (and `get`, `list`, `cancel`, `open`), shows the agent's reply as text
+  and re-reads its data when the task is `done`. The agent receives a normal task whose data sits in
+  a fenced block marked as data, each value cut to 2,000 characters and the block to 16,000. Publishing
+  a version that adds or changes a template needs a person (`tasksConfirmed`); agents cannot publish
+  or roll back to it. A published version keeps the agent ids it was published with, so renaming an
+  agent changes nothing. Only people start or cancel tasks, and the core's own assignment rule
+  decides, so a person who may not assign a protected agent is refused inside an app too. Limits: 10
+  templates per app, 10 starts a minute per person per app, 25 open tasks per app, 10 watches per
+  app. A cancel cannot stop a run already in progress (`runMayContinue`). Every start and cancel is
+  audited without row values. Company Settings, Data access, "Apps that hand work to agents" shows
+  each template, its agent and whether the agent can write Data. Free; no licence needed. See
+  [docs/app-tasks.md](docs/app-tasks.md).
+- The Kyoube Apps and Kyoube Data agent skills teach agents how to declare task templates and how
+  to handle a task an app sent them, and `docs/apps.md` has a Tasks section with a complete example
+  app.
+- Kyoube Data & Apps (`kyoube.apps`) is 0.12.0; a migration adds one empty table (`app_tasks`), and
+  the bootstrap reinstalls the plugins on update to pick it up (`docs/architecture.md`, "Plugin hot
+  reload"). Nothing changes until a person publishes an app version with task templates.
+
 ## 1.8.0 - 2026-10-10
 
 ### Added

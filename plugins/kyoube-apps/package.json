@@ -1,6 +1,6 @@
 {
   "name": "@kyoube/plugin-apps",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "KyoubeAI organisation database and apps (Paperclip plugin)",
   "license": "BUSL-1.1",
   "type": "module",
