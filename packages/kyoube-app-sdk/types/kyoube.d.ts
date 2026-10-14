@@ -100,7 +100,18 @@ export interface Kyoube {
   context: KyoubeContext | null;
   ready(): Promise<KyoubeContext>;
   data: KyoubeData;
-  ui: { toast(title: string, tone?: "info" | "success" | "warn" | "error"): Promise<void>; openApp(slug: string): Promise<void> };
+  ui: {
+    toast(title: string, tone?: "info" | "success" | "warn" | "error"): Promise<void>;
+    openApp(slug: string): Promise<void>;
+    /**
+     * Saves `data` on the viewer's computer as `filename`. Call it from a click handler: without a
+     * recent click the viewer is asked first. Only csv, tsv, txt, json, xml, md, xlsx, docx, pptx,
+     * pdf, png, jpg/jpeg and zip, at most 25 MB; the host cleans the name and sets the type from the
+     * extension. Rejects with `kyoube.Error` code `invalid`, `too_large`, `limit`, `declined` (the
+     * viewer said no; don't retry) or `disabled`.
+     */
+    download(filename: string, data: string | Blob | ArrayBuffer | ArrayBufferView): Promise<void>;
+  };
   /** Ask a decision set the manifest declares, about a stored row or about unsaved values of the set's fields. */
   decide(set: string, input: { rowId: string } | { values: Record<string, unknown> }): Promise<KyoubeDecision>;
   /** Record what the person chose for one answer in a review lane: only for this app's own decisions for them, within 24 hours, once. */

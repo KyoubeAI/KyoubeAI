@@ -229,3 +229,64 @@ describe("tasks", () => {
     expect(seen).toEqual([]);
   });
 });
+
+type DownloadApi = { download(filename: unknown, data: unknown): Promise<unknown> };
+const uiOf = (env: Awaited<ReturnType<typeof install>>) => (env.sdk() as unknown as { ui: DownloadApi }).ui;
+const downloadsIn = (env: Awaited<ReturnType<typeof install>>) => env.posts.filter((post) => post.message.method === "ui.download").map((post) => post.message);
+
+describe("ui.download", () => {
+  it("sends a string as UTF-8 bytes and resolves to undefined", async () => {
+    vi.useFakeTimers();
+    const env = await install("nonce-abcdefghijklmnop");
+    const saved = uiOf(env).download("notes.txt", "héllo");
+    const [sent] = downloadsIn(env);
+    expect(sent).toMatchObject({ method: "ui.download", nonce: "nonce-abcdefghijklmnop", params: { filename: "notes.txt" } });
+    const bytes = (sent!.params as { bytes: unknown }).bytes;
+    expect(bytes).toBeInstanceOf(Uint8Array);
+    expect(Array.from(bytes as Uint8Array)).toEqual(Array.from(new TextEncoder().encode("héllo")));
+    env.deliver({ source: env.parent, data: { kyoube: 1, id: sent!.id, result: null } });
+    await expect(saved).resolves.toBeUndefined();
+  });
+
+  it("sends an ArrayBuffer, and only a view's own bytes", async () => {
+    vi.useFakeTimers();
+    const env = await install("nonce-abcdefghijklmnop");
+    void uiOf(env).download("a.bin.zip", new Uint8Array([1, 2, 3]).buffer);
+    const backing = new Uint8Array([9, 9, 4, 5, 6, 9]);
+    void uiOf(env).download("b.zip", new Uint8Array(backing.buffer, 2, 3));
+    void uiOf(env).download("c.zip", new DataView(backing.buffer, 1, 2));
+    const sent = downloadsIn(env).map((message) => Array.from((message.params as { bytes: Uint8Array }).bytes));
+    expect(sent).toEqual([[1, 2, 3], [4, 5, 6], [9, 4]]);
+    // A copy, not the app's own buffer: the app may reuse it straight after the call.
+    const first = (downloadsIn(env)[1]!.params as { bytes: Uint8Array }).bytes;
+    expect(first.buffer).not.toBe(backing.buffer);
+    expect(first.byteLength).toBe(first.buffer.byteLength);
+  });
+
+  it("reads a Blob before sending it", async () => {
+    vi.useFakeTimers();
+    const env = await install("nonce-abcdefghijklmnop");
+    void uiOf(env).download("sheet.csv", new Blob(["a,b\n1,2\n"], { type: "text/csv" }));
+    await vi.waitFor(() => { expect(downloadsIn(env)).toHaveLength(1); });
+    const bytes = (downloadsIn(env)[0]!.params as { bytes: Uint8Array }).bytes;
+    expect(new TextDecoder().decode(bytes)).toBe("a,b\n1,2\n");
+  });
+
+  it("refuses anything else as invalid without posting", async () => {
+    vi.useFakeTimers();
+    const env = await install("nonce-abcdefghijklmnop");
+    for (const data of [42, null, undefined, { a: 1 }, [1, 2]]) {
+      await expect(uiOf(env).download("x.txt", data)).rejects.toMatchObject({ code: "invalid" });
+    }
+    expect(downloadsIn(env)).toEqual([]);
+  });
+
+  it("surfaces the host's refusal code", async () => {
+    vi.useFakeTimers();
+    const env = await install("nonce-abcdefghijklmnop");
+    const saved = uiOf(env).download("x.html", "<p>");
+    const [sent] = downloadsIn(env);
+    env.deliver({ source: env.parent, data: { kyoube: 1, id: sent!.id, error: { code: "declined", message: "declined: the viewer did not save the file" } } });
+    await expect(saved).rejects.toMatchObject({ code: "declined" });
+  });
+});

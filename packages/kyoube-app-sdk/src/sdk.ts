@@ -26,6 +26,22 @@ function scrubNonceScript(): void {
   previous.remove();
 }
 
+/**
+ * `kyoube.ui.download`'s bytes: a fresh `Uint8Array` of exactly the data's own bytes, so a view into
+ * a larger buffer never sends the rest of it, and the app may reuse its buffer the moment the call
+ * returns. A Blob is read asynchronously by the caller; anything else is null (refused `invalid`).
+ */
+function bytesOf(data: unknown): Uint8Array | null {
+  if (typeof data === "string") return new TextEncoder().encode(data);
+  if (data instanceof ArrayBuffer) return new Uint8Array(data.slice(0));
+  if (ArrayBuffer.isView(data)) {
+    const copy = new Uint8Array(data.byteLength);
+    copy.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+    return copy;
+  }
+  return null;
+}
+
 (function install() {
   // Ruling P4-R18: the runner writes the mount's handshake nonce into a global immediately
   // above this script, inside the head it prepends — so this line runs before any app-authored
@@ -103,6 +119,19 @@ function scrubNonceScript(): void {
     call("tasks.unwatch", { id }).catch(() => {});
   }
 
+  /**
+   * Saves a file on the viewer's computer (docs/apps.md, "Saving files"). The host decides the name
+   * it is saved under and its type, from the extension; there is deliberately no type argument.
+   */
+  function download(filename: unknown, data: unknown): Promise<void> {
+    if (typeof Blob !== "undefined" && data instanceof Blob) {
+      return data.arrayBuffer().then((buffer) => call("ui.download", { filename, bytes: new Uint8Array(buffer) })).then(() => undefined);
+    }
+    const bytes = bytesOf(data);
+    if (!bytes) return Promise.reject(new KyoubeAppError("invalid", "download needs a string, a Blob, an ArrayBuffer or a typed array"));
+    return call("ui.download", { filename, bytes }).then(() => undefined);
+  }
+
   function watch(id: string, onChange: (task: unknown) => void): () => void {
     let listeners = taskWatchers.get(id);
     if (!listeners) { listeners = new Set(); taskWatchers.set(id, listeners); }
@@ -134,6 +163,7 @@ function scrubNonceScript(): void {
     ui: {
       toast: (title: string, tone: "info" | "success" | "warn" | "error" = "info") => call("ui.toast", { title, tone }),
       openApp: (slug: string) => call("ui.openApp", { slug }),
+      download: (filename: string, data: string | Blob | ArrayBuffer | ArrayBufferView) => download(filename, data),
     },
     // Typed decisions (docs/decisions.md): the app names a set its manifest declares and a row or
     // unsaved values; the host builds the state from the set's declared fields and nothing else.

@@ -15,6 +15,7 @@ describe("protocol guards", () => {
     expect(isKyoubeRequest({ kyoube: 1, id: "a", method: "data.query", nonce: "n0123456789abcdef" })).toBe(false);
     expect(isKyoubeRequest(null)).toBe(false);
     expect(ALLOWED_METHODS).toContain("ui.toast");
+    expect(ALLOWED_METHODS).toContain("ui.download");
   });
   // Ruling P4-R18: every request the SDK sends — the handshake included — carries the
   // per-mount nonce the runner inlined ahead of it. A message without one did not come
