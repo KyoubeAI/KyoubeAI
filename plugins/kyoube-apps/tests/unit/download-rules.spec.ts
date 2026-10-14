@@ -9,7 +9,7 @@ const ok = (raw: unknown) => {
 
 describe("cleanDownloadName", () => {
   it("maps every allowed extension to its type, case-insensitively", () => {
-    expect([...DOWNLOAD_TYPES.keys()].sort()).toEqual(["csv", "docx", "jpeg", "jpg", "json", "md", "pdf", "png", "pptx", "tsv", "txt", "xlsx", "xml", "zip"]);
+    expect([...DOWNLOAD_TYPES.keys()].sort()).toEqual(["csv", "docx", "jpeg", "jpg", "json", "md", "pdf", "png", "pptx", "tsv", "txt", "xlsx", "zip"]);
     expect(ok("Report.XLSX")).toEqual({ ok: true, filename: "Report.xlsx", mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     expect(ok("a.csv").mime).toBe("text/csv");
     expect(ok("a.jpg").mime).toBe("image/jpeg");
@@ -18,12 +18,21 @@ describe("cleanDownloadName", () => {
   });
 
   it("refuses types outside the allowlist, and names without one", () => {
-    for (const raw of ["x.html", "x.htm", "x.svg", "x.xhtml", "x.exe", "x.bat", "x.sh", "x.js", "x.xlsm", "x.docm", "x.pptm", "report", "report.", "x.pdf.exe"]) {
+    for (const raw of ["x.html", "x.htm", "x.svg", "x.xhtml", "x.exe", "x.bat", "x.sh", "x.js", "x.xlsm", "x.docm", "x.pptm", "report", "report.", "x.pdf.exe", "x.xml"]) {
       const result = cleanDownloadName(raw);
       expect(result.ok, raw).toBe(false);
     }
     const refused = cleanDownloadName("x.exe");
     expect(refused.ok === false && refused.message).toContain("csv, tsv, txt");
+  });
+
+  it("says a name is missing when only the extension was given", () => {
+    for (const raw of [".xlsx", "<>.csv", " . .csv"]) {
+      const result = cleanDownloadName(raw);
+      expect(result.ok === false && result.message, raw).toBe("download needs a file name before the extension");
+    }
+    const bare = cleanDownloadName("report");
+    expect(bare.ok === false && bare.message).toContain("csv, tsv, txt");
   });
 
   it("refuses a name that is not a string, is empty, or is over 255 units", () => {

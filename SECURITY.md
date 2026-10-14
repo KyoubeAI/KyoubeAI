@@ -337,9 +337,11 @@ Five residuals are known and accepted, documented in full in `docs/apps.md`:
   can export files. `kyoube.ui.download` is checked on the host page (an allowlist of data and
   document types, 25 MB, a cleaned name, 3 per 10 seconds, a Save bar when the viewer did not just
   click). The frame can still save a file by itself with `<a download>`, skipping those checks. The
-  bytes reach only the viewer's own disk, never a server (`connect-src 'none'` is unchanged), so this
-  leaks nothing; it can put an unwanted file in Downloads. Forbidden by the authoring rules; every
-  version's source is stored and reviewable.
+  file goes only to the viewer's own disk and nothing is sent while the app runs (`connect-src
+  'none'` is unchanged). But a file a browser can run, an `.html` or `.svg` saved this way, can send
+  what it holds to a server once the viewer opens it from disk. That is a weaker form of the
+  self-navigation residual above, since it needs the viewer to open the file. Forbidden by the
+  authoring rules; every version's source is stored and reviewable.
 - **`sql_select` allows a schema-qualified `OPERATOR(schema.op)`** — see the Data section above.
 - **`viewer.name` is always empty in v1** — the host gives an app the viewer's id, not their display
   name (see `docs/apps.md`), so an app cannot greet a viewer by name.
