@@ -1,12 +1,14 @@
 import { isKyoubeRequest, KYOUBE_PROTOCOL, type KyoubeRequest } from "@kyoube/app-sdk";
 import { APPS_PAGE_ROUTE } from "../../apps/page-route.js";
 import { bridgeErrorMessage } from "../format.js";
+import { cleanDownloadName, MAX_DOWNLOAD_BYTES } from "./download-rules.js";
 
 export type RoutedRequest =
   | { kind: "hello" }
   | { kind: "data"; method: string; params: Record<string, unknown> }
   | { kind: "toast"; title: string; tone: string }
   | { kind: "openApp"; slug: string }
+  | { kind: "download"; filename: string; mime: string; bytes: Uint8Array }
   | { kind: "decide"; set: string; input: Record<string, unknown> }
   | { kind: "connection"; name: string; request: Record<string, unknown> }
   | { kind: "outcome"; decisionId: string; question: string; value: string | boolean }
@@ -187,6 +189,16 @@ export function routeAppRequest(request: KyoubeRequest): RoutedRequest {
     const slug = request.params.slug;
     if (typeof slug !== "string" || !SLUG_RE.test(slug)) return { kind: "reject", code: "invalid", message: "openApp needs a valid slug" };
     return { kind: "openApp", slug };
+  }
+  if (request.method === "ui.download") {
+    // Structured clone builds the array in this realm, so `instanceof` holds for the SDK's bytes;
+    // `unsafeParams` passed over it above because a typed array is a leaf with no keys to poison.
+    const { filename, bytes } = request.params;
+    if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) return { kind: "reject", code: "invalid", message: "download needs the file's bytes" };
+    if (bytes.byteLength > MAX_DOWNLOAD_BYTES) return { kind: "reject", code: "too_large", message: `a download can be at most ${MAX_DOWNLOAD_BYTES / 1024 / 1024} MB` };
+    const name = cleanDownloadName(filename);
+    if (!name.ok) return { kind: "reject", code: "invalid", message: name.message };
+    return { kind: "download", filename: name.filename, mime: name.mime, bytes };
   }
   if (request.method === "decisions.decide") {
     const { set, input } = request.params;
@@ -585,6 +597,9 @@ export async function handleAppMessage(event: AppMessageEvent, target: AppMessag
     case "openApp":
       callbacks.onOpenApp(routed.slug);
       reply({ result: null });
+      return;
+    case "download":
+      reply({ error: { code: "disabled", message: "disabled: downloads are not available here" } });
       return;
     case "reject":
       reply({ error: { code: routed.code, message: routed.message } });
