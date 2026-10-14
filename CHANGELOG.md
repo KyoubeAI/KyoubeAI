@@ -4,6 +4,30 @@ All notable changes to KyoubeAI are recorded here, in terms of what changed for 
 building on it. The format is loosely [Keep a Changelog](https://keepachangelog.com/); versioning is
 [SemVer](https://semver.org/).
 
+## 1.10.0 - 2026-10-15
+
+### Added
+
+- App downloads: a Kyoube App can save a file it built (a CSV, a workbook, a PDF) to the viewer's
+  computer with `kyoube.ui.download(filename, data)`, where `data` is a string, a `Blob`, an
+  `ArrayBuffer` or a typed array. The host page checks the call: only csv, tsv, txt, json, md, xlsx,
+  docx, pptx, pdf, png, jpg/jpeg and zip, at most 25 MB, at most 3 per 10 seconds per running app.
+  The host cleans the file name, and the type comes from the extension. A save made straight from a
+  click happens at once. Otherwise the person sees "*App* wants to save *file* (size). Save /
+  Dismiss" above the app, and the app gets `declined` after Dismiss or 25 seconds. Free; no licence
+  needed. See [docs/apps.md](docs/apps.md#saving-files).
+- The Kyoube Apps agent skill teaches agents to export through `kyoube.ui.download` from a click
+  handler.
+
+### Changed
+
+- The app frame's sandbox adds `allow-downloads`, so an app's own `<a download>` link also saves a
+  file, without the checks above. SECURITY.md records this as an accepted residual: the file goes
+  only to the viewer's disk, but a file a browser can run (html, svg), once opened, can send what it
+  holds to a server.
+- Kyoube Data & Apps (`kyoube.apps`) is 0.13.0, so the bootstrap reinstalls the plugin on update.
+  No migration.
+
 ## 1.9.0 - 2026-10-11
 
 ### Added
