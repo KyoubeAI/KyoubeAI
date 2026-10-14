@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { appMountKey, createAppGuard, handleAppMessage, postTaskEvent, stopNotice, type AppGuard, type StopReason, type TaskOp } from "./bridge.js";
 import { button } from "../forms.js";
-import { appLabel, createDownloadController, formatSize, saveFile, type DownloadController, type PendingSave } from "./download.js";
+import { appNameOf } from "../phone.js";
+import { createDownloadController, formatSize, saveFile, type DownloadController, type PendingSave } from "./download.js";
 import { keepFrameFitted } from "./frame-height.js";
 import { buildSrcdoc, newAppNonce } from "./srcdoc.js";
 import { createTaskWatcher, type TaskWatcher } from "./task-watch.js";
@@ -60,8 +61,9 @@ export function AppRunner(props: AppRunnerProps) {
  * widened by the app downloads design, 2026-10-14): without `allow-same-origin` the frame gets an
  * opaque origin, so app code cannot touch this document, its cookies, or its storage — the only way
  * out is a message the bridge accepts. `allow-downloads` lets `<a download>` inside the frame save a
- * file without the bridge's checks: an accepted residual (SECURITY.md, Apps), since the bytes only
- * reach the viewer's own disk. `allow-popups` is deliberately absent; apps navigate through
+ * file without the bridge's checks: an accepted residual (SECURITY.md, Apps). The bytes go only to
+ * the viewer's disk and nothing is sent while the app runs, but an html or svg file saved that way
+ * can send what it holds to a server if the viewer opens it. `allow-popups` is deliberately absent; apps navigate through
  * `ui.openApp` instead. `tests/unit/ui.spec.tsx` asserts the attribute is exactly those four tokens
  * and that the srcdoc carries `APP_CSP` (ruling P4-R38): before that, adding `allow-same-origin` here
  * passed every test in the repository.
@@ -83,6 +85,7 @@ function AppFrame(props: AppRunnerProps) {
   const [stopped, setStopped] = useState<StopReason | null>(null);
   // The save waiting for the viewer, if any; the controller below owns it.
   const [pendingSave, setPendingSave] = useState<PendingSave | null>(null);
+  const appName = appNameOf(props.context, "This app");
   const stop = useCallback((reason: StopReason) => {
     // `live` is cleared synchronously, before React re-renders, so a message
     // racing this is already refused. The task polls end here too, not only in
@@ -211,21 +214,33 @@ function AppFrame(props: AppRunnerProps) {
   // height includes the border it is measured with.
   return (
     <>
-      {pendingSave && <SaveBar pending={pendingSave} appName={appLabel(props.context)} />}
+      {pendingSave && <SaveBar pending={pendingSave} appName={appName} />}
       <iframe ref={frame} onLoad={onLoad} title="Kyoube app" sandbox="allow-scripts allow-forms allow-modals allow-downloads" srcDoc={srcdoc} className="w-full rounded border bg-background" style={{ display: "block", boxSizing: "border-box" }} />
+      <div aria-live="polite" style={VISUALLY_HIDDEN}>{pendingSave ? saveSentence(appName, pendingSave) : ""}</div>
     </>
   );
 }
 
-/** Shown above the frame when an app asks to save a file and the viewer has not just clicked (see `download.ts`). */
+/** The usual clip pattern, inline because the plugin ships no stylesheet. */
+const VISUALLY_HIDDEN = { position: "absolute", width: 1, height: 1, margin: -1, padding: 0, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap", border: 0 } as const;
+
+const saveSentence = (appName: string, pending: PendingSave): string => `${appName} wants to save ${pending.filename} (${formatSize(pending.size)}).`;
+
+/**
+ * Shown above the frame when an app asks to save a file and the viewer has not just clicked (see
+ * `download.ts`). Focus never moves here: a focused Save button could catch an Enter or Space the
+ * viewer is typing into the app, so `AppFrame` announces the bar through a live region instead.
+ */
 export function SaveBar(props: { pending: PendingSave; appName: string }) {
   return (
-    <div role="alertdialog" aria-label="Save a file" className="rounded border text-sm" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: 8, marginBottom: 8 }}>
+    <div role="region" aria-label="Save a file" data-kyoube-save-bar="" className="rounded border text-sm" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: 8 }}>
       <span style={{ flex: "1 1 16rem", minWidth: 0, overflowWrap: "anywhere" }}>
         <strong>{props.appName}</strong> wants to save <strong>{props.pending.filename}</strong> ({formatSize(props.pending.size)}).
       </span>
-      <button type="button" className={button} onClick={props.pending.save}>Save</button>
-      <button type="button" className={button} onClick={props.pending.dismiss}>Dismiss</button>
+      <span style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+        <button type="button" className={button} onClick={props.pending.save}>Save</button>
+        <button type="button" className={button} onClick={props.pending.dismiss}>Dismiss</button>
+      </span>
     </div>
   );
 }

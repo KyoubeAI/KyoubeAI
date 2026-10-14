@@ -116,6 +116,15 @@ describe("AppRunner frame", () => {
     expect(html).toContain("42 KB");
     expect(html).toContain(">Save</button>");
     expect(html).toContain(">Dismiss</button>");
+    expect(html).toContain('role="region"');
+    expect(html).not.toContain("alertdialog");
+    expect(html).toContain("data-kyoube-save-bar");
+    expect(html).toMatch(/<span style="[^"]*margin-left:auto[^"]*"><button[^>]*>Save<\/button><button[^>]*>Dismiss<\/button><\/span>/);
+  });
+
+  it("keeps a polite live region in the runner, empty until a save is pending", () => {
+    const html = renderToStaticMarkup(createElement(AppRunner, props));
+    expect(html).toMatch(/<div aria-live="polite"[^>]*><\/div>/);
   });
 
   it("serves the app document under the app policy", () => {

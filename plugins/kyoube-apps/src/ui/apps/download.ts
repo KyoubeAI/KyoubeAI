@@ -112,9 +112,3 @@ export function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
-
-/** The app's name from its runtime context, which this module reads without assuming its shape. */
-export function appLabel(context: unknown): string {
-  const name = (context as { app?: { name?: unknown } } | null | undefined)?.app?.name;
-  return typeof name === "string" && name.length > 0 ? name : "This app";
-}

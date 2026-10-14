@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { appLabel, createDownloadController, DOWNLOAD_PROMPT_MS, formatSize, saveFile, type PendingSave, type SaveEnv } from "../../src/ui/apps/download.js";
+import { createDownloadController, DOWNLOAD_PROMPT_MS, formatSize, saveFile, type PendingSave, type SaveEnv } from "../../src/ui/apps/download.js";
 import type { DownloadFile } from "../../src/ui/apps/download-rules.js";
 
 const file: DownloadFile = { filename: "Balloons.xlsx", mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes: new Uint8Array([80, 75, 3, 4]) };
@@ -135,10 +135,5 @@ describe("labels", () => {
     expect(formatSize(1024)).toBe("1 KB");
     expect(formatSize(42_100)).toBe("41 KB");
     expect(formatSize(25 * 1024 * 1024)).toBe("25.0 MB");
-  });
-  it("names the app, or falls back", () => {
-    expect(appLabel({ app: { name: "Balloon sheets" } })).toBe("Balloon sheets");
-    expect(appLabel({ app: { name: "" } })).toBe("This app");
-    expect(appLabel(null)).toBe("This app");
   });
 });
