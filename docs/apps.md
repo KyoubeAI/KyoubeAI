@@ -54,6 +54,7 @@ kyoube.data.update(table, { ids } | { where }, patch)   // → { affected, rows 
 kyoube.data.delete(table, { ids } | { where })          // → { affected }
 kyoube.ui.toast(title, "info" | "success" | "warn" | "error")
 kyoube.ui.openApp(slug)
+kyoube.ui.download(filename, data)                 // → saves a file on the viewer's computer (see Saving files)
 kyoube.decide(set, { rowId } | { values })                 // → { decisionId, model, answers: { [q]: { type, value, confidence, status } } }
 kyoube.decideOutcome(decisionId, question, value)          // → { outcome: "human_confirmed" | "human_changed" }
 kyoube.connections.call(name, { method?, path?, query?, headers?, body? })   // → { status, headers, body }
@@ -61,7 +62,7 @@ kyoube.tasks.start(template, { rowId?, inputs? })          // → task; also get
 ```
 `where` grammar: `{ field, op, value }` with `eq neq gt gte lt lte in contains starts_with is_null is_not_null`,
 combined with `{ and: [...] }`, `{ or: [...] }`, `{ not: {...} }`. Errors are thrown as `kyoube.Error` with
-`code` (`forbidden`, `invalid`, `not_found`, `conflict`, `limit`, `disabled`, `budget_exceeded`, `too_large`, `provider_rejected`, `provider_unavailable`, `timeout`; connection calls use `forbidden`, `invalid`, `disabled`, `too_large`, `timeout`, `provider_unavailable` and `limit`; task calls use `forbidden`, `invalid`, `not_found`, `disabled`, `limit` and `conflict`). Every row has `id`, `created_at`, `updated_at`.
+`code` (`forbidden`, `invalid`, `not_found`, `conflict`, `limit`, `disabled`, `budget_exceeded`, `too_large`, `provider_rejected`, `provider_unavailable`, `timeout`, `declined`; connection calls use `forbidden`, `invalid`, `disabled`, `too_large`, `timeout`, `provider_unavailable` and `limit`; task calls use `forbidden`, `invalid`, `not_found`, `disabled`, `limit` and `conflict`; downloads use `invalid`, `too_large`, `limit`, `declined` and `disabled`). Every row has `id`, `created_at`, `updated_at`.
 
 `viewer.name` is always `""` in v1 — the host gives the worker ids, not display names — so greet the
 viewer with `viewer.id` or with nothing at all, and never print `viewer.name` expecting a person's name.
@@ -417,6 +418,39 @@ kyoube.ready().then((ctx) => {
 </body></html>
 ```
 
+## Saving files
+
+To let the person export something (a sheet, a report, a CSV), build the file's bytes in the app and
+call `kyoube.ui.download(filename, data)` from the click handler of the button they press:
+
+```js
+exportButton.addEventListener("click", async () => {
+  try { await kyoube.ui.download("balloons.csv", toCsv(rows)); }
+  catch (err) { if (err.code !== "declined") kyoube.ui.toast(err.message, "error"); }
+});
+```
+
+- `data` is a string (saved as UTF-8), a `Blob`, an `ArrayBuffer` or a typed array. Build xlsx, docx
+  or zip bytes yourself in the app's own script; nothing can be loaded from a CDN.
+- Allowed types: csv, tsv, txt, json, xml, md, xlsx, docx, pptx, pdf, png, jpg/jpeg, zip. At most
+  25 MB. The host cleans the name and sets the type from the extension; anything else is refused with
+  `invalid` (`too_large` over the size).
+- Make the call straight from the click. If the file takes more than a few seconds to build, the
+  person sees a Save/Dismiss bar instead; if they dismiss it, the call rejects with `declined`:
+  don't retry it, they said no.
+- At most 3 downloads per 10 seconds, counted inside the 60 requests (`limit` over that).
+- Don't build `<a download>` links or `blob:` URLs yourself: they skip the host's checks, may not work
+  in every browser, and the person gets no Save bar when it's needed.
+
+How it works: the SDK sends the bytes to the host page over the same `postMessage` bridge as every
+other call. The host checks the name (path separators, control and format characters, and the
+characters Windows refuses are removed; leading and trailing dots and spaces are trimmed; Windows
+device names such as `CON` get a `_` prefix; the whole name is cut to 120 characters, keeping the
+extension), the type and the size, then saves the file from the host page itself. If the person
+clicked inside the app in the last few seconds, the save happens at once; otherwise the host shows
+"*App* wants to save **name** (size). Save / Dismiss" above the app, and answers `declined` after
+Dismiss or 25 seconds. One save can wait at a time; a second call meanwhile gets `limit`.
+
 ## Rules for the source
 
 - Start with `<!doctype html>`; put CSS in `<style>` and JS in `<script>` — no `src=`, `href=` to the network, no `fetch`.
@@ -433,7 +467,7 @@ kyoube.ready().then((ctx) => {
   which at most **5 may be toasts**. Every call counts — a data call, a `ui.openApp`, and a call the
   host rejects as invalid all cost the same one — and over the ceiling a call comes back with
   `code: "limit"` (`limit: too many requests`), while a toast over the smaller ceiling is silently
-  dropped. Keep hitting either ceiling for three windows running and the app is stopped with a
+  dropped. Downloads have a ceiling of **3 per 10 seconds**, counted inside the 60. Keep hitting either ceiling for three windows running and the app is stopped with a
   notice. Batch instead of looping: one `query` with a `limit` beats sixty `get`s, and `insert` takes
   an array of rows. Connection calls have a smaller ceiling of **30 per 10 seconds**, counted inside
   the 60.
@@ -498,7 +532,7 @@ to a run through an MCP gateway, which it creates only for agents that already h
 
 ## Security model
 
-Apps run in an iframe with `sandbox="allow-scripts allow-forms allow-modals"` — no `allow-same-origin`,
+Apps run in an iframe with `sandbox="allow-scripts allow-forms allow-modals allow-downloads"` — no `allow-same-origin`,
 and deliberately no `allow-popups` (apps navigate between each other through `ui.openApp`, not a popup)
 — so they have an opaque origin: no cookies, no core API, no storage, and no access to the host
 document.
@@ -536,7 +570,7 @@ rules above), and the source of every version is stored and reviewable.
 
 The only channel in or out of the frame is `postMessage` to the host page, which validates that the
 message came from the exact iframe window it rendered, restricts accepted methods to the
-`window.kyoube` surface (`data.*`, `ui.toast`, `ui.openApp`), and forwards data calls to the plugin
+`window.kyoube` surface (`data.*`, `ui.toast`, `ui.openApp`, `ui.download`, and the decision, connection and task calls), and forwards data calls to the plugin
 worker tagged with **the viewer's own identity** — never the app's. The worker re-authorises every call
 against the viewer's access level and the app manifest's declared tables before touching the database:
 a manifest can only narrow what the viewer could already do on the Data page, never widen it. `ui.toast`
@@ -553,6 +587,16 @@ the app's working bridge. So the runner counts loads and stops the app on the se
 answers nothing further, the viewer's context is not re-announced, and the frame is replaced with
 "This app navigated away and was stopped." That is why an app must never navigate its own frame; it
 is not a restriction you can work around, only one you can trip over.
+
+`allow-downloads` is there so an app can save a file. `kyoube.ui.download` is the checked route: the
+host saves the file from its own page after the checks in [Saving files](#saving-files). The token
+also lets the frame save a file by itself (`<a download>`, or navigating to a `blob:` URL of a type
+the browser won't display) **without** those checks: any type, any size, any name the browser
+accepts. This is accepted: the bytes go only to the viewer's own disk, never to a server, and
+`connect-src 'none'` still blocks every request. The risk is a careless or hostile app dropping an
+unwanted file in Downloads; browsers limit download floods per frame, the authoring rules tell apps
+to use `kyoube.ui.download`, and every version's source is stored and reviewable. A download is not a
+navigation, so it does not trip the runner's second-load stop.
 
 The load count is not an identification, though. The runner cannot tell *whose* document a `load`
 belongs to, and the first one it sees is not necessarily the app's own: a document that assigns

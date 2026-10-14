@@ -381,6 +381,7 @@ kyoube.data.update(table, { ids } | { where }, patch)   // → { affected, rows 
 kyoube.data.delete(table, { ids } | { where })          // → { affected }
 kyoube.ui.toast(title, "info" | "success" | "warn" | "error")
 kyoube.ui.openApp(slug)
+kyoube.ui.download(filename, data)         // saves a file on the viewer's computer (see Saving files)
 kyoube.connections.call(name, { method?, path?, query?, headers?, body? })   // → { status, headers, body }
 kyoube.tasks.start(template, { rowId?, inputs? })   // → task; also get, list, cancel, open, watch (see Tasks)
 ```
@@ -389,6 +390,30 @@ combined with `{ and: [...] }`, `{ or: [...] }`, `{ not: {...} }`. Errors are th
 `code` (`forbidden`, `invalid`, `not_found`, `conflict`, `limit`). Every row has `id`, `created_at`, `updated_at`.
 `viewer.name` is always `""` in v1 (the host gives the worker ids, not display names) — use `viewer.id`,
 or nothing; branch on `viewer.level` (`read`, `write`, `schema`) to hide controls the viewer cannot use.
+
+## Saving files
+
+To let the person export something (a sheet, a report, a CSV), build the file's bytes in the app and
+call `kyoube.ui.download(filename, data)` from the click handler of the button they press:
+
+```js
+exportButton.addEventListener("click", async () => {
+  try { await kyoube.ui.download("balloons.csv", toCsv(rows)); }
+  catch (err) { if (err.code !== "declined") kyoube.ui.toast(err.message, "error"); }
+});
+```
+
+- `data` is a string (saved as UTF-8), a `Blob`, an `ArrayBuffer` or a typed array. Build xlsx, docx
+  or zip bytes yourself in the app's own script; nothing can be loaded from a CDN.
+- Allowed types: csv, tsv, txt, json, xml, md, xlsx, docx, pptx, pdf, png, jpg/jpeg, zip. At most
+  25 MB. The host cleans the name and sets the type from the extension; anything else is refused with
+  `invalid` (`too_large` over the size).
+- Make the call straight from the click. If the file takes more than a few seconds to build, the
+  person sees a Save/Dismiss bar instead; if they dismiss it, the call rejects with `declined`:
+  don't retry it, they said no.
+- At most 3 downloads per 10 seconds, counted inside the 60 requests (`limit` over that).
+- Don't build `<a download>` links or `blob:` URLs yourself: they skip the host's checks, may not work
+  in every browser, and the person gets no Save bar when it's needed.
 
 ## Rules for the source
 

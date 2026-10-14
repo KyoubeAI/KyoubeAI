@@ -297,7 +297,7 @@ and what data level they hold. Group tables are in `kyoube_meta` (`groups`, `gro
 ## Apps
 
 An app is one HTML document written by an agent and reviewed by whoever publishes it. It runs in an
-iframe with `sandbox="allow-scripts allow-forms allow-modals"` (no `allow-same-origin`, so an opaque
+iframe with `sandbox="allow-scripts allow-forms allow-modals allow-downloads"` (no `allow-same-origin`, so an opaque
 origin: no cookies, no storage, no host DOM) under an injected `Content-Security-Policy` of
 `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:;
 font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'`. Data reaches it only through
@@ -308,7 +308,7 @@ on the Data page.
 Each mount also has a **call budget** (60 requests per rolling 10 seconds, of which at most 5 may be
 toasts; every non-handshake request counts, including one the host refuses as invalid — a message
 that is not a well-formed request, or carries the wrong nonce, is dropped without being charged).
-Four residuals are known and accepted, documented in full in `docs/apps.md`:
+Five residuals are known and accepted, documented in full in `docs/apps.md`:
 
 - **DNS prefetch and preconnect are not governed by CSP.** `<link rel="dns-prefetch">` /
   `<link rel="preconnect">` ask the browser to resolve a hostname and open a socket, not to fetch a
@@ -333,6 +333,13 @@ Four residuals are known and accepted, documented in full in `docs/apps.md`:
   *navigation itself* still happens, so a URL an app navigates to is a URL the browser requests; it
   carries no host credentials (opaque origin, no cookies, no storage) and gets nothing back that the
   app can read.
+- **An app can save a file without the download checks.** `allow-downloads` is on the sandbox so apps
+  can export files. `kyoube.ui.download` is checked on the host page (an allowlist of data and
+  document types, 25 MB, a cleaned name, 3 per 10 seconds, a Save bar when the viewer did not just
+  click). The frame can still save a file by itself with `<a download>`, skipping those checks. The
+  bytes reach only the viewer's own disk, never a server (`connect-src 'none'` is unchanged), so this
+  leaks nothing; it can put an unwanted file in Downloads. Forbidden by the authoring rules; every
+  version's source is stored and reviewable.
 - **`sql_select` allows a schema-qualified `OPERATOR(schema.op)`** — see the Data section above.
 - **`viewer.name` is always empty in v1** — the host gives an app the viewer's id, not their display
   name (see `docs/apps.md`), so an app cannot greet a viewer by name.
