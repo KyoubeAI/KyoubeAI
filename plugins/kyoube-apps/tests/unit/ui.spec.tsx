@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { SidebarEntry } from "../../src/ui/SidebarEntry.js";
 import { DataAccessSettingsPage } from "../../src/ui/DataAccessSettingsPage.js";
-import { AppRunner } from "../../src/ui/apps/AppRunner.js";
+import { AppRunner, SaveBar } from "../../src/ui/apps/AppRunner.js";
 import { APP_CSP } from "../../src/ui/apps/srcdoc.js";
 import { AppsPage } from "../../src/ui/apps/AppsPage.js";
 import { DataPage } from "../../src/ui/DataPage.js";
@@ -99,12 +99,23 @@ describe("AppRunner frame", () => {
     onOpenApp: () => {},
   };
 
-  it("sandboxes the app frame with exactly the three allowed tokens", () => {
+  it("sandboxes the app frame with exactly the four allowed tokens", () => {
     const html = renderToStaticMarkup(createElement(AppRunner, props));
-    expect(attribute(html, "sandbox")).toBe("allow-scripts allow-forms allow-modals");
+    expect(attribute(html, "sandbox")).toBe("allow-scripts allow-forms allow-modals allow-downloads");
     // The one token that would undo the opaque origin — and with it every other guarantee in
     // SECURITY.md's Apps section — must never appear anywhere in the rendered frame.
     expect(html).not.toContain("allow-same-origin");
+    expect(html).not.toContain("allow-popups");
+  });
+
+  it("asks before a save the viewer did not just click for", () => {
+    const pending = { filename: "Balloons.xlsx", size: 43_000, save: () => {}, dismiss: () => {} };
+    const html = renderToStaticMarkup(createElement(SaveBar, { pending, appName: "Balloon sheets" }));
+    expect(html).toContain("Balloon sheets");
+    expect(html).toContain("Balloons.xlsx");
+    expect(html).toContain("42 KB");
+    expect(html).toContain(">Save</button>");
+    expect(html).toContain(">Dismiss</button>");
   });
 
   it("serves the app document under the app policy", () => {
