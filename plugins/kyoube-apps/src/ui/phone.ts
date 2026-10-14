@@ -22,6 +22,7 @@ const CSS = String.raw`
   [data-kyoube-runner] { padding: 0 !important; gap: 0 !important; }
   [data-kyoube-runner-bar] { padding: 8px 4px; min-height: 44px; }
   [data-kyoube-runner-bar] a, [data-kyoube-runner-bar] button { min-height: 40px; min-width: 40px; align-items: center; justify-content: center; }
+  [data-kyoube-save-bar] button { min-height: 44px; }
   .kyoube-phone-menu { display: flex; flex-direction: column; gap: 6px; padding: 8px 4px; }
   [data-kyoube-page="data"] { flex-direction: column; padding: 0 !important; gap: 12px !important; }
   [data-kyoube-page="data"] > aside { width: auto !important; }
