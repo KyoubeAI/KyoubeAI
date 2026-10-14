@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { appMountKey, createAppGuard, handleAppMessage, postTaskEvent, stopNotice, type AppGuard, type StopReason, type TaskOp } from "./bridge.js";
+import { button } from "../forms.js";
+import { appLabel, createDownloadController, formatSize, saveFile, type DownloadController, type PendingSave } from "./download.js";
 import { keepFrameFitted } from "./frame-height.js";
 import { buildSrcdoc, newAppNonce } from "./srcdoc.js";
 import { createTaskWatcher, type TaskWatcher } from "./task-watch.js";
@@ -54,13 +56,14 @@ export function AppRunner(props: AppRunnerProps) {
 }
 
 /**
- * The sandbox is exactly `allow-scripts allow-forms allow-modals` (ruling
- * P3-R2): without `allow-same-origin` the frame gets an opaque origin, so app
- * code cannot touch this document, its cookies, or its storage — the only way
- * out is a message the bridge accepts. `allow-popups` is deliberately absent;
- * apps navigate through `ui.openApp` instead. `tests/unit/ui.spec.tsx` asserts
- * the attribute is exactly those three tokens and that the srcdoc carries
- * `APP_CSP` (ruling P4-R38): before that, adding `allow-same-origin` here
+ * The sandbox is exactly `allow-scripts allow-forms allow-modals allow-downloads` (ruling P3-R2,
+ * widened by the app downloads design, 2026-10-14): without `allow-same-origin` the frame gets an
+ * opaque origin, so app code cannot touch this document, its cookies, or its storage — the only way
+ * out is a message the bridge accepts. `allow-downloads` lets `<a download>` inside the frame save a
+ * file without the bridge's checks: an accepted residual (SECURITY.md, Apps), since the bytes only
+ * reach the viewer's own disk. `allow-popups` is deliberately absent; apps navigate through
+ * `ui.openApp` instead. `tests/unit/ui.spec.tsx` asserts the attribute is exactly those four tokens
+ * and that the srcdoc carries `APP_CSP` (ruling P4-R38): before that, adding `allow-same-origin` here
  * passed every test in the repository.
  */
 function AppFrame(props: AppRunnerProps) {
@@ -78,12 +81,15 @@ function AppFrame(props: AppRunnerProps) {
   // app navigated its own frame (ruling P3-R18).
   const loads = useRef(0);
   const [stopped, setStopped] = useState<StopReason | null>(null);
+  // The save waiting for the viewer, if any; the controller below owns it.
+  const [pendingSave, setPendingSave] = useState<PendingSave | null>(null);
   const stop = useCallback((reason: StopReason) => {
     // `live` is cleared synchronously, before React re-renders, so a message
     // racing this is already refused. The task polls end here too, not only in
     // the effect cleanup the re-render brings: a stopped runner polls nothing.
     live.current = false;
     mount.current?.watcher.stopAll();
+    mount.current?.downloads.dispose();
     setStopped(reason);
   }, []);
   // The nonce and the guard are minted once per mount and never recomputed:
@@ -92,7 +98,7 @@ function AppFrame(props: AppRunnerProps) {
   // keyed on the app's identity — so a new document always gets a new pair.
   // The task watcher belongs to the mount as well: its polls are for this
   // frame's watches, and each one it ends frees that watch's slot in the guard.
-  const mount = useRef<{ nonce: string; guard: AppGuard; watcher: TaskWatcher } | null>(null);
+  const mount = useRef<{ nonce: string; guard: AppGuard; watcher: TaskWatcher; downloads: DownloadController } | null>(null);
   if (!mount.current) {
     const nonce = newAppNonce();
     const guard = createAppGuard(nonce, { onStop: stop });
@@ -111,9 +117,18 @@ function AppFrame(props: AppRunnerProps) {
       clearInterval: (handle) => { window.clearInterval(handle as number); },
       now: () => Date.now(),
     });
-    mount.current = { nonce, guard, watcher };
+    // Downloads belong to the mount like the watcher: a save waiting for the viewer is this frame's,
+    // and ends (as `disabled`) when the runner stops or unmounts.
+    const downloads = createDownloadController({
+      isActive: () => (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation?.isActive === true,
+      save: (file) => { saveFile(file, { document, url: URL, defer: (fn) => { window.setTimeout(fn, 10_000); } }); },
+      onPrompt: (pending) => { setPendingSave(pending); },
+      setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimeout: (handle) => { window.clearTimeout(handle as number); },
+    });
+    mount.current = { nonce, guard, watcher, downloads };
   }
-  const { guard, watcher } = mount.current;
+  const { guard, watcher, downloads } = mount.current;
   const srcdoc = useMemo(() => buildSrcdoc(props.source, __KYOUBE_APP_SDK__, mount.current!.nonce), [props.source]);
 
   useEffect(() => {
@@ -133,6 +148,7 @@ function AppFrame(props: AppRunnerProps) {
         onTask: (op, params) => latest.current.onTask ? latest.current.onTask(op, params) : Promise.reject(new Error("disabled: app tasks are not available here")),
         onTaskOpen: (id) => latest.current.onTaskOpen ? latest.current.onTaskOpen(id) : Promise.reject(new Error("disabled: app tasks are not available here")),
         onWatch: (id, on) => { if (on) watcher.start(id); else watcher.stop(id); },
+        onDownload: (file) => downloads.request(file),
         isLive: () => live.current,
         guard,
       });
@@ -143,8 +159,9 @@ function AppFrame(props: AppRunnerProps) {
       window.removeEventListener("message", handler);
       // Unmount and stop both land here: no watch outlives the listener.
       watcher.stopAll();
+      downloads.dispose();
     };
-  }, [stopped, guard, watcher]);
+  }, [stopped, guard, watcher, downloads]);
 
   // The frame's height is measured, not styled — `frame-height.ts` says why
   // neither `h-full` nor a `min-h-[…]` class can size it under upstream's
@@ -192,5 +209,23 @@ function AppFrame(props: AppRunnerProps) {
   // sits on a line box whose descender space below it is exactly the overflow
   // that makes `main` scroll — and `box-sizing: border-box` so the measured
   // height includes the border it is measured with.
-  return <iframe ref={frame} onLoad={onLoad} title="Kyoube app" sandbox="allow-scripts allow-forms allow-modals" srcDoc={srcdoc} className="w-full rounded border bg-background" style={{ display: "block", boxSizing: "border-box" }} />;
+  return (
+    <>
+      {pendingSave && <SaveBar pending={pendingSave} appName={appLabel(props.context)} />}
+      <iframe ref={frame} onLoad={onLoad} title="Kyoube app" sandbox="allow-scripts allow-forms allow-modals allow-downloads" srcDoc={srcdoc} className="w-full rounded border bg-background" style={{ display: "block", boxSizing: "border-box" }} />
+    </>
+  );
+}
+
+/** Shown above the frame when an app asks to save a file and the viewer has not just clicked (see `download.ts`). */
+export function SaveBar(props: { pending: PendingSave; appName: string }) {
+  return (
+    <div role="alertdialog" aria-label="Save a file" className="rounded border text-sm" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: 8, marginBottom: 8 }}>
+      <span style={{ flex: "1 1 16rem", minWidth: 0, overflowWrap: "anywhere" }}>
+        <strong>{props.appName}</strong> wants to save <strong>{props.pending.filename}</strong> ({formatSize(props.pending.size)}).
+      </span>
+      <button type="button" className={button} onClick={props.pending.save}>Save</button>
+      <button type="button" className={button} onClick={props.pending.dismiss}>Dismiss</button>
+    </div>
+  );
 }
