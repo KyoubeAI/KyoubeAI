@@ -209,7 +209,7 @@ agent works under its own grant, so its writes go through the normal Data path a
 
 ### App runtime → data
 
-A published app opens as a sandboxed `<iframe sandbox="allow-scripts allow-forms allow-modals">` with an
+A published app opens as a sandboxed `<iframe sandbox="allow-scripts allow-forms allow-modals allow-downloads">` with an
 opaque origin (no cookies, no storage, no host DOM). Its only channel to the host is `postMessage`,
 guarded by a per-mount handshake nonce (16 random bytes, readable by the SDK exactly once and then
 removed from both `window` and the DOM) and a call budget (60 requests per rolling 10 seconds, of which at
