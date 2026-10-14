@@ -1,7 +1,7 @@
 import { isKyoubeRequest, KYOUBE_PROTOCOL, type KyoubeRequest } from "@kyoube/app-sdk";
 import { APPS_PAGE_ROUTE } from "../../apps/page-route.js";
 import { bridgeErrorMessage } from "../format.js";
-import { cleanDownloadName, MAX_DOWNLOAD_BYTES } from "./download-rules.js";
+import { cleanDownloadName, MAX_DOWNLOAD_BYTES, type DownloadFile } from "./download-rules.js";
 
 export type RoutedRequest =
   | { kind: "hello" }
@@ -53,7 +53,7 @@ const DATA_METHODS = new Set(["query", "get", "count", "describe", "insert", "up
 /** The `DataError` codes the worker throws, as `<code>: <text>` (see `src/data/errors.ts`). */
 const KNOWN_CODES = [
   "invalid", "forbidden", "not_found", "conflict", "limit", "disabled", "budget_exceeded", "too_large", "provider_rejected", "provider_unavailable", "timeout",
-  "held", "rejected_by_person", "guardrail_context_required",
+  "held", "rejected_by_person", "declined", "guardrail_context_required",
 ] as const;
 
 /**
@@ -306,6 +306,8 @@ const MAX_NONCE_MISMATCHES = 3;
  * on top of the 60 and of the worker's own ten a minute per viewer. `watches` is not a rate but a
  * ceiling on the tasks the host polls for one frame at once, and `openMs` the gap between two task
  * opens — each takes the person's whole window somewhere else.
+ * `downloads` is a sixth rate: each one puts a file on the viewer's disk (or a Save bar on their
+ * screen), so three per window, on top of the 60.
  *
  * The numbers are deliberately far above what a hand-written UI does and far
  * below what a loop does: 60 requests in 10 s is six a second — more than any
@@ -314,9 +316,19 @@ const MAX_NONCE_MISMATCHES = 3;
  * patience: an app that keeps hitting the ceiling for three windows running is
  * not busy, it is looping, and is stopped rather than served forever.
  */
-export const APP_BUDGET = { windowMs: 10_000, requests: 60, toasts: 5, decisions: 10, connections: 30, taskStarts: 5, watches: 10, openMs: 10_000, limitedWindows: 3 } as const;
+export const APP_BUDGET = { windowMs: 10_000, requests: 60, toasts: 5, decisions: 10, connections: 30, taskStarts: 5, downloads: 3, watches: 10, openMs: 10_000, limitedWindows: 3 } as const;
 
-type SpendKind = "request" | "toast" | "decision" | "connection" | "taskStart";
+type SpendKind = "request" | "toast" | "decision" | "connection" | "taskStart" | "download";
+
+/** Each spend kind's ceiling per window. */
+const SPEND_MAX: Readonly<Record<SpendKind, number>> = {
+  request: APP_BUDGET.requests,
+  toast: APP_BUDGET.toasts,
+  decision: APP_BUDGET.decisions,
+  connection: APP_BUDGET.connections,
+  taskStart: APP_BUDGET.taskStarts,
+  download: APP_BUDGET.downloads,
+};
 
 /**
  * The per-mount state the bridge keeps for one running app: the handshake
@@ -351,7 +363,7 @@ export function createAppGuard(nonce: string, opts: { onStop: (reason: StopReaso
   let reason: StopReason | null = null;
   // The calls still inside the window, oldest first; never longer than the
   // budget itself, because a call over the ceiling is refused rather than kept.
-  const spent: Record<SpendKind, number[]> = { request: [], toast: [], decision: [], connection: [], taskStart: [] };
+  const spent: Record<SpendKind, number[]> = { request: [], toast: [], decision: [], connection: [], taskStart: [], download: [] };
   const disabledSeen = new Set<string>();
   const watched = new Set<string>();
   let lastOpen: number | null = null;
@@ -417,7 +429,7 @@ export function createAppGuard(nonce: string, opts: { onStop: (reason: StopReaso
     spend(kind: SpendKind): boolean {
       const at = now();
       const times = spent[kind];
-      const max = kind === "request" ? APP_BUDGET.requests : kind === "toast" ? APP_BUDGET.toasts : kind === "connection" ? APP_BUDGET.connections : kind === "taskStart" ? APP_BUDGET.taskStarts : APP_BUDGET.decisions;
+      const max = SPEND_MAX[kind];
       while (times.length > 0 && at - times[0]! >= APP_BUDGET.windowMs) times.shift();
       if (times.length >= max) {
         refused(at);
@@ -458,6 +470,8 @@ export interface AppBridgeCallbacks {
   onTaskOpen?: (id: string) => Promise<void>;
   /** Starts (`on`) or stops the host's poll of one task for this frame; `AppRunner` owns the `TaskWatcher`. */
   onWatch?: (id: string, on: boolean) => void;
+  /** Saves a file the router accepted (`ui.download`); `AppRunner` saves at once or asks the viewer first. Absent, the app is told downloads are not available here. */
+  onDownload?: (file: DownloadFile) => Promise<void>;
   /** False once the runner has torn down, or once the app navigated its frame — nothing runs after that. */
   isLive: () => boolean;
   /** This mount's nonce and strike count (ruling P4-R18). */
@@ -599,7 +613,20 @@ export async function handleAppMessage(event: AppMessageEvent, target: AppMessag
       reply({ result: null });
       return;
     case "download":
-      reply({ error: { code: "disabled", message: "disabled: downloads are not available here" } });
+      if (!callbacks.guard.spend("download")) {
+        reply({ error: { code: "limit", message: "limit: too many downloads" } });
+        return;
+      }
+      if (!callbacks.onDownload) {
+        reply({ error: { code: "disabled", message: "disabled: downloads are not available here" } });
+        return;
+      }
+      try {
+        await callbacks.onDownload({ filename: routed.filename, mime: routed.mime, bytes: routed.bytes });
+        reply({ result: null });
+      } catch (error) {
+        reply({ error: appErrorPayload(error) });
+      }
       return;
     case "reject":
       reply({ error: { code: routed.code, message: routed.message } });
