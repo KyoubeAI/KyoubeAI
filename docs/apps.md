@@ -432,7 +432,7 @@ exportButton.addEventListener("click", async () => {
 
 - `data` is a string (saved as UTF-8), a `Blob`, an `ArrayBuffer` or a typed array. Build xlsx, docx
   or zip bytes yourself in the app's own script; nothing can be loaded from a CDN.
-- Allowed types: csv, tsv, txt, json, xml, md, xlsx, docx, pptx, pdf, png, jpg/jpeg, zip. At most
+- Allowed types: csv, tsv, txt, json, md, xlsx, docx, pptx, pdf, png, jpg/jpeg, zip. At most
   25 MB. The host cleans the name and sets the type from the extension; anything else is refused with
   `invalid` (`too_large` over the size).
 - Make the call straight from the click. If the file takes more than a few seconds to build, the
@@ -467,10 +467,10 @@ Dismiss or 25 seconds. One save can wait at a time; a second call meanwhile gets
   which at most **5 may be toasts**. Every call counts — a data call, a `ui.openApp`, and a call the
   host rejects as invalid all cost the same one — and over the ceiling a call comes back with
   `code: "limit"` (`limit: too many requests`), while a toast over the smaller ceiling is silently
-  dropped. Downloads have a ceiling of **3 per 10 seconds**, counted inside the 60. Keep hitting either ceiling for three windows running and the app is stopped with a
+  dropped. Keep hitting any of these ceilings for three windows running and the app is stopped with a
   notice. Batch instead of looping: one `query` with a `limit` beats sixty `get`s, and `insert` takes
   an array of rows. Connection calls have a smaller ceiling of **30 per 10 seconds**, counted inside
-  the 60.
+  the 60, and downloads one of **3 per 10 seconds**, also counted inside the 60.
 - No `<link rel="dns-prefetch">` or `<link rel="preconnect">`. They are the one network-shaped thing
   the policy does not govern (see the security model below), so treat them as forbidden rather than
   as a loophole; they cannot fetch anything for you in any case.
@@ -592,10 +592,13 @@ is not a restriction you can work around, only one you can trip over.
 host saves the file from its own page after the checks in [Saving files](#saving-files). The token
 also lets the frame save a file by itself (`<a download>`, or navigating to a `blob:` URL of a type
 the browser won't display) **without** those checks: any type, any size, any name the browser
-accepts. This is accepted: the bytes go only to the viewer's own disk, never to a server, and
-`connect-src 'none'` still blocks every request. The risk is a careless or hostile app dropping an
-unwanted file in Downloads; browsers limit download floods per frame, the authoring rules tell apps
-to use `kyoube.ui.download`, and every version's source is stored and reviewable. A download is not a
+accepts. This is accepted: the file goes only to the viewer's own disk and nothing is sent while the
+app runs, since `connect-src 'none'` still blocks every request. But a file a browser can run (an
+`.html` or `.svg` saved this way), once the viewer opens it from disk, can send what it holds to a
+server. That is a weaker form of the self-navigation residual, since it needs the viewer to open the
+file. A careless or hostile app can also drop an unwanted file in Downloads. Browsers limit download
+floods per frame, the authoring rules tell apps to use `kyoube.ui.download`, and every version's
+source is stored and reviewable. A download is not a
 navigation, so it does not trip the runner's second-load stop.
 
 The load count is not an identification, though. The runner cannot tell *whose* document a `load`

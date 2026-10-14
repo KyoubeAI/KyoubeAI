@@ -405,7 +405,7 @@ exportButton.addEventListener("click", async () => {
 
 - `data` is a string (saved as UTF-8), a `Blob`, an `ArrayBuffer` or a typed array. Build xlsx, docx
   or zip bytes yourself in the app's own script; nothing can be loaded from a CDN.
-- Allowed types: csv, tsv, txt, json, xml, md, xlsx, docx, pptx, pdf, png, jpg/jpeg, zip. At most
+- Allowed types: csv, tsv, txt, json, md, xlsx, docx, pptx, pdf, png, jpg/jpeg, zip. At most
   25 MB. The host cleans the name and sets the type from the extension; anything else is refused with
   `invalid` (`too_large` over the size).
 - Make the call straight from the click. If the file takes more than a few seconds to build, the

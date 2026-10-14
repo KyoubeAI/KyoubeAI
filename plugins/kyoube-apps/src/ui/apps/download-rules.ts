@@ -2,15 +2,17 @@
  * What `kyoube.ui.download` may save (docs/apps.md, "Saving files"): the host side of the trust
  * boundary decides the name, the type and the size, and the app's own claims about any of them are
  * never read. Data and document types only. Deliberately absent: anything a local browser would run
- * (html, htm, xhtml, svg), executables and scripts, and macro-enabled Office files (xlsm, docm, pptm).
- * The type comes from the extension alone.
+ * (html, htm, xhtml, svg, and xml, whose XHTML root runs script), executables and scripts, and
+ * macro-enabled Office files (xlsm, docm, pptm). The type comes from the extension alone. This
+ * governs only the checked route: the frame's own `<a download>` skips it, and its bytes go only to
+ * the viewer's disk with nothing sent while the app runs. But if the viewer opens an html or svg
+ * file saved that way, it can send what it holds to a server (docs/apps.md, Security model).
  */
 export const DOWNLOAD_TYPES: ReadonlyMap<string, string> = new Map([
   ["csv", "text/csv"],
   ["tsv", "text/tab-separated-values"],
   ["txt", "text/plain"],
   ["json", "application/json"],
-  ["xml", "application/xml"],
   ["md", "text/markdown"],
   ["xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
   ["docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
@@ -49,9 +51,10 @@ export function cleanDownloadName(raw: unknown): { ok: true; filename: string; m
   const dot = name.lastIndexOf(".");
   const extension = dot === -1 ? "" : name.slice(dot + 1).toLowerCase();
   const mime = DOWNLOAD_TYPES.get(extension);
+  // `${title}.xlsx` with an empty title cleans to the bare extension, which is a missing name, not a wrong type.
+  if (dot === -1 && DOWNLOAD_TYPES.has(name.toLowerCase())) return { ok: false, message: "download needs a file name before the extension" };
   if (!mime) return { ok: false, message: `download can only save ${ALLOWED_LIST} files` };
   let stem = trimEnds(name.slice(0, dot));
-  if (stem.length === 0) return { ok: false, message: "download needs a file name before the extension" };
   if (RESERVED_STEM.test(stem.split(".")[0]!.trim())) stem = `_${stem}`;
   const room = MAX_DOWNLOAD_NAME - extension.length - 1;
   if (stem.length > room) {

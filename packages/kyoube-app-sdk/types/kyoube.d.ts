@@ -105,7 +105,7 @@ export interface Kyoube {
     openApp(slug: string): Promise<void>;
     /**
      * Saves `data` on the viewer's computer as `filename`. Call it from a click handler: without a
-     * recent click the viewer is asked first. Only csv, tsv, txt, json, xml, md, xlsx, docx, pptx,
+     * recent click the viewer is asked first. Only csv, tsv, txt, json, md, xlsx, docx, pptx,
      * pdf, png, jpg/jpeg and zip, at most 25 MB; the host cleans the name and sets the type from the
      * extension. Rejects with `kyoube.Error` code `invalid`, `too_large`, `limit`, `declined` (the
      * viewer said no; don't retry) or `disabled`.
