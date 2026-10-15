@@ -93,6 +93,13 @@ export function isCodeFile(relToRoot) {
  * - `doc/connections/tool-method-permission-reviews.json` (2026.1005): upstream's
  *   review notes on each connector tool's permissions, read only by its own
  *   tests (`tool-access-service.test.ts`, `app-definitions.test.ts`).
+ * - `feature-map` (2026.1012): upstream's recipes for reproducing and verifying
+ *   each feature, written for its own developers and agents; the product never
+ *   reads them.
+ * - `integrations/assistant-plugins` (2026.1012): the source of upstream's own
+ *   Claude and OpenAI (ChatGPT/Codex) plugins for its "Assistant connections
+ *   (MCP)" feature, built and published upstream. Nothing in the image reads
+ *   or serves it (only upstream's `tests/runner-e2e` mentions it).
  *
  * An entry may be a multi-segment prefix or an exact file path; the longest
  * match names the row a file is counted under, otherwise it is counted under
@@ -113,6 +120,8 @@ export const SWEEP_ALLOWLIST = [
   "docs/docs.json",
   "docs/images",
   "evals",
+  "feature-map",
+  "integrations/assistant-plugins",
   "packages/paperclip-runner/runner",
   "patches",
   "releases",
