@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@lydell/node-pty": "1.1.0",
-    "@paperclipai/plugin-sdk": "2026.1005.0"
+    "@paperclipai/plugin-sdk": "2026.1012.0"
   },
   "peerDependencies": {
     "react": ">=18"

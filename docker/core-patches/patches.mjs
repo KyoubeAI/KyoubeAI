@@ -36,7 +36,7 @@
  * it with the core a build actually uses, so a patch that fails on a different
  * core says that first.
  */
-export const CORE_VERSION = "2026.1005.0";
+export const CORE_VERSION = "2026.1012.0";
 
 /**
  * The label of the control the `onboarding-skip-harness-*` patches add under
@@ -287,7 +287,7 @@ export const PATCHES = [
     title: "user groups: opening a chat with a protected agent needs the right to assign it",
     standing: "KyoubeAI user groups: agent chat honours assignment rules",
     files: ["server/dist/routes/issues.js"],
-    // `const agent = resolved.agent;` occurs once in issues.js (2026.1005.0), in this route.
+    // `const agent = resolved.agent;` occurs once in issues.js (2026.1005.0 and 2026.1012.0), in this route.
     pattern: /(\n( *)const agent = resolved\.agent;)(?!\n *\/\* kyoube-groups-chat)/g,
     replacement:
       '$1\n$2/* kyoube-groups-chat (docs/groups.md) */ if (agent.permissions?.authorizationPolicy?.assignmentPolicy?.mode === "protected") await assertCanAssignTasks(req, companyId, { assigneeAgentId: agent.id });',

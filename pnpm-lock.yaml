@@ -112,8 +112,8 @@ importers:
   plugins/kyoube-agent-rules:
     dependencies:
       '@paperclipai/plugin-sdk':
-        specifier: 2026.1005.0
-        version: 2026.1005.0(react@19.2.8)
+        specifier: 2026.1012.0
+        version: 2026.1012.0(react@19.2.8)
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -131,8 +131,8 @@ importers:
   plugins/kyoube-apps:
     dependencies:
       '@paperclipai/plugin-sdk':
-        specifier: 2026.1005.0
-        version: 2026.1005.0(react@19.2.8)
+        specifier: 2026.1012.0
+        version: 2026.1012.0(react@19.2.8)
       pg:
         specifier: ^8.23.0
         version: 8.23.0
@@ -183,8 +183,8 @@ importers:
   plugins/kyoube-files:
     dependencies:
       '@paperclipai/plugin-sdk':
-        specifier: 2026.1005.0
-        version: 2026.1005.0(react@19.2.8)
+        specifier: 2026.1012.0
+        version: 2026.1012.0(react@19.2.8)
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -214,8 +214,8 @@ importers:
   plugins/kyoube-license:
     dependencies:
       '@paperclipai/plugin-sdk':
-        specifier: 2026.1005.0
-        version: 2026.1005.0(react@19.2.8)
+        specifier: 2026.1012.0
+        version: 2026.1012.0(react@19.2.8)
     devDependencies:
       '@kyoube/license':
         specifier: workspace:*
@@ -248,8 +248,8 @@ importers:
   plugins/kyoube-notify:
     dependencies:
       '@paperclipai/plugin-sdk':
-        specifier: 2026.1005.0
-        version: 2026.1005.0(react@19.2.8)
+        specifier: 2026.1012.0
+        version: 2026.1012.0(react@19.2.8)
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -279,8 +279,8 @@ importers:
   plugins/kyoube-studio:
     dependencies:
       '@paperclipai/plugin-sdk':
-        specifier: 2026.1005.0
-        version: 2026.1005.0(react@19.2.8)
+        specifier: 2026.1012.0
+        version: 2026.1012.0(react@19.2.8)
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -313,8 +313,8 @@ importers:
         specifier: 1.1.0
         version: 1.1.0
       '@paperclipai/plugin-sdk':
-        specifier: 2026.1005.0
-        version: 2026.1005.0(react@19.2.8)
+        specifier: 2026.1012.0
+        version: 2026.1012.0(react@19.2.8)
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -551,8 +551,8 @@ packages:
   '@oxc-project/types@0.148.0':
     resolution: {integrity: sha512-Nm4s/jB+4FpFsPhWGEC4h7rzksesmtnMXomo6rCMcg/b8zLQuOziRgkCS1fxDCXOlJB/6Q8oABOZ/OP6RIPj9A==}
 
-  '@paperclipai/plugin-sdk@2026.1005.0':
-    resolution: {integrity: sha512-Ii54ukCFMujaRVGrRV/+RaudPmXka0FnSFF4Q8mTv8Gktb92okbPTtctf3zTlUNe908FG1tKoM90UGF2YwfVWA==}
+  '@paperclipai/plugin-sdk@2026.1012.0':
+    resolution: {integrity: sha512-9T5loVkWyNARibDwye31P4YbrFpq0MiREF1lX8jrKlyvv0MQQZOiQnLUExyoBQ14F9jz8fQB1MhWIdBdj42zpQ==}
     engines: {node: '>=24.11.0'}
     hasBin: true
     peerDependencies:
@@ -561,8 +561,8 @@ packages:
       react:
         optional: true
 
-  '@paperclipai/shared@2026.1005.0':
-    resolution: {integrity: sha512-BHeRJ6L2QcZFYT4NoAmVi7LJwwj/XKxmLqZ9+cFsu6kjzPJvPo8ZsluSDGKhI7tETUCUQirsSTPhUdqzLDaDYg==}
+  '@paperclipai/shared@2026.1012.0':
+    resolution: {integrity: sha512-NjLv0R+/4zgt1po9Phj6t/KqGwlDgofKKXu8fVzHCd9wvzl1QePdMADyR1HTWfujA7dre6NrDGCCCnbQViLUUg==}
     engines: {node: '>=24.11.0'}
 
   '@resvg/resvg-js-android-arm-eabi@2.6.2':
@@ -1420,14 +1420,14 @@ snapshots:
 
   '@oxc-project/types@0.148.0': {}
 
-  '@paperclipai/plugin-sdk@2026.1005.0(react@19.2.8)':
+  '@paperclipai/plugin-sdk@2026.1012.0(react@19.2.8)':
     dependencies:
-      '@paperclipai/shared': 2026.1005.0
+      '@paperclipai/shared': 2026.1012.0
       zod: 4.5.4
     optionalDependencies:
       react: 19.2.8
 
-  '@paperclipai/shared@2026.1005.0':
+  '@paperclipai/shared@2026.1012.0':
     dependencies:
       three: 0.185.1
       zod: 4.5.4

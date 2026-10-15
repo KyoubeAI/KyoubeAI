@@ -28,7 +28,7 @@ services:
       args:
         # The pinned upstream core image version. PAPERCLIP_VERSION is the 0.1.x
         # name of this key and still works this release.
-        KYOUBE_CORE_VERSION: ${KYOUBE_CORE_VERSION:-${PAPERCLIP_VERSION:-2026.1005.0}}
+        KYOUBE_CORE_VERSION: ${KYOUBE_CORE_VERSION:-${PAPERCLIP_VERSION:-2026.1012.0}}
         KYOUBE_VERSION: ${KYOUBE_VERSION:-dev}
     image: ${KYOUBE_IMAGE:-kyoubeai}:${KYOUBE_VERSION:-dev}
     # tini is PID 1 inside the image; pids_limit is the backstop against process leaks.

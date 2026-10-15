@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-ARG KYOUBE_CORE_VERSION=2026.1005.0
+ARG KYOUBE_CORE_VERSION=2026.1012.0
 
 # ---------------------------------------------------------------------------
 # Stage 1: build the Kyoube bootstrap CLI and plugins with pnpm.
