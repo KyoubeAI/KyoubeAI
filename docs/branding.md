@@ -127,6 +127,11 @@ On core 2026.1005.0 the sweep gained two more allowlisted rows for upstream deve
 `doc/connections/tool-method-permission-reviews.json` (connector permission notes only upstream's
 tests read). Nothing else in the image needed a new rule.
 
+On core 2026.1012.0 it gained two more: `feature-map` (upstream's recipes for reproducing and
+verifying each feature) and `integrations/assistant-plugins` (the source of upstream's own Claude and
+OpenAI plugins for its "Assistant connections (MCP)" feature, which nothing in the image reads or
+serves). Again nothing else needed a new rule: `residual 0` and code-shaped matches 0.
+
 Verified against the built image on 2026-09-14, after the final review fix wave (the history at the
 end of this section says what each round closed). That build's `rebrand:` header lines were
 

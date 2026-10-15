@@ -145,6 +145,50 @@ a company admin switches a use on; until then every use answers `disabled`. `kyo
 gets the capability to answer a card or an approval (`issue.interactions.respond`,
 `approvals.respond`).
 
+## Moving an install from core 2026.1005.0
+
+This release moves from core 2026.1005.0 to 2026.1012.0. Read this before you rebuild.
+
+- **Check `KYOUBE_CORE_VERSION=2026.1012.0` in `.env`.** `./update.sh` keeps it in step with
+  `.env.example`; a hand-run `docker compose up -d --build` uses whatever `.env` says.
+- **Back up first.** The core adds 12 database migrations (`0294` to `0305`). They run on the first
+  start and cannot be undone: `bash scripts/backup.sh`. One of them (`0298`) fills in default usage
+  instructions for existing Honcho, Mem0, Zep, Supermemory and Cognee connections.
+- **Workspace restore locks changed format.** The core now keeps them as SQLite files in
+  `/kyoubeai/instances/default/locks/directory-merge/`, and the old and new core must never write to
+  the same home volume at once. `docker compose up -d` stops the old container before it starts the
+  new one, so a normal update is safe. A `<hash>.lock` directory the old core left behind (after a
+  crash, say) keeps blocking that workspace. After the update, run
+  `docker compose exec app sh -c 'ls -d /kyoubeai/instances/default/locks/directory-merge/*.lock 2>/dev/null'`.
+  If it lists anything, move those directories out of the folder. Never move or delete a
+  `.lock.sqlite` file.
+- **New agents can change other agents.** The core now gives every newly hired standard agent 14
+  grants: changing agents and skills (`agents:configure`, `skills:create` and their suggest-changes
+  pair), tool connections, profiles, runtime and audit, its responsible person's inbox, task
+  assignment and active checkouts. Agents you already have keep what they had. A new hire's profile
+  therefore shows **Can change agents** on; switch it off there for an agent that should not. Agents
+  still cannot set the command or environment another agent runs. The agent working rules still take
+  the broad "assign to anyone" grant from every agent and give each manager its own-team grant, which
+  is the same grant the core now gives new agents.
+- **Low-trust managers are protected.** The core now evaluates a low-trust agent's trust policy
+  together with its assignment policy, so the agent working rules protect such a manager instead of
+  reporting it under `agent rules skipped`.
+- **Custom tool grants are enforced as written.** A grant whose `scope.allow` matches no tool,
+  connection or app no longer falls back to a broader policy, and a grant with an unknown or
+  malformed selector denies. KyoubeAI writes no such grants; if an agent loses a tool after the
+  update, review the grants someone set by hand.
+- **Email inboxes are no longer experimental.** An agent can get an AgentMail inbox without the Chat
+  connectors setting, and each new email thread becomes a task assigned to it. User groups do not
+  cover this ([groups.md](groups.md)).
+- **Assistant connections (MCP)** let Claude Code, Codex and other MCP clients sign in as a person
+  and work with tasks. They are off by default (Settings → Experimental) and need an `https://`
+  `KYOUBE_PUBLIC_URL`.
+- **Shorter default instructions.** New companies and new hires get short role descriptions instead
+  of long manuals. Saved instructions are unchanged, and the agent working rules block is added as
+  before.
+- **The core image's own CLIs moved** to Claude Code 2.1.296, Codex 0.162.1 and OpenCode 1.19.0. They
+  are fallbacks: a harness installed from the Terminal still comes first.
+
 ## Moving an install from core 2026.916.1
 
 This release moves from core 2026.916.1 to 2026.1005.0 (upstream releases 2026.1001.0 and

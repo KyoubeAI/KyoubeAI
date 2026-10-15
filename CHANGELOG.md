@@ -4,6 +4,23 @@ All notable changes to KyoubeAI are recorded here, in terms of what changed for 
 building on it. The format is loosely [Keep a Changelog](https://keepachangelog.com/); versioning is
 [SemVer](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- The core is Paperclip 2026.1012.0 (was 2026.1005.0), with the plugin SDK pinned to match. 12
+  database migrations run on the first start, workspace restore locks change format, and every newly
+  hired standard agent gets 14 grants from the core, **Can change agents** among them. Back up first,
+  and read [docs/upgrading.md](docs/upgrading.md#moving-an-install-from-core-202610050).
+- Every KyoubeAI core patch, the Studio theme, the rebrand and the installable-app step apply on this
+  core unchanged. The pi and Hermes chat fixes are still not upstream, so they stay. The rebrand's
+  sweep allows two new upstream development trees (`feature-map`, `integrations/assistant-plugins`).
+- The agent working rules protect a manager with a low-trust policy, which this core can evaluate,
+  instead of skipping it. `kyoube.agent-rules` is 0.3.1, so the bootstrap reinstalls it on update.
+- SECURITY.md and docs/groups.md record a new accepted residual: on this core an agent's email inbox
+  (AgentMail) needs no experimental setting, and the core assigns each new email thread to that agent
+  without the assignment check user groups rely on.
+
 ## 1.10.0 - 2026-10-15
 
 ### Added

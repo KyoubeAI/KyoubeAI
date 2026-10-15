@@ -25,8 +25,8 @@ export const SUBSCRIBED_EVENTS = [
 ] as const;
 
 // `minimumHostVersion` is deliberately absent, for the reason recorded in the
-// terminal plugin's manifest: core 2026.831.1 (still in 2026.916.1) compares it against a host version
-// it never sets, so any minimum would reject the install.
+// terminal plugin's manifest: the image pins the core every plugin is built for, so a
+// minimum would add nothing (and cores up to 2026.1005.0 rejected any minimum outright).
 const manifest: PaperclipPluginManifestV1 = {
   id: PLUGIN_ID,
   apiVersion: 1,

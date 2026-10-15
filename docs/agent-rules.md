@@ -27,7 +27,7 @@ override that without changing any core file.
 | People-only cards | The company setting that caps confirmation, question, checkbox, verdict and suggested-task cards at `human_only`. No agent can answer one, not even the one that asked. | The core |
 | Protected managers | Every agent with a direct report is protected: another agent can assign it work only with a grant. Each manager holds one grant, for itself and everyone below it. The core's default "assign to anyone" grant is taken from every agent. | The core |
 | Escalation | A decision card only a person can decide; on "Escalate" the core moves the task to the manager. | The core |
-| Top agent may change agents | The one agent that reports to nobody gets `agents:configure` and `skills:create`, so it can change its own and other agents' instructions, skills and settings. The core gives these only to a top agent whose role is `ceo`, and KyoubeAI hires the first agent as `general`. Given once: switch it off on the agent's profile (**Can change agents**) and it stays off. Nobody gets it while more than one agent reports to nobody; switch it on per agent instead. | The core |
+| Top agent may change agents | The one agent that reports to nobody gets `agents:configure` and `skills:create`, so it can change its own and other agents' instructions, skills and settings. Core 2026.1012.0 gives both to every new standard agent itself, with twelve more grants (tools, inbox, audit, task assignment and checkouts); before that it gave them only to a top agent whose role is `ceo`, and KyoubeAI hires the first agent as `general`, so this rule covers agents hired on an earlier core. Given once: switch it off on the agent's profile (**Can change agents**) and it stays off. Nobody gets it while more than one agent reports to nobody; switch it on per agent instead. | The core |
 
 `kyoube agent-rules --watch` starts with the container. It runs as `node`, makes one pass a minute,
 and writes only what differs:
@@ -62,7 +62,10 @@ work to which agents. After the guard step, each pass:
 If the list cannot be read, the group step is skipped for that company and reported. It is never
 applied as "no groups". An agent whose authorization policy has keys KyoubeAI does not change cannot
 be protected; it shows under `agent rules skipped`. The core already refuses everyone assignment to
-an agent with such a policy, but the chat check (protected agents only) does not cover it.
+an agent with such a policy, but the chat check (protected agents only) does not cover it. A low-trust
+agent's policy (the core's `trustPreset`, `trustBoundary` and `reviewPreset`) is not one of these:
+core 2026.1012.0 evaluates those keys together with assignment policy, so such an agent is protected
+like any other.
 
 `kyoube agent-rules off` does not remove group enforcement: delete the groups for that. The group
 step runs even with `KYOUBE_AGENT_RULES=off` (see [Turn it off](#turn-it-off)).

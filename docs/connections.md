@@ -50,7 +50,7 @@ whatever an app or agent asks for.
 connection (see [apps.md](apps.md#connections)). A GET needs the viewer's data level `read`. Any other
 method needs `write`, the declaration `read-write`, and the connection's methods `read-write`. A
 declaration can narrow what the connection allows and never widens it. Owners and admins follow the
-same rules inside an app. On core 2026.1005.0 a member with the core `viewer` role cannot run apps
+same rules inside an app. On core 2026.1012.0 a member with the core `viewer` role cannot run apps
 at all (the core refuses their every action with "Viewer access is read-only"), so in practice these
 rules apply to members above viewer, at the data level their groups or role give them.
 

@@ -83,7 +83,7 @@ restrictions.
 Someone outside the agent's groups cannot assign it a task or chat with it. The Groups page is where
 an agent's restrictions are seen: each group lists its agents, and an agent in no group is open to
 everyone. Only owners and admins see that page; anyone else who tries to assign or chat with a
-restricted agent gets the core's own refusal. (Core 2026.1005.0 shows plugin tabs only on issues,
+restricted agent gets the core's own refusal. (Core 2026.1012.0 shows plugin tabs only on issues,
 projects and workspaces, so there is no tab on the agent page.)
 
 - **Takes effect within about a minute.** The agent rules loop (`kyoube agent-rules --watch`) applies
@@ -134,6 +134,11 @@ Agent restrictions use the core's own mechanism, written by the agent rules loop
   change, KyoubeAI leaves it alone and reports it as skipped. The core already refuses everyone
   assignment to an agent with such a policy, so its groups change nothing there. The chat check
   covers protected agents only and does not cover such an agent.
+- **Email inboxes.** From core 2026.1012.0 an agent can have an email inbox (an AgentMail connection)
+  without the experimental Chat connectors setting. Every new email thread to it becomes a task
+  assigned to that agent, and the core runs no assignment check for it, so a restricted agent with an
+  inbox takes work from anyone who emails it. Setting up an inbox needs `tools:manage_connections`,
+  which only owners and admins hold unless someone grants it.
 
 Chat needs one standing core patch, `groups-chat-open-assign-check` and
 `groups-chat-message-assign-check` in `docker/core-patches/patches.mjs`. It adds the core's own

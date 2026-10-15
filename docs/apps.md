@@ -163,7 +163,7 @@ kyoube.connections.call(name, { method?, path?, query?, headers?, body? })
   secret does not resolve; the host shows one toast per connection per mount), `too_large`, `timeout`,
   `provider_unavailable` (the service could not be reached) and `limit`.
 - Who may call: the viewer must be able to open the app. A GET needs data level `read`; any other
-  method needs `write`, a `read-write` declaration and a `read-write` connection. On core 2026.1005.0
+  method needs `write`, a `read-write` declaration and a `read-write` connection. On core 2026.1012.0
   a member with the core `viewer` role cannot run apps at all (the core refuses their actions), so
   these rules apply in practice to members above viewer.
 - Calls count in the frame's 60 per 10 seconds, with their own ceiling of **30 per 10 seconds**.
@@ -301,7 +301,7 @@ kyoube.tasks.watch(id, (task) => …)                 // → stop()
   core refused to wake it and the task was cancelled; the message says which), `limit` (10 starts a
   minute per person per app, 25 open tasks per app, 5 `tasks.start` per 10 seconds) and `conflict`
   (cancelling a task that is already finished).
-- Only people start or cancel tasks. On core 2026.1005.0 a member with the core `viewer` role cannot
+- Only people start or cancel tasks. On core 2026.1012.0 a member with the core `viewer` role cannot
   run apps at all.
 
 A version that adds a template or changes any part of one needs a person to publish it
@@ -526,7 +526,7 @@ company as `?companyId=…` on `GET` or `"companyId"` in every `POST` body. Ever
 | Roll back | `POST /apps/{slug}/rollback` | `version` |
 | Archive | `POST /apps/{slug}/archive` | — |
 
-The same operations exist as `kyoube.apps:apps_*` tools, but the core (2026.831.1 through 2026.1005.0) only hands plugin tools
+The same operations exist as `kyoube.apps:apps_*` tools, but the core (2026.831.1 through 2026.1012.0) only hands plugin tools
 to a run through an MCP gateway, which it creates only for agents that already have an MCP connection
 (`architecture.md`, "Agent run → Kyoube"); the skill therefore leads with the API.
 
