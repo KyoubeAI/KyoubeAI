@@ -28,11 +28,14 @@ export const SUBTREE_SCOPE_KEY = "subtreeRootAgentId";
 /**
  * The top-level policy keys core can evaluate for an assignment
  * (`evaluateAuthorizationPolicyForAssignment`, server/src/services/authorization.ts
- * in core 2026.916.1). Any other key makes core treat the whole policy as
- * "unknown", so adding protection to such a policy changes nothing and would
+ * in core 2026.1012.0, which added its own trust sections: a low-trust agent's
+ * policy carries `trustPreset`). Any other key makes core treat the whole policy
+ * as "unknown", so adding protection to such a policy changes nothing and would
  * hide the real problem: that agent is reported instead.
  */
-const ASSIGNMENT_POLICY_KEYS = new Set(["agentVisibility", "assignmentPolicy", "protectedAgent", "managedBy"]);
+const ASSIGNMENT_POLICY_KEYS = new Set([
+  "agentVisibility", "assignmentPolicy", "protectedAgent", "managedBy", "trustPreset", "trustBoundary", "reviewPreset",
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -43,6 +46,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * What core gives its root CEO so it can change the company's agents: its own
  * and other agents' instructions, skills and settings, and new skills
  * (ROOT_AGENT_DEFAULT_CHANGE_GRANTS, server/src/services/built-in-agents.ts).
+ * Since core 2026.1012.0 every new standard agent gets both as well
+ * (NEW_STANDARD_AGENT_DEFAULT_GRANT_KEYS, server/src/services/agent-permissions.ts);
+ * an agent that already holds them is recorded as given nothing.
  */
 export const CHANGE_KEYS = ["agents:configure", "skills:create"] as const;
 

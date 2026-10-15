@@ -92,7 +92,7 @@ describe("kyoube.agent-rules manifest", () => {
   it("declares the three board-only routes the CLI calls, resolved from the body's companyId", () => {
     expect(manifest.id).toBe(PLUGIN_ID);
     expect(manifest.version).toBe(pkg.version);
-    expect(PLUGIN_VERSION).toBe("0.3.0");
+    expect(PLUGIN_VERSION).toBe("0.3.1");
     expect(PLUGIN_VERSION).toBe(pkg.version);
     expect(API_ROUTES.map((route) => [route.routeKey, route.method, route.path, route.auth])).toEqual([
       ["guard.reconcile", "POST", "/reconcile", "board"],

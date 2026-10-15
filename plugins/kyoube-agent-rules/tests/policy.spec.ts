@@ -44,7 +44,10 @@ describe("assignment policy", () => {
   it("only extends a policy the core can evaluate for assignment", () => {
     expect(canExtendPolicy(null)).toBe(true);
     expect(canExtendPolicy({ assignmentPolicy: {}, managedBy: "x", agentVisibility: {}, protectedAgent: {} })).toBe(true);
-    expect(canExtendPolicy({ trustPreset: "low_trust_review" })).toBe(false);
+    // Core 2026.1012 evaluates its own trust sections alongside assignment policy.
+    expect(canExtendPolicy({ trustPreset: "low_trust_review", trustBoundary: {}, reviewPreset: {} })).toBe(true);
+    expect(canExtendPolicy({ somethingElse: true })).toBe(false);
+    expect(canExtendPolicy({ assignmentPolicy: {}, somethingElse: true })).toBe(false);
   });
 });
 
