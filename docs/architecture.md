@@ -125,7 +125,7 @@ exact residual this leaves: `SECURITY.md`.
 A local adapter run (`claude_local`, `pi_local`, `hermes_local`) reaches Kyoube over REST: every run is
 started with `PAPERCLIP_API_URL`, `PAPERCLIP_API_KEY` (a run-scoped agent token) and `PAPERCLIP_COMPANY_ID`
 in its environment, and the managed skills tell the agent to call the plugin's API routes (next section)
-with them. That is the primary path because of how the core (2026.831.1 through 2026.1005.0) delivers plugin tools: they are
+with them. That is the primary path because of how the core (2026.831.1 through 2026.1012.0) delivers plugin tools: they are
 listed by its tool gateway, but a run only receives a gateway MCP server (`/mcp/gateways/<id>`) when the
 agent's effective tool profile permits at least one installed `mcp_remote`/`local_stdio` connection (from
 2026.1005.0, also a Browser Use Cloud connection or the chat's GitHub bot connection) —
@@ -387,8 +387,9 @@ Both manifests (`plugins/kyoube-apps/src/manifest.ts`, `plugins/kyoube-terminal/
 `apiVersion: 1` — the plugin manifest schema version the pinned `@paperclipai/plugin-sdk` understands.
 Neither plugin imports anything from the core's own `server/`/`ui/` source or calls an undocumented HTTP
 route; the only contracts used are `@paperclipai/plugin-sdk` and `@paperclipai/plugin-sdk/ui`. Neither
-manifest sets `minimumHostVersion`: the pinned core version compares it against a host version the
-server never actually sets, so declaring any minimum would reject the install outright.
+manifest sets `minimumHostVersion`. Cores up to 2026.1005.0 compared it against a host version the
+server never set, so any minimum rejected the install outright. Core 2026.1012.0 passes its own
+version, but the image pins the core the plugins are built for, so a minimum would add nothing.
 
 ### Forward-only, checksummed migrations
 

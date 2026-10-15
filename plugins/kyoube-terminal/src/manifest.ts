@@ -4,10 +4,11 @@ export const PLUGIN_ID = "kyoube.terminal";
 export const PLUGIN_VERSION = "0.2.5";
 export const PAGE_ROUTE = "terminal";
 
-// We intentionally do not set `minimumHostVersion`. Core 2026.831.1 (still in 2026.916.1) compares
-// it against `instanceInfo.hostVersion`, which the server never actually sets (it
-// defaults to "0.0.0"), so declaring any minimum here would reject the install
-// outright. Revisit once upstream wires a real host version through `initialize`.
+// We intentionally do not set `minimumHostVersion`. Cores 2026.831.1 to 2026.1005.0 compared
+// it against `instanceInfo.hostVersion`, which the server never actually set (it
+// defaulted to "0.0.0"), so any minimum rejected the install outright. Core 2026.1012.0
+// passes its own version, but the image pins the core every plugin is built for, so a
+// minimum would add nothing.
 const manifest: PaperclipPluginManifestV1 = {
   id: PLUGIN_ID,
   apiVersion: 1,

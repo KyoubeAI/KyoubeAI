@@ -18,7 +18,7 @@ both right before you hand an agent broad tool access:
    this exact call allowed right now***.
 
 **Which gate applies depends on how the agent reaches Kyoube.** The core's profiles and policies govern
-tool calls that pass through its MCP gateway, and the core (2026.831.1 through 2026.1005.0) only gives a run that gateway
+tool calls that pass through its MCP gateway, and the core (2026.831.1 through 2026.1012.0) only gives a run that gateway
 when the agent already has an installed MCP connection (see `architecture.md`, "Agent run → Kyoube").
 The managed skills therefore lead with Kyoube's REST routes, which every run can call with its own
 `PAPERCLIP_API_KEY` — and a REST call is checked by gate 1 only. If you want gate 2 as well (an

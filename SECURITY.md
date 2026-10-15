@@ -152,7 +152,7 @@ Terminal output is pulled, never pushed: the page polls `terminal.wait`, which i
 session's owner and company exactly like `attach` (a session in another company answers `not_found`,
 another user's `forbidden`), so there is no per-session secret to guard and no channel that could be
 listed or guessed. The SSE stream channel the original design relied on is gone: upstream core
-(2026.831.1 through 2026.1005.0) never wires its plugin stream bridge (the route answers 501), which is why the terminal
+(2026.831.1 through 2026.1012.0) never wires its plugin stream bridge (the route answers 501), which is why the terminal
 does not use it.
 
 ## Data
@@ -259,6 +259,11 @@ and what data level they hold. Group tables are in `kyoube_meta` (`groups`, `gro
   If the agent-access list cannot be read or is malformed, the company's group step is skipped and
   reported, never applied as "no groups".
   While the watcher is not running, agent restrictions stop updating; `kyoube doctor` warns.
+  Accepted residual: from core 2026.1012.0 an agent's email inbox (AgentMail) works without the
+  experimental Chat connectors setting, and the core creates a task assigned to that agent for every
+  new email thread with no assignment check. A restricted agent with an inbox therefore takes work
+  from anyone who can email it. Only someone with `tools:manage_connections` (owners and admins by
+  default) can set up an inbox.
 - **Sync routes: the kyoube CLI, or owners and admins.** A plugin route declared `auth: "board"` is
   not limited to instance admins: the core's board check only asks whether the caller is a signed-in
   person rather than an agent, so every company member passes it. "Board-only" therefore means "no
@@ -456,7 +461,7 @@ against the plugin's `readRoles` (default: every role) or `writeRoles` (default:
 `viewer`) under **Settings → Plugins → Kyoube Files**. Reads take the same 30-second membership cache as
 the Data page; every mutation reads the members API afresh, so a demoted or removed member can browse
 for at most 30 more seconds and can change nothing from the moment the change lands. Project
-visibility in core 2026.831.1 through 2026.1005.0 is company-wide (`project:read` is granted to every active member in its
+visibility in core 2026.831.1 through 2026.1012.0 is company-wide (`project:read` is granted to every active member in its
 simple permissions mode), so the company role is the right unit here; if a future core adds
 per-project membership the plugin will need to consult it, and this section will say so. The project
 must be in the host's company scope: `getPrimaryWorkspace` answers `null` otherwise, and a

@@ -109,7 +109,7 @@ this order and the first failure is returned:
 **Assignment.** The rule is the one the core applies on its own task routes. A protected agent
 ([groups.md](groups.md#agents)) needs a `tasks:assign` grant that covers it, even for an owner or
 admin; their stored role grants normally cover it. An agent open to everyone can be given work by any
-member who can run apps. On core 2026.1005.0 a member with the `viewer` role cannot run apps at all.
+member who can run apps. On core 2026.1012.0 a member with the `viewer` role cannot run apps at all.
 A person who may open the app but may not assign its agent can use the rest of the app and gets a
 refusal on the button.
 

@@ -273,7 +273,7 @@ Every company gets its own isolated PostgreSQL schema in the `kyoube` database, 
 core's own database. People use it from the **Data** page. Agents use the REST routes under
 `/api/plugins/kyoube.apps/api/` with the `PAPERCLIP_API_URL`, `PAPERCLIP_API_KEY` and
 `PAPERCLIP_COMPANY_ID` every run already carries, guided by the managed **Kyoube Data** skill. The same
-operations exist as `kyoube.apps:data_*` tools, but the core (2026.831.1 through 2026.1005.0) only hands
+operations exist as `kyoube.apps:data_*` tools, but the core (2026.831.1 through 2026.1012.0) only hands
 those to a run through an MCP gateway, which it creates only for agents that already have an MCP
 connection, so the skill leads with the API.
 
