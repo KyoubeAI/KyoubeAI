@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1, PluginApiRouteDeclaration } from "@paperclipai/plugin-sdk";
 
 export const PLUGIN_ID = "kyoube.agent-rules";
-export const PLUGIN_VERSION = "0.3.0";
+export const PLUGIN_VERSION = "0.3.1";
 
 function boardRoute(routeKey: string, path: string): PluginApiRouteDeclaration {
   return {

@@ -106,12 +106,21 @@ describe("reconcileGuard", () => {
 
   it("skips a manager whose policy the core cannot evaluate, and still fixes its grants", async () => {
     const core = org();
-    core.policies.set("cto", { trustPreset: "low_trust_review" });
+    core.policies.set("cto", { somethingElse: true });
     const report = await reconcileGuard(core, C);
     expect(report.skipped).toEqual([{ agentId: "cto", name: "CTO", reason: "has an authorization policy KyoubeAI does not change" }]);
-    expect(core.policies.get("cto")).toEqual({ trustPreset: "low_trust_review" });
+    expect(core.policies.get("cto")).toEqual({ somethingElse: true });
     expect(core.grants.get("cto")).toEqual([ownTeamGrant("cto")]);
     expect(core.record.protected).toEqual(["ceo"]);
+  });
+
+  it("protects a low-trust manager: core 2026.1012 evaluates its trust policy together with assignment policy", async () => {
+    const core = org();
+    core.policies.set("cto", { trustPreset: "low_trust_review" });
+    const report = await reconcileGuard(core, C);
+    expect(report.skipped).toEqual([]);
+    expect(core.policies.get("cto")).toEqual({ trustPreset: "low_trust_review", assignmentPolicy: { mode: "protected" } });
+    expect(core.record.protected).toEqual(["ceo", "cto"]);
   });
 
   it("leaves an agent waiting for approval alone and says why", async () => {
@@ -197,7 +206,7 @@ describe("reconcileGuard", () => {
       agent("m2", null),
       agent("r2", "m2"),
     ]);
-    core.policies.set("a-mgr", { trustPreset: "low_trust_review" });
+    core.policies.set("a-mgr", { somethingElse: true });
     const report = await reconcileGuard(core, C);
     expect(report.skipped).toEqual([{ agentId: "a-mgr", name: "A-MGR", reason: "has an authorization policy KyoubeAI does not change" }]);
     expect(report.selfTest.status).toBe("pass");

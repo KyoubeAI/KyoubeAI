@@ -1,6 +1,6 @@
 {
   "name": "@kyoube/plugin-agent-rules",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "KyoubeAI's agent working rules guardrail: manager agents are protected, so work moves up only with a person's decision (Paperclip plugin)",
   "license": "BUSL-1.1",
   "type": "module",
