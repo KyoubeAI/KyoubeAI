@@ -252,6 +252,19 @@ describe("runRebrand", () => {
       await expect(runRebrand({ ...other, verify: true, report: false, log: () => {} })).rejects.toThrow(/sweep: doc still carries 1 display match/);
     });
 
+    it("allows the upstream development material core 2026.1012 added, and nothing else under integrations", async () => {
+      const { root, brandDir } = await makeTree({
+        "feature-map/README.md": "# Paperclip feature map\n",
+        "integrations/assistant-plugins/README.md": "# Paperclip assistant plugins\n",
+      });
+      const result = await runRebrand({ root, brandDir, verify: true, report: false, log: () => {} });
+      expect(result.sweepFailures).toEqual([]);
+      expect(result.sweep["feature-map"]).toBe(1);
+      expect(result.sweep["integrations/assistant-plugins"]).toBe(1);
+      const other = await makeTree({ "integrations/other/README.md": "# Paperclip integration\n" });
+      await expect(runRebrand({ ...other, verify: true, report: false, log: () => {} })).rejects.toThrow(/sweep: integrations still carries 1 display match/);
+    });
+
     it("still fails on a preview page or root file nobody has triaged", async () => {
       const preview = await makeTree({ "ui/other-preview.html": "<title>Paperclip preview</title>\n" });
       await expect(runRebrand({ ...preview, verify: true, report: false, log: () => {} })).rejects.toThrow(/sweep: ui still carries 1 display match/);
