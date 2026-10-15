@@ -11,7 +11,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": { "@paperclipai/plugin-sdk": "2026.1005.0" },
+  "dependencies": { "@paperclipai/plugin-sdk": "2026.1012.0" },
   "peerDependencies": { "react": ">=18" },
   "devDependencies": {
     "@kyoube/license": "workspace:*",
