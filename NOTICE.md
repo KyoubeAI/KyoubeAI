@@ -1,7 +1,7 @@
 # Notices
 
 KyoubeAI
-Copyright (c) 2026 Nigel Ang
+Copyright (c) 2026 Hub360+ Technologies Pte. Ltd.
 
 KyoubeAI is source-available software, licensed under the Business Source License 1.1 in `LICENSE`.
 In short, you may read, change and redistribute it, use it for evaluation, development and testing

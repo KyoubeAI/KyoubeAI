@@ -14,6 +14,7 @@ building on it. The format is loosely [Keep a Changelog](https://keepachangelog.
   updates, and `--rollback` switches it back. Releases are still copied to the old image for now, so an
   install whose `update.sh` predates the move can update too
   ([docs/upgrading.md](docs/upgrading.md#the-move-to-the-kyoubeai-organization)).
+- The licensor and copyright holder in `LICENSE` and `NOTICE.md` is Hub360+ Technologies Pte. Ltd.
 
 ## 1.11.0 - 2026-10-16
 
