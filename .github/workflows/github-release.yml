@@ -1,0 +1,50 @@
+name: github-release
+
+# Creates the GitHub Release for a tag from .github/release-notes/<tag>.md, or updates its notes when the release
+# exists. The release workflow calls it once a tag's images are published (the notes come from the tagged commit).
+# Run it by hand to make a release whose notes were missing, or to fix notes: Actions → github-release → Run
+# workflow, on main (the notes then come from main). A release made here is by github-actions, whoever pushed the tag.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release tag, for example v1.12.0"
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Every tag, to tell whether this one is the newest release.
+          fetch-depth: 0
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          notes=".github/release-notes/$TAG.md"
+          [ -f "$notes" ] || { echo "::error::$notes is missing. Add it on main, then run this workflow for $TAG"; exit 1; }
+          git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "::error::there is no tag $TAG"; exit 1; }
+          # Latest goes to the newest release only, so making an older one's release again leaves Latest alone.
+          case "$TAG" in
+            *-*) flags=(--prerelease --latest=false) ;;
+            *)
+              newest="$(git tag -l 'v*' --sort=-v:refname | grep -v -- - | head -1)"
+              if [ "$TAG" = "$newest" ]; then flags=(--latest); else flags=(--latest=false); fi ;;
+          esac
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file "$notes" "${flags[@]}"
+          else
+            gh release create "$TAG" --verify-tag --title "KyoubeAI ${TAG#v}" --notes-file "$notes" "${flags[@]}"
+          fi

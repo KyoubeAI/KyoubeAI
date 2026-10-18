@@ -89,6 +89,9 @@ have local changes, so stash or commit them first. `--edge` needs a branch with 
   especially on Windows — some tools (e.g. certain `jq` builds) write CRLF when redirected to a file.
 - **One task per PR.** Keep a PR reviewable: one logical change, its tests, and any doc updates it makes
   necessary.
+- **Maintainers merge by pushing, not with the merge button.** With the branch rebased on `main` and its CI
+  green, `git push origin <branch>:main`; GitHub marks the PR merged. The button records whoever clicks it
+  as the committer of every commit.
 
 ## Where things live
 
@@ -224,13 +227,18 @@ follows the same shape:
 
 1. `CHANGELOG.md` has the release's entry with its date, and the root `package.json` `version` matches.
    A plugin whose code changed has its version bumped in both its `package.json` and `src/manifest.ts`.
+   `.github/release-notes/vX.Y.Z.md` has the GitHub Release's notes: a one-line lead, `## What's in X.Y.Z`
+   with a bold-led paragraph per change, then `## Update` with how to update and a link to `CHANGELOG.md`.
 2. `bash scripts/check-pins.sh`, `pnpm typecheck`, `pnpm test`, `pnpm test:sh` and `pnpm build` pass.
 3. `pnpm smoke` and `bash scripts/install-e2e.sh` pass.
 4. Tag `vX.Y.Z` and push the tag. The release workflow publishes the multi-architecture image
    `ghcr.io/kyoubeai/kyoubeai:X.Y.Z` and `latest`, and copies both to the image releases were published
    to before the repository moved to the KyoubeAI organization (that step needs the `GHCR_LEGACY_TOKEN`
-   secret; see `.github/workflows/release.yml`). `install.sh` and `update.sh` only consider tags
-   without a `-`, from 1.1.0 on, so a pre-release tag such as `v1.2.0-rc1` is never offered to users.
+   secret; see `.github/workflows/release.yml`). Then it makes the GitHub Release from the notes file
+   (`.github/workflows/github-release.yml`), marked Latest; a tag with a `-` gets a pre-release. If the
+   notes file was missing, add it on `main` and run **github-release** for the tag from the Actions tab.
+   `install.sh` and `update.sh` only consider tags without a `-`, from 1.1.0 on, so a pre-release tag such
+   as `v1.2.0-rc1` is never offered to users.
 5. Once the release workflow has finished, update a real install of the previous release on Linux and
    on macOS (Docker Desktop), then run `./update.sh --rollback` on it. For 1.1.0 that is a 1.0.x install:
    `git fetch --tags`, `git checkout v1.1.0` and `./update.sh` ([`docs/upgrading.md`](docs/upgrading.md),

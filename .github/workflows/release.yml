@@ -88,3 +88,13 @@ jobs:
             case "${ref##*:}" in sha-*) ;; *) args+=(-t "$KYOUBE_IMAGE_LEGACY:${ref##*:}") ;; esac
           done
           docker buildx imagetools create "${args[@]}" "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kyoubeai:$RELEASE_VERSION"
+
+  # The GitHub Release, from .github/release-notes/<tag>.md, once the images it announces are published.
+  github-release:
+    needs: image
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    uses: ./.github/workflows/github-release.yml
+    with:
+      tag: ${{ github.ref_name }}
