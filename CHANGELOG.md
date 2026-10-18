@@ -4,6 +4,17 @@ All notable changes to KyoubeAI are recorded here, in terms of what changed for 
 building on it. The format is loosely [Keep a Changelog](https://keepachangelog.com/); versioning is
 [SemVer](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- The repository moved to the KyoubeAI organization, <https://github.com/KyoubeAI/KyoubeAI> (the old
+  address redirects), and the image moved with it, to `ghcr.io/kyoubeai/kyoubeai`, which has every
+  release from 1.0.0 on. `./update.sh` switches an install's `KYOUBE_IMAGE` to the new image as it
+  updates, and `--rollback` switches it back. Releases are still copied to the old image for now, so an
+  install whose `update.sh` predates the move can update too
+  ([docs/upgrading.md](docs/upgrading.md#the-move-to-the-kyoubeai-organization)).
+
 ## 1.11.0 - 2026-10-16
 
 ### Changed
@@ -461,7 +472,7 @@ on every surface.
 - `scripts/backup.sh` / `scripts/restore.sh` back up and restore both databases, the Kyoube cluster
   roles, and the persistent home volume (agent credentials, workspaces) as one unit, rehearsed
   end-to-end in CI.
-- Images published to GHCR (`ghcr.io/jknigel/kyoubeai`): release tags (`1.0.0`, plus `latest`) for
+- Images published to GHCR: release tags (`1.0.0`, plus `latest`) for
   `linux/amd64` and `linux/arm64`, and an amd64-only `sha-<commit>` test image on every push to `main`.
   `docker-compose.yml` runs equally well from a prebuilt image or built from source.
 - `scripts/check-pins.sh` and `scripts/bump-core.sh` keep the core image version and the plugin SDK

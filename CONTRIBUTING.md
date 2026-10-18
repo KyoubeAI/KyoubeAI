@@ -12,7 +12,7 @@ switches itself to the pinned version, so `corepack enable` is optional; it is k
 Windows setups). For the full Docker smoke test: Docker Engine with Compose v2, `curl`, `jq`.
 
 ```bash
-git clone https://github.com/jknigel/KyoubeAI.git && cd KyoubeAI
+git clone https://github.com/KyoubeAI/KyoubeAI.git && cd KyoubeAI
 pnpm install
 ```
 
@@ -227,7 +227,9 @@ follows the same shape:
 2. `bash scripts/check-pins.sh`, `pnpm typecheck`, `pnpm test`, `pnpm test:sh` and `pnpm build` pass.
 3. `pnpm smoke` and `bash scripts/install-e2e.sh` pass.
 4. Tag `vX.Y.Z` and push the tag. The release workflow publishes the multi-architecture image
-   `ghcr.io/jknigel/kyoubeai:X.Y.Z` and `latest`. `install.sh` and `update.sh` only consider tags
+   `ghcr.io/kyoubeai/kyoubeai:X.Y.Z` and `latest`, and copies both to the image releases were published
+   to before the repository moved to the KyoubeAI organization (that step needs the `GHCR_LEGACY_TOKEN`
+   secret; see `.github/workflows/release.yml`). `install.sh` and `update.sh` only consider tags
    without a `-`, from 1.1.0 on, so a pre-release tag such as `v1.2.0-rc1` is never offered to users.
 5. Once the release workflow has finished, update a real install of the previous release on Linux and
    on macOS (Docker Desktop), then run `./update.sh --rollback` on it. For 1.1.0 that is a 1.0.x install:

@@ -68,3 +68,23 @@ jobs:
             KYOUBE_VERSION=${{ steps.version.outputs.value }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # Releases up to 1.11.0 were published to KYOUBE_IMAGE_LEGACY (scripts/lib/host.sh), before the repository moved to the
+      # KyoubeAI organization. An install of one of them updates with its own update.sh, which pulls the next release
+      # from there, so each release is copied there too until those installs have moved (update.sh switches an
+      # install to this image as it updates). GHCR_LEGACY_TOKEN: a personal access token (classic) with
+      # write:packages from the account that owns that repository; GHCR goes by the token, not the user name.
+      - name: Copy the release to the old image repository
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TOKEN: ${{ secrets.GHCR_LEGACY_TOKEN }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          [ -n "$TOKEN" ] || { echo "::error::GHCR_LEGACY_TOKEN is not set, so installs of 1.11.0 and older cannot update to this release"; exit 1; }
+          echo "$TOKEN" | docker login ghcr.io -u kyoubeai-release --password-stdin
+          . scripts/lib/host.sh
+          args=()
+          for ref in $TAGS; do
+            case "${ref##*:}" in sha-*) ;; *) args+=(-t "$KYOUBE_IMAGE_LEGACY:${ref##*:}") ;; esac
+          done
+          docker buildx imagetools create "${args[@]}" "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kyoubeai:$RELEASE_VERSION"

@@ -5,7 +5,11 @@
 # no `sed -i` (GNU and BSD sed disagree on its flags).
 
 # shellcheck disable=SC2034  # read by install.sh and update.sh, which source this file
-KYOUBE_IMAGE_DEFAULT="ghcr.io/jknigel/kyoubeai"
+KYOUBE_IMAGE_DEFAULT="ghcr.io/kyoubeai/kyoubeai"
+# Where releases were published before the repository moved to the KyoubeAI organization (1.11.0 and older are
+# there, and later ones too while the release workflow mirrors them); update.sh moves an install that names it to
+# KYOUBE_IMAGE_DEFAULT.
+KYOUBE_IMAGE_LEGACY="ghcr.io/jknigel/kyoubeai"
 # The first release that ships install.sh and update.sh; older tags are never
 # installed or updated to by them.
 KYOUBE_MIN_RELEASE="1.1.0"

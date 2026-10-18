@@ -4,11 +4,11 @@
   "description": "AI operating system for organisations",
   "themeColor": "#18181b",
   "urls": {
-    "home": "https://github.com/jknigel/KyoubeAI",
-    "docs": "https://github.com/jknigel/KyoubeAI/tree/main/docs",
-    "feedback": "https://github.com/jknigel/KyoubeAI/issues",
-    "tos": "https://github.com/jknigel/KyoubeAI/blob/main/LICENSE",
-    "repo": "https://github.com/jknigel/KyoubeAI"
+    "home": "https://github.com/KyoubeAI/KyoubeAI",
+    "docs": "https://github.com/KyoubeAI/KyoubeAI/tree/main/docs",
+    "feedback": "https://github.com/KyoubeAI/KyoubeAI/issues",
+    "tos": "https://github.com/KyoubeAI/KyoubeAI/blob/main/LICENSE",
+    "repo": "https://github.com/KyoubeAI/KyoubeAI"
   },
   "phrases": {
     "/Users/paperclip/workspace": "/Users/you/workspace",

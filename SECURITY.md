@@ -6,7 +6,7 @@ Report a security vulnerability in **KyoubeAI** (this repository — the bootstr
 and `kyoube.apps` plugins, `install.sh` and `update.sh`, and the Docker overlay) through GitHub's private
 Security Advisory feature:
 
-**<https://github.com/jknigel/KyoubeAI/security/advisories/new>**
+**<https://github.com/KyoubeAI/KyoubeAI/security/advisories/new>**
 
 Do not open a public issue for a security vulnerability. We aim to acknowledge a report and set a
 disclosure timeline within **7 days**.

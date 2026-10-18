@@ -7,13 +7,13 @@ that your `.env` holds the same secrets the stack was started with. The scripts 
 
 ## The published image on GHCR
 
-Only for deployments that run the prebuilt image (`KYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai`)
+Only for deployments that run the prebuilt image (`KYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai`)
 rather than building from source.
 
 **After the first release run, make the package public.** A package first published by a workflow's
 `secrets.GITHUB_TOKEN` is **private**, so `docker compose pull` answers `denied` for everyone —
-the author included. Fix it once, in the repository's **Packages** settings: open the `kyoubeai`
-package → **Package settings** → **Change visibility** → *Public*.
+the author included. Fix it once, in the owner's **Packages** list (for this repository, the KyoubeAI
+organization's): open the `kyoubeai` package → **Package settings** → **Change visibility** → *Public*.
 
 To keep it private instead, every machine that pulls must authenticate first, with a token that
 carries `read:packages`:

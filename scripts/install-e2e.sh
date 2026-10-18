@@ -24,7 +24,7 @@ BASE_URL="http://localhost:$PORT"
 WORK="$(mktemp -d)"
 CLONE="$WORK/clone"
 COOKIES="$WORK/cookies.txt"
-REPO=ghcr.io/jknigel/kyoubeai
+REPO=ghcr.io/kyoubeai/kyoubeai
 INSTALL_PID=""
 
 cleanup() {

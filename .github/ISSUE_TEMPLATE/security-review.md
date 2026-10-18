@@ -7,7 +7,7 @@ labels: security
 
 Run every item below against the current code and record the result (with the command output, where
 one is given) before checking it off. See
-[`SECURITY.md`](https://github.com/jknigel/KyoubeAI/blob/main/SECURITY.md) for the trust model
+[`SECURITY.md`](https://github.com/KyoubeAI/KyoubeAI/blob/main/SECURITY.md) for the trust model
 these checks exist to protect. (An absolute link: a relative one resolves against the issue page,
 not the repository, and is dead once this template is rendered into an issue.)
 

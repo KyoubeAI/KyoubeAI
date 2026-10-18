@@ -186,11 +186,13 @@ offer_harnesses() {
 }
 
 # release_image_repo: the image repository a release install runs; an install that built its own image (a local
-# repository, with no '/') moves to the published one.
+# repository, with no '/') moves to the published one, and so does one on the repository releases used to be
+# published to.
 release_image_repo() {
   local repo
   repo="$(env_get .env KYOUBE_IMAGE)"
   case "$repo" in */*) ;; *) repo="$KYOUBE_IMAGE_DEFAULT" ;; esac
+  [ "$repo" != "$KYOUBE_IMAGE_LEGACY" ] || repo="$KYOUBE_IMAGE_DEFAULT"
   printf '%s\n' "$repo"
 }
 
@@ -311,7 +313,7 @@ require_forward() {
       if [ "$mode" = edge ]; then
         fix="Check out a branch that contains $POS_LABEL (git branch -a --contains $POS_LABEL lists them), then run ./update.sh --edge there"
       else
-        fix="Check out $POS_LABEL (git checkout $POS_LABEL) and run ./update.sh --version <x.y.z> with a release that contains it (releases: https://github.com/jknigel/KyoubeAI/releases)"
+        fix="Check out $POS_LABEL (git checkout $POS_LABEL) and run ./update.sh --version <x.y.z> with a release that contains it (releases: https://github.com/KyoubeAI/KyoubeAI/releases)"
       fi ;;
     record) fix="Check out the branch the stack was built from (git branch --contains $short lists them), then run ./update.sh --edge there" ;;
     *) fix="Check out the commit the stack was built from (git checkout <commit>), then update again from there" ;;
@@ -326,7 +328,7 @@ update_release() {
   git fetch --tags --quiet origin || die "could not fetch releases from origin; check the network and run ./update.sh again"
   if [ -n "$want" ]; then
     target="v$want"
-    git rev-parse -q --verify "refs/tags/$target" >/dev/null || die "release $target does not exist (releases: https://github.com/jknigel/KyoubeAI/releases)"
+    git rev-parse -q --verify "refs/tags/$target" >/dev/null || die "release $target does not exist (releases: https://github.com/KyoubeAI/KyoubeAI/releases)"
   else
     target="$(git tag -l 'v*' | latest_release "$KYOUBE_MIN_RELEASE" || true)"
     [ -n "$target" ] || die "no release ($KYOUBE_MIN_RELEASE or later) found; to follow the current code instead: ./update.sh --edge"
@@ -367,11 +369,14 @@ update_release() {
   from="$POS_LABEL"; point="$POS_COMMIT"
   [ "$from" = "$current" ] || say "    the stack runs $from; this checkout is at $here"
   image_repo="$(release_image_repo)"
-  [ "$image_repo" = "$(env_get .env KYOUBE_IMAGE)" ] \
-    || say "    this install built its own image; from now on it uses the published one (./update.sh --edge keeps building from source)"
+  if [ "$(env_get .env KYOUBE_IMAGE)" = "$KYOUBE_IMAGE_LEGACY" ]; then
+    say "    the published image moved from $KYOUBE_IMAGE_LEGACY to $image_repo; this install switches to it"
+  elif [ "$image_repo" != "$(env_get .env KYOUBE_IMAGE)" ]; then
+    say "    this install built its own image; from now on it uses the published one (./update.sh --edge keeps building from source)"
+  fi
   new_ref="$image_repo:${target#v}"
   say "Update KyoubeAI $from -> $target"
-  say "Release notes: https://github.com/jknigel/KyoubeAI/blob/$target/CHANGELOG.md"
+  say "Release notes: https://github.com/KyoubeAI/KyoubeAI/blob/$target/CHANGELOG.md"
   confirm "A backup is taken first. Continue?" || { say "Nothing was changed."; exit 1; }
   if ! docker image inspect "$new_ref" >/dev/null 2>&1; then
     say "==> downloading $new_ref before changing anything"

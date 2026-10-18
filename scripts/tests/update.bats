@@ -64,7 +64,7 @@ EOF
   git -C "$SEED" commit -q --allow-empty -m mid
   git -C "$SEED" commit -q --allow-empty -m two && git -C "$SEED" tag v1.2.0
   git clone -q "$SEED" "$INST"
-  printf 'KYOUBE_VERSION=1.1.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.1.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
 }
 
 run_update() { run env PATH="$STUB_BIN:$PATH" "$INST/update.sh" "$@"; }
@@ -211,19 +211,19 @@ write_unfinished() {
 
 @test "update.sh --edge on a published-image install switches .env to the source image before building" {
   git -C "$SEED" commit -q --allow-empty -m newer
-  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   run_update --edge --yes
   [ "$status" -eq 0 ]
   [[ "$output" == *"switching this install from the published image to a source build"* ]]
   [ "$(sed -n 's/^KYOUBE_IMAGE=//p' "$INST/.env")" = kyoubeai ]
   [ "$(sed -n 's/^KYOUBE_VERSION=//p' "$INST/.env")" = dev ]
   # the rollback point keeps the published image
-  grep -Fx "KYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai" "$INST/.kyoube/env.before-update"
+  grep -Fx "KYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai" "$INST/.kyoube/env.before-update"
   grep -Fx "KYOUBE_VERSION=1.2.0" "$INST/.kyoube/env.before-update"
 }
 
 @test "update.sh --edge on a published-image install with no new commits still rebuilds from source" {
-  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   run_update --edge --yes
   [ "$status" -eq 0 ]
   [[ "$output" != *"already up to date"* ]]
@@ -234,7 +234,7 @@ write_unfinished() {
 
 @test "rolling back an edge update that switched a published-image install builds nothing and restores the published image" {
   git -C "$SEED" commit -q --allow-empty -m newer
-  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   run_update --edge --yes
   [ "$status" -eq 0 ]
   [ "$(cat "$STUB_LOG.builds")" = "kyoubeai:dev" ]
@@ -243,7 +243,7 @@ write_unfinished() {
   [[ "$output" == *"rolled back to v1.2.0"* ]]
   # still the one build of the update; the rollback built nothing
   [ "$(cat "$STUB_LOG.builds")" = "kyoubeai:dev" ]
-  [ "$(sed -n 's/^KYOUBE_IMAGE=//p' "$INST/.env")" = ghcr.io/jknigel/kyoubeai ]
+  [ "$(sed -n 's/^KYOUBE_IMAGE=//p' "$INST/.env")" = ghcr.io/kyoubeai/kyoubeai ]
   [ "$(sed -n 's/^KYOUBE_VERSION=//p' "$INST/.env")" = 1.2.0 ]
   [ ! -e "$INST/.kyoube/update-state" ]
 }
@@ -260,26 +260,26 @@ write_unfinished() {
 
 @test "a rollback downloads the published image it returns to before stopping anything" {
   git -C "$SEED" commit -q --allow-empty -m newer
-  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   run_update --edge --yes
   [ "$status" -eq 0 ]
   STUB_NO_IMAGE=1 run_update --rollback --yes
   [ "$status" -eq 0 ]
-  pull_line="$(grep -n '^pull ghcr.io/jknigel/kyoubeai:1.2.0$' "$STUB_LOG" | cut -d: -f1)"
+  pull_line="$(grep -n '^pull ghcr.io/kyoubeai/kyoubeai:1.2.0$' "$STUB_LOG" | cut -d: -f1)"
   stop_line="$(grep -n '^compose stop app$' "$STUB_LOG" | tail -1 | cut -d: -f1)"
   [ -n "$pull_line" ] && [ "$pull_line" -lt "$stop_line" ]
 }
 
 @test "a rollback whose image cannot be downloaded stops before changing anything and keeps the rollback point" {
   git -C "$SEED" commit -q --allow-empty -m newer
-  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   run_update --edge --yes
   [ "$status" -eq 0 ]
   head_before="$(git -C "$INST" rev-parse HEAD)"
   : > "$STUB_LOG"
   STUB_NO_IMAGE=1 STUB_FAIL_PULL=1 run_update --rollback --yes
   [ "$status" -ne 0 ]
-  [[ "$output" == *"could not download ghcr.io/jknigel/kyoubeai:1.2.0"* ]]
+  [[ "$output" == *"could not download ghcr.io/kyoubeai/kyoubeai:1.2.0"* ]]
   [[ "$output" == *"nothing was changed"* ]]
   ! grep -E '^compose (up|build|stop)' "$STUB_LOG" || false
   [ "$(git -C "$INST" rev-parse HEAD)" = "$head_before" ]
@@ -325,10 +325,40 @@ came_from() {
   [ ! -e "$INST/.kyoube/update-state" ]
 }
 
+# legacy: the image repository releases were published to before the move to the KyoubeAI organization.
+legacy() { (. "$BATS_TEST_DIRNAME/../lib/host.sh" && printf '%s\n' "$KYOUBE_IMAGE_LEGACY"); }
+
+@test "an install on the repository releases used to be published to switches to the current one as it updates" {
+  old="$(legacy)"
+  printf 'KYOUBE_VERSION=1.1.0\nKYOUBE_IMAGE=%s\nCOMPOSE_PROJECT_NAME=inst\n' "$old" > "$INST/.env"
+  STUB_NO_IMAGE=1 run_update --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the published image moved from $old to ghcr.io/kyoubeai/kyoubeai"* ]]
+  [[ "$output" != *"built its own image"* ]]
+  grep -Fx "pull ghcr.io/kyoubeai/kyoubeai:1.2.0" "$STUB_LOG"
+  ! grep -F "pull $old:" "$STUB_LOG" || false
+  [ "$(sed -n 's/^KYOUBE_IMAGE=//p' "$INST/.env")" = ghcr.io/kyoubeai/kyoubeai ]
+  [ "$(sed -n 's/^KYOUBE_VERSION=//p' "$INST/.env")" = 1.2.0 ]
+  grep -Fx "KYOUBE_IMAGE=$old" "$INST/.kyoube/env.before-update"
+}
+
+@test "rolling back the switch from the old repository returns to it, where the old release's image still is" {
+  old="$(legacy)"
+  printf 'KYOUBE_VERSION=1.1.0\nKYOUBE_IMAGE=%s\nCOMPOSE_PROJECT_NAME=inst\n' "$old" > "$INST/.env"
+  run_update --yes
+  [ "$status" -eq 0 ]
+  STUB_NO_IMAGE=1 run_update --rollback --yes
+  [ "$status" -eq 0 ]
+  grep -Fx "pull $old:1.1.0" "$STUB_LOG"
+  [ "$(sed -n 's/^KYOUBE_IMAGE=//p' "$INST/.env")" = "$old" ]
+  [ "$(sed -n 's/^KYOUBE_VERSION=//p' "$INST/.env")" = 1.1.0 ]
+  [ ! -e "$INST/.kyoube/update-state" ]
+}
+
 @test "the first update from 1.0 is refused when the old release has no tag here, even if the checkout has an earlier position" {
   # the code the stack runs is found by the release's tag; a guess from the reflog is not good enough
   came_from "$(git -C "$INST" rev-parse v1.2.0~1)"
-  printf 'KYOUBE_VERSION=1.0.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.0.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   run_update --yes
   [ "$status" -ne 0 ]
   [[ "$output" == *"git has no tag v1.0.0 here"* ]]
@@ -338,7 +368,7 @@ came_from() {
 }
 
 @test "the first update from 1.0 is refused before the backup when the old release's tag cannot be found" {
-  printf 'KYOUBE_VERSION=1.0.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.0.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   cp "$INST/.env" "$BATS_TEST_TMPDIR/env-before"
   run_update --yes
   [ "$status" -ne 0 ]
@@ -351,7 +381,7 @@ came_from() {
 }
 
 @test "a checkout on an older release than the one the stack runs is refused as a downgrade, before the backup" {
-  printf 'KYOUBE_VERSION=1.3.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.3.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   cp "$INST/.env" "$BATS_TEST_TMPDIR/env-before"
   run_update --yes
   [ "$status" -ne 0 ]
@@ -365,7 +395,7 @@ came_from() {
 }
 
 @test "a stack that already runs the release the checkout is on is left alone" {
-  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   run_update --yes
   [ "$status" -eq 0 ]
   [[ "$output" == *"already on v1.2.0"* ]]
@@ -384,7 +414,7 @@ came_from() {
   [ "$(grep '^from=' "$state")" = "from=source build" ]
   [ "$(grep '^ref=' "$state")" = "ref=$(git -C "$INST" rev-parse v1.1.0)" ]
   [ "$(grep '^done=' "$state")" = "done=1" ]
-  [ "$(sed -n 's/^KYOUBE_IMAGE=//p' "$INST/.env")" = ghcr.io/jknigel/kyoubeai ]
+  [ "$(sed -n 's/^KYOUBE_IMAGE=//p' "$INST/.env")" = ghcr.io/kyoubeai/kyoubeai ]
   [ "$(sed -n 's/^KYOUBE_VERSION=//p' "$INST/.env")" = 1.2.0 ]
   grep -Fx "KYOUBE_VERSION=dev" "$INST/.kyoube/env.before-update"
   [ ! -e "$STUB_LOG.builds" ]
@@ -543,7 +573,7 @@ release_1_3_0() {
   git -C "$SEED" commit -q --allow-empty -m hotfix-a && git -C "$SEED" tag v1.1.1
   git -C "$SEED" commit -q --allow-empty -m hotfix-b && git -C "$SEED" tag v1.1.2
   git -C "$SEED" checkout -q main
-  printf 'KYOUBE_VERSION=1.1.1\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.1.1\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   run_update --yes
   [ "$status" -ne 0 ]
   [[ "$output" == *"(v1.1.1,"*") is not part of v1.2.0's history"* ]]
@@ -677,7 +707,7 @@ hotfix_upstream() {
 @test "a stack that runs a newer release than an explicit --version is refused even when the checkout is on an older one" {
   release_1_3_0
   git -C "$INST" -c advice.detachedHead=false checkout -q v1.1.0
-  printf 'KYOUBE_VERSION=1.3.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.3.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   cp "$INST/.env" "$BATS_TEST_TMPDIR/env-before"
   run_update --version 1.2.0 --yes
   [ "$status" -ne 0 ]
@@ -691,10 +721,10 @@ hotfix_upstream() {
 
 @test "a KYOUBE_VERSION that is neither a release nor dev is not reported as already on the release" {
   for value in 1.2.0-rc1 latest; do
-    printf 'KYOUBE_VERSION=%s\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' "$value" > "$INST/.env"
+    printf 'KYOUBE_VERSION=%s\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' "$value" > "$INST/.env"
     run_update --yes
     [ "$status" -ne 0 ]
-    [[ "$output" == *"KYOUBE_VERSION=$value and KYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai in .env are neither a release (x.y.z) nor the source build"* ]]
+    [[ "$output" == *"KYOUBE_VERSION=$value and KYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai in .env are neither a release (x.y.z) nor the source build"* ]]
     [[ "$output" == *"Set KYOUBE_VERSION in .env to the release the stack runs"* ]]
     [[ "$output" != *"./install.sh"* ]]
     [[ "$output" != *"already on"* ]]
@@ -709,7 +739,7 @@ hotfix_upstream() {
 recorded_source_build() {
   git -C "$SEED" commit -q --allow-empty -m after-1.2.0-with-new-migrations
   git -C "$INST" pull -q
-  printf 'KYOUBE_VERSION=1.1.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.1.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   run_update --edge --yes
   [ "$status" -eq 0 ]
   built="$(git -C "$INST" rev-parse HEAD)"
@@ -778,7 +808,7 @@ stayed_put() {
 
 @test "update.sh --edge does not rebuild a branch that lacks the published release the stack runs, and the fix it names works" {
   hotfix_upstream
-  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   git -C "$INST" checkout -q hotfix
   run_update --edge --yes
   [ "$status" -ne 0 ]
@@ -798,10 +828,10 @@ stayed_put() {
 @test "a KYOUBE_VERSION that is neither a release nor dev is refused even when the checkout is not on the release" {
   git -C "$INST" -c advice.detachedHead=false checkout -q v1.1.0
   for value in 1.3.0-rc1 latest; do
-    printf 'KYOUBE_VERSION=%s\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' "$value" > "$INST/.env"
+    printf 'KYOUBE_VERSION=%s\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' "$value" > "$INST/.env"
     run_update --yes
     [ "$status" -ne 0 ]
-    [[ "$output" == *"KYOUBE_VERSION=$value and KYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai in .env are neither a release (x.y.z) nor the source build"* ]]
+    [[ "$output" == *"KYOUBE_VERSION=$value and KYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai in .env are neither a release (x.y.z) nor the source build"* ]]
     [[ "$output" != *"Update KyoubeAI"* ]]
     nothing_happened
     [ ! -e "$INST/.kyoube/update-state" ]
@@ -816,7 +846,7 @@ stayed_put() {
 
 @test "a stack that already runs the release, with the checkout somewhere else, takes no backup and only moves the checkout" {
   git -C "$INST" -c advice.detachedHead=false checkout -q v1.1.0
-  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   run_update --yes
   [ "$status" -eq 0 ]
   [[ "$output" == *"already on v1.2.0"* ]]
@@ -833,7 +863,7 @@ stayed_put() {
   git -C "$INST" pull -q
   git -C "$INST" commit -q --allow-empty -m my-local-unpushed
   tip="$(git -C "$INST" rev-parse HEAD)"
-  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   run_update --edge --yes
   [ "$status" -eq 0 ]
   [[ "$output" == *"Update KyoubeAI v1.2.0 -> "* ]]
@@ -848,7 +878,7 @@ stayed_put() {
   git -C "$INST" merge-base --is-ancestor "$tip" main
   ! git -C "$INST" symbolic-ref -q HEAD || false
   [ "$(git -C "$INST" describe --tags --exact-match HEAD)" = v1.2.0 ]
-  [ "$(sed -n 's/^KYOUBE_IMAGE=//p' "$INST/.env")" = ghcr.io/jknigel/kyoubeai ]
+  [ "$(sed -n 's/^KYOUBE_IMAGE=//p' "$INST/.env")" = ghcr.io/kyoubeai/kyoubeai ]
   [ "$(sed -n 's/^KYOUBE_VERSION=//p' "$INST/.env")" = 1.2.0 ]
   # the one build is the update's; the rollback built nothing
   [ "$(cat "$STUB_LOG.builds")" = "kyoubeai:dev" ]
@@ -860,7 +890,7 @@ stayed_put() {
   git -C "$INST" pull -q
   git -C "$SEED" commit -q --allow-empty -m up-2
   up1="$(git -C "$INST" rev-parse HEAD)"
-  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   run_update --edge --yes
   [ "$status" -eq 0 ]
   # the build is of the upstream tip: the fast-forward happened although the rollback point (the release) is not HEAD
@@ -962,7 +992,7 @@ stayed_put() {
   git -C "$INST" pull -q
   git -C "$SEED" commit -q --allow-empty -m up-2
   up1="$(git -C "$INST" rev-parse HEAD)"
-  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.2.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   run_update --edge --yes
   [ "$status" -eq 0 ]
   STUB_FAIL_RESTORE=1 run_update --rollback --yes
@@ -980,7 +1010,7 @@ stayed_put() {
 @test "after a rollback leaves the checkout detached, --edge names the branch the update followed" {
   git -C "$SEED" commit -q --allow-empty -m newer
   git -C "$INST" checkout -q -b work --track origin/main
-  printf 'KYOUBE_VERSION=1.1.0\nKYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
+  printf 'KYOUBE_VERSION=1.1.0\nKYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai\nCOMPOSE_PROJECT_NAME=inst\n' > "$INST/.env"
   run_update --edge --yes
   [ "$status" -eq 0 ]
   run_update --rollback --yes
@@ -1061,7 +1091,7 @@ stayed_put() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"Update KyoubeAI source build -> v1.2.0"* ]]
   [[ "$output" == *"this install built its own image"* ]]
-  [ "$(sed -n 's/^KYOUBE_IMAGE=//p' "$INST/.env")" = ghcr.io/jknigel/kyoubeai ]
+  [ "$(sed -n 's/^KYOUBE_IMAGE=//p' "$INST/.env")" = ghcr.io/kyoubeai/kyoubeai ]
 }
 
 @test "update.sh runs every kyoube command in the container as node" {

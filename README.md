@@ -33,7 +33,7 @@
 ### Install
 
 ```bash
-git clone https://github.com/jknigel/KyoubeAI.git
+git clone https://github.com/KyoubeAI/KyoubeAI.git
 cd KyoubeAI
 ./install.sh
 ```

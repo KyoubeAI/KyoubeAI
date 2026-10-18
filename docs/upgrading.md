@@ -34,7 +34,7 @@ shows two different values: copy the `.env.example` one into `.env` (if your `.e
 and stops at the core-patches step with `this build uses core <old>, but this KyoubeAI release is made
 for core <new>`.
 
-From a published image (`KYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai` in `.env`), check out the tag of the
+From a published image (`KYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai` in `.env`), check out the tag of the
 release you are moving to, so `docker-compose.yml`, the scripts and `.env.example` match the image,
 then set `KYOUBE_VERSION` in `.env` to the same version:
 
@@ -72,6 +72,23 @@ A plugin stuck in another status has its own log under **Settings → Plugins �
 If a plugin is deliberately disabled by an operator, `ensure-plugins` leaves it alone and says so —
 that is not a failure, but `doctor` will not call it `ready` either.
 
+## The move to the KyoubeAI organization
+
+After 1.11.0 the repository moved to the KyoubeAI organization, <https://github.com/KyoubeAI/KyoubeAI>,
+and its image to `ghcr.io/kyoubeai/kyoubeai`. Every release up to 1.11.0 is in both the old image (the
+`KYOUBE_IMAGE` an `.env` written before the move names) and the new one.
+
+- **`./update.sh` moves the install for you.** GitHub redirects the old address, so `git fetch` keeps
+  working. An `update.sh` from a release after 1.11.0 changes `KYOUBE_IMAGE` in `.env` to the new image
+  as it updates (it says `the published image moved`). An older one keeps the old image, so each release
+  is also copied there for now, and the update after that one switches the install.
+- **Point the checkout at the new address** whenever you like:
+  `git remote set-url origin https://github.com/KyoubeAI/KyoubeAI.git`.
+- **Without `./update.sh`**, set `KYOUBE_IMAGE=ghcr.io/kyoubeai/kyoubeai` in `.env` when you next change
+  `KYOUBE_VERSION`.
+- **`./update.sh --rollback`** after the switch puts the old image back in `.env`; the release you came
+  from is still there.
+
 ## Moving to 1.1
 
 1.1 adds `./install.sh` and `./update.sh`, takes the agent harnesses out of the image, and gives the
@@ -81,7 +98,7 @@ Terminal `sudo`. `./update.sh` takes the backup for you.
   the release first. The script finds which release the stack still runs from `KYOUBE_VERSION` in
   `.env`.
 
-  An install on the published image (`KYOUBE_IMAGE=ghcr.io/jknigel/kyoubeai` in `.env`):
+  An install on the published image (a `KYOUBE_IMAGE` on `ghcr.io` in `.env`):
 
   ```bash
   git fetch --tags

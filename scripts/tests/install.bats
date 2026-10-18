@@ -54,7 +54,7 @@ call_line() { grep -nFx -- "$1" "$STUB_LOG" | head -1 | cut -d: -f1 || true; }
 installed_at() {
   git -C "$INST" -c advice.detachedHead=false checkout -q "v$1"
   printf 'KYOUBE_VERSION=%s\nKYOUBE_IMAGE=%s\nCOMPOSE_PROJECT_NAME=inst\nKYOUBE_PUBLIC_URL=http://localhost:3100\nKYOUBE_CORE_VERSION=2026.916.1\n' \
-    "$1" "${2:-ghcr.io/jknigel/kyoubeai}" > "$INST/.env"
+    "$1" "${2:-ghcr.io/kyoubeai/kyoubeai}" > "$INST/.env"
   export STUB_VOLUME=1
 }
 
