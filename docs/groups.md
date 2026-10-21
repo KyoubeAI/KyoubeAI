@@ -162,6 +162,7 @@ running and syncs only user groups each minute, so adding or deleting a group st
 - `docker compose exec app kyoube agent-rules --once` runs a pass now and prints every message.
 - The group routes answer only the agent rules loop, which proves itself with the rules token
   (`/kyoubeai/kyoube/rules-token`, see [agent-rules.md](agent-rules.md)), or a company owner or admin.
+  Studio's `/ask-levels`, which the same loop reads, answers the same callers.
   The board key's user must be a member of each company, in any role: the core refuses the key in a
   company it does not belong to, before any plugin runs. The rules token only lets that member pass the
   owner-or-admin check without being an owner or admin. If `kyoube doctor` says the board key's user

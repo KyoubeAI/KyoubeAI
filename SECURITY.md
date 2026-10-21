@@ -296,9 +296,11 @@ and what data level they hold. Group tables are in `kyoube_meta` (`groups`, `gro
   agent or a person; every other card stays people-only. The check reads the level from the agent's
   metadata, which the loop copies from Studio once a minute. If the check cannot run, the question is
   refused. **Residuals:** an agent with `agents:configure` (every new agent on core 2026.1012.0) can
-  edit its own metadata or `reportsTo`, widening what it may ask until the next pass, at most a minute
-  for the level. Refused questions are not recorded, so `kyoube doctor` counts only questions that
-  were let through.
+  edit its own or another agent's metadata or `reportsTo`. A changed ask level is put back within a
+  minute, so it widens what that agent may ask for at most that long. A changed `reportsTo` stays
+  until someone changes it back, because the loop only reads it: it changes who is in an agent's line,
+  and the task's history shows it. Refused questions are not recorded, so `kyoube doctor` counts only
+  questions that were let through.
 - **Residual: agents are visible.** The core has no per-agent visibility, so people outside a group
   can still see its agents, their tasks and their runs. Groups restrict giving work and chat, not
   seeing.
@@ -528,28 +530,51 @@ path, the workspace and the user — and never file content. Reads are not logge
 The Studio design is two parts. `docker/theme` adds a stylesheet, fonts and a short inline boot
 script to the served UI at build time; the script only sets two attributes on `<html>` (a platform
 hint for the ⌘K label and the layout flag) and makes no network requests. The `kyoube.studio` plugin
-draws Home, the sidebar's Build group and Team roster, the agent profiles and the Workspace page.
+draws Home, the sidebar's Build group and Team roster, the agent profiles and the Workspace page. It
+also holds the profile's two permission controls, described below.
 
 **What it reads.** Through the host-scoped `getData` bridge only: the company's agents (name, title,
 icon, status, last run, error reason), its tasks (identifier, title, status, assignee, timestamps),
 its pending approvals (type and the title or name in the payload), its projects (a count), its
 members' roles, an agent's harness and skill names (from its adapter configuration; no other
 configuration value leaves the worker), and the agent's own comments on the task it is working on. That is the same company-wide information the core's own dashboard, inbox and task
-list show every member; hidden tasks are skipped. It has no API routes, no agent tools, no jobs, no
-outbound network, no database and no secrets, and the plugin itself writes nothing: its only
-capabilities are `agents.read`, `issues.read`, `issue.comments.read`, `approvals.read`,
-`projects.read`, `access.members.read` and the UI slot registrations.
+list show every member; hidden tasks are skipped. It has no agent tools, no jobs, no outbound network
+and no database credential. Its capabilities are `agents.read`, `issues.read`, `issue.comments.read`,
+`approvals.read`, `projects.read`, `access.members.read` and the UI slot registrations, plus five for
+the permission controls below: `authorization.grants.read` and `authorization.grants.write`,
+`plugin.state.read` and `plugin.state.write`, and `api.routes.register`. The one thing it writes
+besides grants is its own plugin state, and the only secret it touches is the rules token (below),
+which it reads to compare.
 
 **The profile's actions.** The agent profile's **On duty** switch and **Assign task** form call the
 core's documented board API from the browser as the signed-in person (`POST /api/agents/{id}/pause`
 and `/resume`, `POST /api/companies/{companyId}/issues`), exactly as the core's own buttons do: the
 core checks that person's access and applies its own side effects (pausing cancels the agent's active
-run; the new task wakes the agent). The plugin grants no one a power they did not already have.
+run; the new task wakes the agent). Those two grant no one a power they did not already have.
+
+**The profile's permission controls.** The **Can change agents** switch and the **Can ask other
+agents** control run in the plugin worker, as the plugin and not as the person, so the worker does the
+checking. Each action (`agent.change-access`, `agent.change-ask-level`) takes the company and the
+person from the host's signed-in actor, never from its params, reads that person's role fresh from
+the core's members list, and refuses anyone who is not a company owner or admin. It also refuses a
+terminated agent and one waiting for approval, and the ask level refuses the core's built-in agents.
+- **Can change agents** adds or removes the agent's `agents:configure` grant through the plugin SDK
+  and keeps every other grant. The core's board API has no call for this.
+- **Can ask other agents** sets which agents the agent may ask (`docs/agent-rules.md`, "Agent
+  questions"). Studio keeps the levels in plugin state, company scope, key `ask-levels`: agent id to
+  `none` or `any`. The default, its line, is never stored.
+- `POST /ask-levels` returns a company's levels to `kyoube agent-rules`, which copies them into the
+  agents' metadata. It is declared `auth: "board"`, which every signed-in person passes, so the
+  worker refuses agents and answers 403 unless the request body's rules token matches or the caller
+  is an owner or admin (the check described under Groups, "Sync routes"). It drops the entries of
+  terminated and deleted agents as it reads.
 
 **Which company.** The host puts the caller's authorized company into every bridge call and refuses a
 call without one unless the caller is an instance admin, so a person only ever sees their own
 company's figures. The Workspace page's owner/admin check (which cards to show) uses the user id the
 page sends and is cosmetic only: the Terminal and Plugins pages it links to enforce their own access.
+The profile also uses a user id the page sends to decide whether to enable the permission controls.
+That is cosmetic only: the actions check the host's actor, as above.
 
 **In the browser.** The only thing Studio stores is a per-company flag in `localStorage` recording
 that the getting-started strip was dismissed. Agent characters are SVG generated from a fixed set of

@@ -239,7 +239,7 @@ export const PATCHES = [
     expect: 1,
   },
   // ── Licensing: KyoubeAI's user limit (standing: never deleted) ───────────
-  // The one standing behaviour patch (CONTRIBUTING.md, "Never patch the core";
+  // The first standing behaviour patch (CONTRIBUTING.md, "Never patch the core";
   // docs/licensing.md). Every account is created through Better Auth's
   // createUser, so one `user.create.before` hook covers open sign-up, the
   // first-run claim and invited people. The hook only calls KyoubeAI code:

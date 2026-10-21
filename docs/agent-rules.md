@@ -140,11 +140,12 @@ before.
 - Agents can still create board approvals (`request_board_approval`). They go to every board member,
   because the core's approvals have no addressee. The rules limit them to spending and hiring.
 - A CEO-role agent may change another agent's permissions, which can give back the broad assign
-  grant. An agent may also change its own `reportsTo`. Either change lasts only until the next pass,
-  at most a minute, and the task's history shows it.
+  grant. That change lasts only until the next pass, at most a minute, and the task's history shows
+  it.
 - An agent with `agents:configure` (core 2026.1012.0 gives it to every new agent) can change its own
-  `reportsTo`, which changes what "its line" covers, or edit its own ask level in its metadata. The
-  loop puts the level back within a minute, and the task's history shows the change.
+  `reportsTo`, which changes what "its line" covers. The loop only reads `reportsTo`, so the change
+  stays until someone changes it back, and the task's history shows it. The same agent can edit an
+  ask level in an agent's metadata; the loop puts the level back within a minute.
 - KyoubeAI owns two settings and puts them back on the next pass if someone changes them in the UI:
   an agent's "can assign tasks" permission, and the resolver policy of the five card kinds. To change
   either for good, turn the rules off.
@@ -180,7 +181,8 @@ before their own `kyoube doctor`, so they normally never show this.
 ## Turn it off
 
 1. Set `KYOUBE_AGENT_RULES=off` in `.env` and `docker compose up -d`. With `KYOUBE_AGENT_RULES=off`,
-   the core patch does nothing, and agents' questions follow the core's own rules.
+   the core patch stops checking at once. Agents' questions follow the core's own rules once step 2
+   has put the company setting back.
 2. `docker compose exec app kyoube agent-rules off`. This:
    - removes the blocks
    - puts the company setting back as it was

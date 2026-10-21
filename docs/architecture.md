@@ -60,7 +60,8 @@ Seven plugins ship in the image: `@kyoube/plugin-terminal` (`plugins/kyoube-term
 `@kyoube/plugin-apps` (`plugins/kyoube-apps`), which carries the Data layer, the Apps module and typed
 decisions (`docs/decisions.md`) in one worker because apps need in-process access to the data service and
 plugins cannot call each other, `@kyoube/plugin-files` (`plugins/kyoube-files`), the Files tab on project
-pages, `@kyoube/plugin-studio` (`plugins/kyoube-studio`), the Studio layout,
+pages, `@kyoube/plugin-studio` (`plugins/kyoube-studio`), the Studio layout (it also keeps each agent's
+ask level and serves it on one board-only route, `POST /ask-levels`; `docs/agent-rules.md`),
 `@kyoube/plugin-agent-rules` (`plugins/kyoube-agent-rules`), described below, and
 `@kyoube/plugin-license` (`plugins/kyoube-license`), the Licence page (`kyoube.license`: it reads files on
 the home volume and never the core database) and `@kyoube/plugin-notify` (`plugins/kyoube-notify`), which
@@ -87,9 +88,9 @@ agent-rules holds the `authorization.*` capabilities. So `kyoube.apps` serves tw
 `POST /groups/agent-access` (which agents may be assigned by whom) and `POST /groups/sync-report` (the
 watcher's result, shown on the Groups page), and the watcher carries the data across (below).
 The core's "board" check admits every signed-in person, so these routes (and the agent-rules ones
-above) also require the kyoube CLI's rules token in the request body (`/kyoubeai/kyoube/rules-token`,
-created by `kyoube agent-rules`) or a caller who is an owner or admin of the company, read fresh from
-the core's members list (`SECURITY.md`, Groups).
+above, and Studio's `POST /ask-levels`) also require the kyoube CLI's rules token in the request body
+(`/kyoubeai/kyoube/rules-token`, created by `kyoube agent-rules`) or a caller who is an owner or admin
+of the company, read fresh from the core's members list (`SECURITY.md`, Groups).
 
 ## Request paths
 
@@ -423,7 +424,8 @@ The Studio design is applied the same way, one step earlier: `docker/theme/theme
 rebrand, links a stylesheet of brand tokens and a skin after the core's, inlines a boot flag, and
 renames a few labels. It checks every rule, hook and token against the core before writing anything.
 The `kyoube.studio` plugin draws Home, the sidebar's Build group and Team roster, the agent profiles and
-the Workspace page through the public SDK, and every skin rule that hides or moves core UI is gated on that plugin
+the Workspace page through the public SDK (and keeps each agent's ask level, `docs/agent-rules.md`),
+and every skin rule that hides or moves core UI is gated on that plugin
 being present, so without it the stock layout shows. See [`theme.md`](theme.md).
 
 `docker/pwa/pwa.mjs` runs after the rebrand. It makes the web manifest standalone, adds the iOS meta tags

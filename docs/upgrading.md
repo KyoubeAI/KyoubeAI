@@ -362,11 +362,13 @@ tracked, so `bump-core.sh` cannot touch it) and `docker compose up -d --build`.
 ### What can break
 
 - **The image build stops at the `core-patches` step** with a line like
-  `core patch "<id>" matched 0 time(s) … expected 1`. Each entry in `docker/core-patches/patches.mjs`
-  is a fix to an upstream bug that shipped here first; the new core either carries the upstream fix
+  `core patch "<id>" matched 0 time(s) … expected 1`. Most entries in `docker/core-patches/patches.mjs`
+  are a fix to an upstream bug that shipped here first; the new core either carries the upstream fix
   (delete the entry — that is the intended outcome) or changed the code's shape (check the upstream
-  file the entry names; redo the pattern only if the bug is still there). Never loosen a pattern to
-  make the build pass. An entry that declares its upstream fix (`upstreamFix`) does not stop the build
+  file the entry names; redo the pattern only if the bug is still there). The `standing` entries
+  (licensing, user groups, agent questions) are never deleted: when one fails, redo it for the new
+  core, as `CONTRIBUTING.md` ("Never patch the core") describes. Never loosen a pattern to make the
+  build pass. An entry that declares its upstream fix (`upstreamFix`) does not stop the build
   on a core that carries that fix: the log says `<id>: already fixed upstream`, and the entry is
   deleted at the bump all the same.
 - **The image build stops at the `theme` step** with a line naming a text rule, an anchor, a sidebar

@@ -83,7 +83,7 @@ Inside `/kyoubeai` (the `kyoubeai-home` volume):
 | Path | What is in it |
 |---|---|
 | `kyoube/board-key.json` | The instance-admin board API key `kyoube setup` stored, mode `600`, owned by `node`. Plugin installs and upgrades use it. |
-| `kyoube/rules-token` | The agent rules loop's secret, mode `600`, owned by `node`, created by `kyoube agent-rules`. It proves the loop's calls to the agent-rules and group routes (`docs/agent-rules.md`). Delete it to rotate; the next pass creates a new one. |
+| `kyoube/rules-token` | The agent rules loop's secret, mode `600`, owned by `node`, created by `kyoube agent-rules`. It proves the loop's calls to the agent-rules and group routes and to Studio's `/ask-levels` (`docs/agent-rules.md`). Delete it to rotate; the next pass creates a new one. |
 | `kyoube/license.key` | The licence key, if one is applied, mode `600` (`docs/licensing.md`). |
 | `kyoube/instance-id` | This instance's ID, created once. Send it to KyoubeAI for a key that works on this instance only. |
 | `kyoube/license-users.json` | The Licence page's user list, mode `600`, refreshed every minute. |
