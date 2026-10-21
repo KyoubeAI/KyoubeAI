@@ -375,16 +375,25 @@ export async function agentQuestionsCheck(opts: {
   return { name, ok: true, detail: `active; ${questionCountsText(opts.summaries)}` };
 }
 
-async function agentQuestionsDoctorCheck(env: NodeJS.ProcessEnv): Promise<Check> {
+/** The doctor line, with the counts read from the core database; unreadable counts never fail it. */
+export async function agentQuestionsDoctorCheck(
+  env: NodeJS.ProcessEnv,
+  deps: {
+    read?: (url: string) => Promise<QuestionSummary[]>;
+    importModule?: (file: string) => Promise<unknown>;
+    readText?: (file: string) => Promise<string | null>;
+  } = {},
+): Promise<Check> {
+  const read = deps.read ?? readQuestionSummaries;
   let summaries: QuestionSummary[] | null = null;
   if (agentRulesEnabled(env)) {
     try {
-      summaries = await readQuestionSummaries(coreDatabaseUrl(env));
+      summaries = await read(coreDatabaseUrl(env));
     } catch {
       summaries = null;
     }
   }
-  return agentQuestionsCheck({ env, summaries });
+  return agentQuestionsCheck({ env, summaries, importModule: deps.importModule, readText: deps.readText });
 }
 
 export function formatCheck(check: Check): string {

@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import {
-  LEGACY_ENV_KEYS, agentQuestionsCheck, agentRulesChecks, agentRulesDoctorChecks, claudeCredentialDetail, exposureWarning, formatCheck, harnessChecks, harnessesInUseCheck, legacyEnvCheck, legacyHomeLinkCheck, licenceCheck, licenceEnforcementCheck, pushTestEndpointCheck, questionCountsText, skillsCheck, systemPackagesCheck,
+  LEGACY_ENV_KEYS, agentQuestionsCheck, agentQuestionsDoctorCheck, agentRulesChecks, agentRulesDoctorChecks, claudeCredentialDetail, exposureWarning, formatCheck, harnessChecks, harnessesInUseCheck, legacyEnvCheck, legacyHomeLinkCheck, licenceCheck, licenceEnforcementCheck, pushTestEndpointCheck, questionCountsText, skillsCheck, systemPackagesCheck,
 } from "../src/commands/doctor.js";
 import { licenseStatus } from "@kyoube/license";
 import { summarizeQuestions } from "../src/agent-rules/questions-db.js";
@@ -382,7 +382,8 @@ describe("pushTestEndpointCheck", () => {
 });
 
 describe("agent questions", () => {
-  const row = (companyName: string, issueId: string, agentId: string, agentName: string | null, recent: number, total = recent) => ({ companyName, issueId, agentId, agentName, recent, total });
+  // taskTotal is every agent-to-agent question on the task, from any agent and of any age; the company id defaults to its name.
+  const row = (companyName: string, issueId: string, agentId: string, agentName: string | null, recent: number, taskTotal = recent, companyId = companyName) => ({ companyId, companyName, issueId, agentId, agentName, recent, taskTotal });
 
   it("sums the last 7 days per company: questions, askers, the top asker and tasks at the limit", () => {
     expect(summarizeQuestions([
@@ -397,8 +398,28 @@ describe("agent questions", () => {
     expect(summarizeQuestions([])).toEqual([]);
   });
 
-  it("adds every agent's questions on one task toward that task's limit", () => {
-    expect(summarizeQuestions([row("Acme", "i1", "a1", "Writer", 1, 2), row("Acme", "i1", "m1", "Manager", 1, 1)])[0]?.tasksAtLimit).toBe(1);
+  it("counts a task once toward the limit, however many agents asked on it", () => {
+    expect(summarizeQuestions([row("Acme", "i1", "a1", "Writer", 1, 3), row("Acme", "i1", "m1", "Manager", 1, 3)])[0]).toMatchObject({ asked: 2, askers: 2, tasksAtLimit: 1 });
+  });
+
+  it("counts a task at the limit when other agents' older questions bring it there", () => {
+    // The only row in the last 7 days is one question; two older ones (by another agent) already used the task's 3.
+    expect(summarizeQuestions([row("Acme", "i1", "b1", "Reviewer", 1, 3)])).toEqual([
+      { company: "Acme", asked: 1, askers: 1, top: { name: "Reviewer", asked: 1 }, tasksAtLimit: 1 },
+    ]);
+    expect(summarizeQuestions([row("Acme", "i1", "b1", "Reviewer", 1, 2)])[0]?.tasksAtLimit).toBe(0);
+  });
+
+  it("keeps two companies with the same name apart, sorted by name then id", () => {
+    expect(summarizeQuestions([
+      row("Acme", "i2", "z1", "Zed", 2, 2, "c2"),
+      row("Acme", "i1", "a1", "Writer", 1, 3, "c1"),
+      row("Aardvark", "i3", "q1", "Q", 1, 1, "c3"),
+    ])).toEqual([
+      { company: "Aardvark", asked: 1, askers: 1, top: { name: "Q", asked: 1 }, tasksAtLimit: 0 },
+      { company: "Acme", asked: 1, askers: 1, top: { name: "Writer", asked: 1 }, tasksAtLimit: 1 },
+      { company: "Acme", asked: 2, askers: 1, top: { name: "Zed", asked: 2 }, tasksAtLimit: 0 },
+    ]);
   });
 
   it("says the counts in one line", () => {
@@ -433,5 +454,47 @@ describe("agent questions", () => {
   it("says off when the rules are off", async () => {
     expect(await agentQuestionsCheck({ env: { KYOUBE_AGENT_RULES: "off" }, summaries: null, importModule: okModule, readText: patched }))
       .toEqual({ name: "agent questions", ok: true, detail: "off (KYOUBE_AGENT_RULES=off): agents' questions follow the core's own rules" });
+  });
+
+  it("is still ok when the counts cannot be read", async () => {
+    expect(await agentQuestionsCheck({ env: {}, summaries: null, importModule: okModule, readText: patched }))
+      .toEqual({ name: "agent questions", ok: true, detail: "active; counts unavailable (the core database cannot be read)" });
+  });
+
+  describe("agentQuestionsDoctorCheck", () => {
+    const deps = (read: (url: string) => Promise<never[]>) => ({ read, importModule: okModule, readText: patched });
+
+    it("reads the counts from the core database URL and shows them", async () => {
+      const urls: string[] = [];
+      const check = await agentQuestionsDoctorCheck({ DATABASE_URL: "postgres://core/db" }, deps(async (url) => { urls.push(url); return []; }));
+      expect(check).toEqual({ name: "agent questions", ok: true, detail: "active; no questions between agents in the last 7 days" });
+      expect(urls).toEqual(["postgres://core/db"]);
+    });
+
+    it("stays ok, with the counts unavailable, when the database cannot be read", async () => {
+      let calls = 0;
+      const check = await agentQuestionsDoctorCheck({ DATABASE_URL: "postgres://core/db" }, deps(async () => { calls += 1; throw new Error("connect ECONNREFUSED"); }));
+      expect(calls).toBe(1);
+      expect(check).toEqual({ name: "agent questions", ok: true, detail: "active; counts unavailable (the core database cannot be read)" });
+    });
+
+    it("stays ok, with the counts unavailable, when DATABASE_URL is not set", async () => {
+      let calls = 0;
+      const check = await agentQuestionsDoctorCheck({}, deps(async () => { calls += 1; return []; }));
+      expect(calls).toBe(0);
+      expect(check).toEqual({ name: "agent questions", ok: true, detail: "active; counts unavailable (the core database cannot be read)" });
+    });
+
+    it("does not read the database when the rules are off, however the switch is written", async () => {
+      let calls = 0;
+      const check = await agentQuestionsDoctorCheck({ KYOUBE_AGENT_RULES: " OFF ", DATABASE_URL: "postgres://core/db" }, deps(async () => { calls += 1; return []; }));
+      expect(calls).toBe(0);
+      expect(check).toEqual({ name: "agent questions", ok: true, detail: "off (KYOUBE_AGENT_RULES=off): agents' questions follow the core's own rules" });
+    });
+
+    it("still fails when the patch is missing, whatever the counts", async () => {
+      const check = await agentQuestionsDoctorCheck({ DATABASE_URL: "postgres://core/db" }, { read: async () => [], importModule: okModule, readText: async () => "plain" });
+      expect(check).toMatchObject({ name: "agent questions", ok: false });
+    });
   });
 });
