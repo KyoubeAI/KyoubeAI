@@ -29,15 +29,23 @@ describe("askLevelOf", () => {
 });
 
 describe("isBuiltInAgent", () => {
-  it("reads the core's marker the way ask-levels.ts does: a plain object with a string key", () => {
+  it("reads the core's marker the way the core does: a non-blank key and a list of non-blank feature keys", () => {
     expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: "reflection-coach", featureKeys: [] } })).toBe(true);
-    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: "reflection-coach" } })).toBe(true);
-    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: 1 } })).toBe(false);
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: "reflection-coach", featureKeys: ["reflection"] } })).toBe(true);
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: 1, featureKeys: [] } })).toBe(false);
     expect(isBuiltInAgent({ paperclipBuiltInAgent: ["x"] })).toBe(false);
     expect(isBuiltInAgent({ paperclipBuiltInAgent: null })).toBe(false);
     expect(isBuiltInAgent({})).toBe(false);
     expect(isBuiltInAgent(null)).toBe(false);
     expect(isBuiltInAgent(undefined)).toBe(false);
+  });
+
+  it("does not take a marker the core would not read, which an agent could add to itself", () => {
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: "reflection-coach" } })).toBe(false);
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: " ", featureKeys: [] } })).toBe(false);
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: "x", featureKeys: "reflection" } })).toBe(false);
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: "x", featureKeys: ["reflection", ""] } })).toBe(false);
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: "x", featureKeys: [1] } })).toBe(false);
   });
 });
 
@@ -105,9 +113,14 @@ describe("decideAskLevel", () => {
   });
 
   it("holds a built-in agent at its line whatever level its metadata says", () => {
-    const builtIn = (level) => ORG.map((row) => (row.id === "r" ? { ...row, metadata: { paperclipBuiltInAgent: { key: "reflection-coach" }, [ASK_LEVEL_KEY]: level } } : row));
+    const builtIn = (level) => ORG.map((row) => (row.id === "r" ? { ...row, metadata: { paperclipBuiltInAgent: { key: "reflection-coach", featureKeys: [] }, [ASK_LEVEL_KEY]: level } } : row));
     expect(decide({ agents: builtIn("any"), addresseeId: "p" })).toMatchObject({ allow: false, code: "kyoube_ask_outside_line" });
     expect(decide({ agents: builtIn("none"), addresseeId: "m" })).toEqual({ allow: true });
+  });
+
+  it("keeps the level of an agent that gave itself a marker the core would not read", () => {
+    const forged = ORG.map((row) => (row.id === "r" ? { ...row, metadata: { paperclipBuiltInAgent: { key: "reflection-coach" }, [ASK_LEVEL_KEY]: "none" } } : row));
+    expect(decide({ agents: forged, addresseeId: "m" })).toMatchObject({ allow: false, code: "kyoube_ask_level_none" });
   });
 
   it("refuses a second question while one is open", () => {

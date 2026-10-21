@@ -41,10 +41,18 @@ function plain(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 
-/** Whether the core's metadata marks an agent as one of its bundled agents (isBuiltInAgent in ask-levels.ts, the same rule). */
+/**
+ * Whether the core's metadata marks an agent as one of its bundled agents, by
+ * the core's own rule (readBuiltInAgentMarker): a non-blank key and a
+ * featureKeys list of non-blank strings. The core refuses to add or change a
+ * marker it would read, so an agent cannot give itself one; a looser check would
+ * let it. The loop, Studio and the agent rules plugin each keep a copy of this rule.
+ */
 export function isBuiltInAgent(metadata) {
   const marker = plain(plain(metadata)?.paperclipBuiltInAgent);
-  return marker !== null && typeof marker.key === "string";
+  if (marker === null || typeof marker.key !== "string" || marker.key.trim() === "") return false;
+  const { featureKeys } = marker;
+  return Array.isArray(featureKeys) && featureKeys.filter((key) => typeof key === "string" && key.trim() !== "").length === featureKeys.length;
 }
 
 /**

@@ -30,8 +30,15 @@ export function withAskLevel(metadata: Record<string, unknown> | null | undefine
   return level === "line" ? rest : { ...rest, [ASK_LEVEL_KEY]: level };
 }
 
-/** Whether the core's metadata marks an agent as one of its bundled agents (readBuiltInAgentMarker in the core). */
+/**
+ * Whether the core's metadata marks an agent as one of its bundled agents, by the
+ * core's own rule (readBuiltInAgentMarker): a non-blank key and a featureKeys list
+ * of non-blank strings. The core refuses to add or change a marker it would read,
+ * so an agent cannot give itself one; a looser check would let it.
+ */
 export function isBuiltInAgent(metadata: unknown): boolean {
   const marker = plain(plain(metadata)?.paperclipBuiltInAgent);
-  return marker !== null && typeof marker.key === "string";
+  if (marker === null || typeof marker.key !== "string" || marker.key.trim() === "") return false;
+  const { featureKeys } = marker;
+  return Array.isArray(featureKeys) && featureKeys.filter((key) => typeof key === "string" && key.trim() !== "").length === featureKeys.length;
 }

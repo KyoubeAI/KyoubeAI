@@ -25,6 +25,9 @@ building on it. The format is loosely [Keep a Changelog](https://keepachangelog.
   install whose `update.sh` predates the move can update too
   ([docs/upgrading.md](docs/upgrading.md#the-move-to-the-kyoubeai-organization)).
 - The licensor and copyright holder in `LICENSE` and `NOTICE.md` is Hub360+ Technologies Pte. Ltd.
+- Kyoube Agent Rules (`kyoube.agent-rules`) is 0.3.2. It reads the core's built-in agent marker by the
+  core's own rule, so an agent that writes a marker the core would not read into its own metadata
+  still counts as a top agent. The bootstrap reinstalls it on update.
 
 ## 1.11.0 - 2026-10-16
 

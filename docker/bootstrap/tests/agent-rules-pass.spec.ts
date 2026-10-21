@@ -427,11 +427,11 @@ describe("ask levels", () => {
   it("leaves terminated and waiting agents alone, and keeps a built-in agent at its line whatever Studio says", async () => {
     const api = new FakeApi();
     api.agents.c1 = [
-      { id: "b1", name: "Coach", status: "idle", metadata: { paperclipBuiltInAgent: { key: "reflection-coach" } } },
+      { id: "b1", name: "Coach", status: "idle", metadata: { paperclipBuiltInAgent: { key: "reflection-coach", featureKeys: [] } } },
       { id: "t1", name: "Gone", status: "terminated", metadata: null },
       { id: "w1", name: "New", status: "pending_approval", metadata: null },
-      { id: "bt", name: "Old coach", status: "terminated", metadata: { paperclipBuiltInAgent: { key: "reflection-coach" }, kyoubeAskLevel: "any" } },
-      { id: "bw", name: "New coach", status: "pending_approval", metadata: { paperclipBuiltInAgent: { key: "reflection-coach" }, kyoubeAskLevel: "any" } },
+      { id: "bt", name: "Old coach", status: "terminated", metadata: { paperclipBuiltInAgent: { key: "reflection-coach", featureKeys: [] }, kyoubeAskLevel: "any" } },
+      { id: "bw", name: "New coach", status: "pending_approval", metadata: { paperclipBuiltInAgent: { key: "reflection-coach", featureKeys: [] }, kyoubeAskLevel: "any" } },
     ];
     api.levels.c1 = { b1: "none", t1: "none", w1: "none", bt: "none", bw: "none" };
     const { report } = await applyPass(deps(api), EMPTY_STATE);
@@ -451,9 +451,20 @@ describe("ask levels", () => {
     expect(report.companies[0]).toMatchObject({ askLevelsUpdated: ["Coach"], failures: [] });
   });
 
+  it("copies Studio's level to an agent that gave itself a marker the core would not read", async () => {
+    const api = new FakeApi();
+    const forged = { key: "reflection-coach" };
+    api.agents.c1 = [{ id: "a1", name: "Writer", status: "idle", metadata: { paperclipBuiltInAgent: forged } }];
+    api.levels.c1 = { a1: "none" };
+    const { report } = await applyPass(deps(api), EMPTY_STATE);
+    expect(api.metadataWrites).toEqual([{ agentId: "a1", metadata: { paperclipBuiltInAgent: forged, kyoubeAskLevel: "none" } }]);
+    expect(api.files.a1?.startsWith(rulesBlock("none"))).toBe(true);
+    expect(report.companies[0]).toMatchObject({ askLevelsUpdated: ["Writer"], failures: [] });
+  });
+
   it("holds a built-in agent's block at its line even when putting its level back fails", async () => {
     const api = new FakeApi();
-    api.agents.c1 = [{ id: "b1", name: "Coach", status: "idle", metadata: { paperclipBuiltInAgent: { key: "reflection-coach" }, kyoubeAskLevel: "any" } }];
+    api.agents.c1 = [{ id: "b1", name: "Coach", status: "idle", metadata: { paperclipBuiltInAgent: { key: "reflection-coach", featureKeys: [] }, kyoubeAskLevel: "any" } }];
     api.failing.add("meta:b1");
     const { report } = await applyPass(deps(api), EMPTY_STATE);
     expect(report.companies[0]?.failures).toEqual([{ step: "asklevels", agent: "Coach", error: "refused meta:b1" }]);
@@ -514,7 +525,7 @@ describe("ask levels", () => {
 
   it("off removes the key from every agent that has it, built-in agents included, keeping the rest of its metadata", async () => {
     const api = new FakeApi();
-    const marker = { key: "reflection-coach" };
+    const marker = { key: "reflection-coach", featureKeys: [] };
     api.agents.c1 = [
       { id: "a1", name: "Writer", status: "idle", metadata: { kyoubeAskLevel: "none", note: "kept" } },
       { id: "a3", name: "Plain", status: "idle", metadata: { note: "untouched" } },

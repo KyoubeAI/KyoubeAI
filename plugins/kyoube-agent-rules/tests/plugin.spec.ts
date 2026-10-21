@@ -92,7 +92,7 @@ describe("kyoube.agent-rules manifest", () => {
   it("declares the three board-only routes the CLI calls, resolved from the body's companyId", () => {
     expect(manifest.id).toBe(PLUGIN_ID);
     expect(manifest.version).toBe(pkg.version);
-    expect(PLUGIN_VERSION).toBe("0.3.1");
+    expect(PLUGIN_VERSION).toBe("0.3.2");
     expect(PLUGIN_VERSION).toBe(pkg.version);
     expect(API_ROUTES.map((route) => [route.routeKey, route.method, route.path, route.auth])).toEqual([
       ["guard.reconcile", "POST", "/reconcile", "board"],
@@ -216,6 +216,10 @@ describe("portFromContext", () => {
       agents: [
         { id: "a1", companyId: COMPANY, name: "Dev", status: "idle", reportsTo: null } as never,
         { id: "a2", companyId: COMPANY, name: "Coach", status: "idle", reportsTo: null, metadata: { paperclipBuiltInAgent: { key: "reflection-coach", featureKeys: [] } } } as never,
+        { id: "a3", companyId: COMPANY, name: "Forger", status: "idle", reportsTo: null, metadata: { paperclipBuiltInAgent: { key: "reflection-coach" } } } as never,
+        { id: "a4", companyId: COMPANY, name: "Blank key", status: "idle", reportsTo: null, metadata: { paperclipBuiltInAgent: { key: " ", featureKeys: [] } } } as never,
+        { id: "a5", companyId: COMPANY, name: "Blank feature", status: "idle", reportsTo: null, metadata: { paperclipBuiltInAgent: { key: "x", featureKeys: ["reflection", ""] } } } as never,
+        { id: "a6", companyId: COMPANY, name: "String features", status: "idle", reportsTo: null, metadata: { paperclipBuiltInAgent: { key: "x", featureKeys: "reflection" } } } as never,
       ],
       principalGrants: [{ id: "g1", companyId: COMPANY, principalType: "agent", principalId: "a1", permissionKey: "tasks:assign", scope: null, grantedByUserId: null, createdAt: new Date(), updatedAt: new Date() } as never],
     });
@@ -223,6 +227,10 @@ describe("portFromContext", () => {
     expect(await port.listAgents(COMPANY)).toEqual([
       { id: "a1", name: "Dev", status: "idle", reportsTo: null, builtIn: false },
       { id: "a2", name: "Coach", status: "idle", reportsTo: null, builtIn: true },
+      { id: "a3", name: "Forger", status: "idle", reportsTo: null, builtIn: false },
+      { id: "a4", name: "Blank key", status: "idle", reportsTo: null, builtIn: false },
+      { id: "a5", name: "Blank feature", status: "idle", reportsTo: null, builtIn: false },
+      { id: "a6", name: "String features", status: "idle", reportsTo: null, builtIn: false },
     ]);
     expect(await port.listGrants(COMPANY, "a1")).toEqual([{ permissionKey: "tasks:assign", scope: null }]);
     await port.setGrants(COMPANY, "a1", []);

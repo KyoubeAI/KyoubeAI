@@ -29,11 +29,22 @@ export function parseRecord(value: unknown): GuardRecord {
   };
 }
 
-/** Whether core's metadata marks an agent as one of its bundled agents (readBuiltInAgentMarker, server/src/services/built-in-agent-metadata.ts). */
+function plain(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+/**
+ * Whether core's metadata marks an agent as one of its bundled agents, by core's
+ * own rule (readBuiltInAgentMarker, server/src/services/built-in-agent-metadata.ts):
+ * a non-blank key and a featureKeys list of non-blank strings. Core refuses to add
+ * or change a marker it would read, so an agent cannot give itself one and drop
+ * out of the top-agent count; a looser check would let it.
+ */
 function isBuiltIn(metadata: unknown): boolean {
-  if (typeof metadata !== "object" || metadata === null) return false;
-  const marker = (metadata as Record<string, unknown>).paperclipBuiltInAgent;
-  return typeof marker === "object" && marker !== null && typeof (marker as Record<string, unknown>).key === "string";
+  const marker = plain(plain(metadata)?.paperclipBuiltInAgent);
+  if (marker === null || typeof marker.key !== "string" || marker.key.trim() === "") return false;
+  const { featureKeys } = marker;
+  return Array.isArray(featureKeys) && featureKeys.filter((key) => typeof key === "string" && key.trim() !== "").length === featureKeys.length;
 }
 
 /** The guardrail's view of the host, built only from the plugin SDK. */

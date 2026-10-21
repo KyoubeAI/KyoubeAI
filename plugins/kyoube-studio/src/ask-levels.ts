@@ -40,9 +40,19 @@ export function pruneAskLevels(levels: AskLevels, live: ReadonlySet<string>): As
   return Object.fromEntries(Object.entries(levels).filter(([agentId]) => live.has(agentId)));
 }
 
-/** Whether the core's metadata marks an agent as one of its bundled agents (readBuiltInAgentMarker in the core). */
+function plain(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+/**
+ * Whether the core's metadata marks an agent as one of its bundled agents, by the
+ * core's own rule (readBuiltInAgentMarker): a non-blank key and a featureKeys list
+ * of non-blank strings. The core refuses to add or change a marker it would read,
+ * so an agent cannot give itself one; a looser check would let it.
+ */
 export function isBuiltInAgent(metadata: unknown): boolean {
-  if (typeof metadata !== "object" || metadata === null) return false;
-  const marker = (metadata as Record<string, unknown>).paperclipBuiltInAgent;
-  return typeof marker === "object" && marker !== null && typeof (marker as Record<string, unknown>).key === "string";
+  const marker = plain(plain(metadata)?.paperclipBuiltInAgent);
+  if (marker === null || typeof marker.key !== "string" || marker.key.trim() === "") return false;
+  const { featureKeys } = marker;
+  return Array.isArray(featureKeys) && featureKeys.filter((key) => typeof key === "string" && key.trim() !== "").length === featureKeys.length;
 }

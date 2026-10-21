@@ -186,11 +186,19 @@ describe("an agent's ask level", () => {
 
   it("refuses an agent of another company, one waiting for approval, and a built-in agent", async () => {
     const { harness } = await setup();
-    harness.seed({ agents: [agent("p1", COMPANY, "Pending Hire", "pending_approval"), { ...(agent("b1", COMPANY, "Reflection Coach", "idle") as object), metadata: { paperclipBuiltInAgent: { key: "reflection-coach" } } } as never] });
+    harness.seed({ agents: [agent("p1", COMPANY, "Pending Hire", "pending_approval"), { ...(agent("b1", COMPANY, "Reflection Coach", "idle") as object), metadata: { paperclipBuiltInAgent: { key: "reflection-coach", featureKeys: [] } } } as never] });
     await expect(harness.performAction("agent.change-ask-level", { agentId: "x1", level: "none" }, asUser("owner-1"))).rejects.toThrow(/not found/);
     await expect(harness.performAction("agent.change-ask-level", { agentId: "p1", level: "none" }, asUser("owner-1"))).rejects.toThrow(/approved/);
     await expect(harness.performAction("agent.change-ask-level", { agentId: "b1", level: "none" }, asUser("owner-1"))).rejects.toThrow(/Built-in agents/);
     expect(await harness.getData("agent", { companyId: COMPANY, agentRef: "reflection-coach", userId: "owner-1" })).toMatchObject({ access: { askLevel: null } });
+  });
+
+  it("lets owners set the level of an agent that gave itself a marker the core would not read", async () => {
+    const { harness } = await setup();
+    harness.seed({ agents: [{ ...(agent("f1", COMPANY, "Forger", "idle") as object), metadata: { paperclipBuiltInAgent: { key: "reflection-coach" } } } as never] });
+    await harness.performAction("agent.change-ask-level", { agentId: "f1", level: "none" }, asUser("owner-1"));
+    expect(stored(harness)).toEqual({ f1: "none" });
+    expect(await harness.getData("agent", { companyId: COMPANY, agentRef: "forger", userId: "owner-1" })).toMatchObject({ access: { askLevel: "none" } });
   });
 
   it("gives the loop the map through its route, with the rules token or an owner", async () => {

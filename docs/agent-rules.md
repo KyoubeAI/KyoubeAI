@@ -150,7 +150,8 @@ before.
   other agents' records. The loop puts an ask level back within a minute, built-in agents included.
   It only reads `reportsTo`, which decides what "its line" covers, so a changed `reportsTo` stays
   until someone changes it back. The activity log shows the change (`agent.updated`); the task's
-  history does not.
+  history does not. An agent cannot pass itself off as built-in: KyoubeAI reads the core's marker by
+  the core's own rule, and the core refuses to add or change a marker it would read.
 - The per-task question limits are checked just before the core creates the card, not under a lock,
   so an agent that sends questions at the same moment can go past them. Each newer question still
   replaces the agent's older open one, but the agent the older one asked may already have been woken.

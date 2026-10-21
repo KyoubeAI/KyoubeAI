@@ -30,10 +30,19 @@ describe("ask levels", () => {
     expect(pruneAskLevels({ a: "none", gone: "any" }, new Set(["a", "b"]))).toEqual({ a: "none" });
   });
 
-  it("knows the core's built-in agents by their metadata marker", () => {
-    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: "reflection-coach" } })).toBe(true);
+  it("knows the core's built-in agents by the core's own rule", () => {
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: "reflection-coach", featureKeys: [] } })).toBe(true);
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: "reflection-coach", featureKeys: ["reflection"] } })).toBe(true);
     expect(isBuiltInAgent({ paperclipBuiltInAgent: {} })).toBe(false);
     expect(isBuiltInAgent(null)).toBe(false);
     expect(isBuiltInAgent({ kyoubeAskLevel: "none" })).toBe(false);
+  });
+
+  it("does not take a marker the core would not read, which an agent could add to itself", () => {
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: "reflection-coach" } })).toBe(false);
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: " ", featureKeys: [] } })).toBe(false);
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: "x", featureKeys: "reflection" } })).toBe(false);
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: "x", featureKeys: ["reflection", ""] } })).toBe(false);
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: "x", featureKeys: [1] } })).toBe(false);
   });
 });
