@@ -3,6 +3,7 @@
  * one agent, shaped from the same snapshot as the roster and Home. Pure: the
  * worker passes in the agent's comments on its current task.
  */
+import type { AskLevel } from "./ask-levels.js";
 import { summarizeTeam, toMs, type AgentLike, type AgentState, type IssueLike } from "./model.js";
 
 export interface ProfileAgentLike extends AgentLike {
@@ -72,8 +73,12 @@ export interface AgentProfile {
   worksWith: WorkRelation[];
   /** The core pages the profile's tab row links to. */
   links: { instructions: string; skills: string; runs: string; settings: string; classic: string };
-  /** Added by the worker: whether it may change agents, and whether the viewer may switch that. Null when the host would not say. */
-  access?: { canChangeAgents: boolean; canManage: boolean } | null;
+  /**
+   * Added by the worker: whether it may change agents, which agents it may ask (null for a
+   * built-in agent, which keeps the default), and whether the viewer may change either.
+   * Null when the host would not say.
+   */
+  access?: { canChangeAgents: boolean; canManage: boolean; askLevel: AskLevel | null } | null;
 }
 
 export type ProfileResult = AgentProfile | { found: false };

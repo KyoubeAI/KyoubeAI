@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createTestHarness } from "@paperclipai/plugin-sdk/testing";
 import manifest from "../src/manifest.js";
@@ -16,7 +19,7 @@ function issue(id: string, companyId: string, identifier: string, status: string
   return { id, companyId, identifier, title: `Task ${identifier}`, status, assigneeAgentId, hiddenAt: null, createdAt: at(minutesAgo + 10), updatedAt: at(minutesAgo), completedAt: status === "done" ? at(minutesAgo) : null } as never;
 }
 
-async function setup(clock = { now: NOW }) {
+async function setup(clock = { now: NOW }, rulesTokenPath?: string) {
   const harness = createTestHarness({ manifest });
   harness.seed({
     agents: [agent("a1", COMPANY, "Ambassador Content Agent", "running", "sparkles"), agent("a2", COMPANY, "AI Manager", "idle"), agent("x1", OTHER, "Someone Else", "running")],
@@ -27,9 +30,9 @@ async function setup(clock = { now: NOW }) {
       { id: "m2", companyId: COMPANY, principalType: "user", principalId: "member-1", status: "active", membershipRole: "member", grants: [], createdAt: "2026-01-01", updatedAt: "2026-01-01" },
     ] as never,
   });
-  const plugin = createStudioPlugin({ now: () => clock.now });
+  const plugin = createStudioPlugin({ now: () => clock.now, rulesTokenPath });
   await plugin.definition.setup(harness.ctx);
-  return { harness, clock };
+  return { harness, clock, plugin };
 }
 
 describe("kyoube.studio worker", () => {
@@ -143,5 +146,84 @@ describe("an agent's permission to change agents", () => {
 
   it("declares the capabilities it uses", () => {
     expect(manifest.capabilities).toEqual(expect.arrayContaining(["authorization.grants.read", "authorization.grants.write"]));
+  });
+});
+
+describe("an agent's ask level", () => {
+  const TOKEN = "cd".repeat(32);
+  const TOKEN_DIR = mkdtempSync(path.join(os.tmpdir(), "kyoube-studio-token-"));
+  const TOKEN_PATH = path.join(TOKEN_DIR, "rules-token");
+  writeFileSync(TOKEN_PATH, `${TOKEN}\n`, { mode: 0o600 });
+  const asUser = (userId: string) => ({ actor: { type: "user" as const, userId }, companyId: COMPANY });
+  const stored = (harness: Awaited<ReturnType<typeof setup>>["harness"]) => harness.getState({ scopeKind: "company", scopeId: COMPANY, stateKey: "ask-levels" });
+  const request = (body: Record<string, unknown>, actor: Record<string, unknown> = { actorType: "user", actorId: "owner-1", userId: "owner-1" }) => ({
+    routeKey: "askLevels.list", method: "POST", path: "/ask-levels", params: {}, query: {}, headers: {},
+    body: { companyId: COMPANY, ...body }, actor, companyId: COMPANY,
+  }) as never;
+
+  it("shows line until someone sets it, and the level once set", async () => {
+    const { harness } = await setup();
+    expect(await harness.getData("agent", { companyId: COMPANY, agentRef: "ai-manager", userId: "owner-1" })).toMatchObject({ access: { askLevel: "line" } });
+    expect(await harness.performAction("agent.change-ask-level", { agentId: "a2", level: "none" }, asUser("owner-1"))).toEqual({ askLevel: "none" });
+    expect(stored(harness)).toEqual({ a2: "none" });
+    expect(await harness.getData("agent", { companyId: COMPANY, agentRef: "ai-manager", userId: "member-1" })).toMatchObject({ access: { askLevel: "none", canManage: false } });
+  });
+
+  it("removes the entry when set back to line", async () => {
+    const { harness } = await setup();
+    await harness.performAction("agent.change-ask-level", { agentId: "a2", level: "any" }, asUser("owner-1"));
+    await harness.performAction("agent.change-ask-level", { agentId: "a2", level: "line" }, asUser("owner-1"));
+    expect(stored(harness)).toEqual({});
+  });
+
+  it("refuses anyone but a company owner or admin, agents, and unknown levels", async () => {
+    const { harness } = await setup();
+    await expect(harness.performAction("agent.change-ask-level", { agentId: "a2", level: "none" }, asUser("member-1"))).rejects.toThrow(/owners and admins/);
+    await expect(harness.performAction("agent.change-ask-level", { agentId: "a2", level: "none" }, { actor: { type: "agent", agentId: "a1" }, companyId: COMPANY })).rejects.toThrow(/owners and admins/);
+    await expect(harness.performAction("agent.change-ask-level", { agentId: "a2", level: "everyone" }, asUser("owner-1"))).rejects.toThrow(/none, line or any/);
+    expect(stored(harness)).toBeUndefined();
+  });
+
+  it("refuses an agent of another company, one waiting for approval, and a built-in agent", async () => {
+    const { harness } = await setup();
+    harness.seed({ agents: [agent("p1", COMPANY, "Pending Hire", "pending_approval"), { ...(agent("b1", COMPANY, "Reflection Coach", "idle") as object), metadata: { paperclipBuiltInAgent: { key: "reflection-coach" } } } as never] });
+    await expect(harness.performAction("agent.change-ask-level", { agentId: "x1", level: "none" }, asUser("owner-1"))).rejects.toThrow(/not found/);
+    await expect(harness.performAction("agent.change-ask-level", { agentId: "p1", level: "none" }, asUser("owner-1"))).rejects.toThrow(/approved/);
+    await expect(harness.performAction("agent.change-ask-level", { agentId: "b1", level: "none" }, asUser("owner-1"))).rejects.toThrow(/Built-in agents/);
+    expect(await harness.getData("agent", { companyId: COMPANY, agentRef: "reflection-coach", userId: "owner-1" })).toMatchObject({ access: { askLevel: null } });
+  });
+
+  it("gives the loop the map through its route, with the rules token or an owner", async () => {
+    const { harness, plugin } = await setup(undefined, TOKEN_PATH);
+    await harness.performAction("agent.change-ask-level", { agentId: "a1", level: "any" }, asUser("owner-1"));
+    expect(await plugin.definition.onApiRequest!(request({ rulesToken: TOKEN }, { actorType: "user", actorId: "member-1", userId: "member-1" }))).toEqual({ status: 200, body: { levels: { a1: "any" } } });
+    expect(await plugin.definition.onApiRequest!(request({}))).toEqual({ status: 200, body: { levels: { a1: "any" } } });
+  });
+
+  it("refuses the route to agents, to other members, and to a wrong token", async () => {
+    const { plugin } = await setup(undefined, TOKEN_PATH);
+    expect(await plugin.definition.onApiRequest!(request({}, { actorType: "agent", actorId: "a1" }))).toMatchObject({ status: 403 });
+    expect(await plugin.definition.onApiRequest!(request({}, { actorType: "user", actorId: "member-1", userId: "member-1" }))).toMatchObject({ status: 403 });
+    expect(await plugin.definition.onApiRequest!(request({ rulesToken: "ef".repeat(32) }, { actorType: "user", actorId: "member-1", userId: "member-1" }))).toMatchObject({ status: 403 });
+  });
+
+  it("drops entries for agents that are gone or terminated", async () => {
+    const { harness, plugin } = await setup(undefined, TOKEN_PATH);
+    harness.seed({ agents: [agent("t1", COMPANY, "Retired", "terminated")] });
+    await harness.ctx.state.set({ scopeKind: "company", scopeId: COMPANY, stateKey: "ask-levels" }, { a1: "none", gone: "any", t1: "any" });
+    expect(await plugin.definition.onApiRequest!(request({ rulesToken: TOKEN }))).toEqual({ status: 200, body: { levels: { a1: "none" } } });
+    expect(stored(harness)).toEqual({ a1: "none" });
+  });
+
+  it("answers 404 for a route it does not own", async () => {
+    const { plugin } = await setup(undefined, TOKEN_PATH);
+    expect(await plugin.definition.onApiRequest!({ ...(request({ rulesToken: TOKEN }) as object), routeKey: "other" } as never)).toMatchObject({ status: 404 });
+  });
+
+  it("declares the route and the capabilities it uses", () => {
+    expect(manifest.capabilities).toEqual(expect.arrayContaining(["api.routes.register", "plugin.state.read", "plugin.state.write"]));
+    expect(manifest.apiRoutes?.map((route) => [route.routeKey, route.method, route.path, route.auth, route.companyResolution])).toEqual([
+      ["askLevels.list", "POST", "/ask-levels", "board", { from: "body", key: "companyId" }],
+    ]);
   });
 });

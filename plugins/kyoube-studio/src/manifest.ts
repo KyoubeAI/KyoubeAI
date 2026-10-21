@@ -1,7 +1,7 @@
-import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
+import type { PaperclipPluginManifestV1, PluginApiRouteDeclaration } from "@paperclipai/plugin-sdk";
 
 export const PLUGIN_ID = "kyoube.studio";
-export const PLUGIN_VERSION = "0.4.0";
+export const PLUGIN_VERSION = "0.5.0";
 /** The Workspace page's route under a company: `/<prefix>/workspace`. */
 export const WORKSPACE_ROUTE = "workspace";
 /** The team and agent profiles: `/<prefix>/team` and `/<prefix>/team/<agent>[/tasks]`. */
@@ -15,6 +15,16 @@ export const TEAM_ROUTE = "team";
  * moves to the Workspace page). Keep these in step with those manifests.
  */
 export const SIDEBAR_ORDER = { build: 10, data: 20, apps: 30, routines: 40, team: 50, terminal: 90 } as const;
+
+/**
+ * Board-only. `kyoube agent-rules` reads the company's ask levels here on each
+ * pass (docs/agent-rules.md, "Agent questions"); the worker admits the loop's
+ * rules token or a company owner or admin. Resolved from the body's companyId,
+ * like the other plugins' routes the loop calls.
+ */
+export const API_ROUTES: PluginApiRouteDeclaration[] = [
+  { routeKey: "askLevels.list", method: "POST", path: "/ask-levels", auth: "board", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+];
 
 // `minimumHostVersion` is deliberately absent, for the reason recorded in the
 // terminal plugin's manifest: the image pins the core every plugin is built for, so a
@@ -41,11 +51,17 @@ const manifest: PaperclipPluginManifestV1 = {
     // board API lists no agent's grants and replaces them all on write.
     "authorization.grants.read",
     "authorization.grants.write",
+    // The profile's "Can ask other agents" control: Studio keeps each company's
+    // ask levels, and the agent-rules loop reads them through API_ROUTES.
+    "plugin.state.read",
+    "plugin.state.write",
+    "api.routes.register",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
     ui: "./dist/ui",
   },
+  apiRoutes: API_ROUTES,
   ui: {
     slots: [
       { type: "sidebar", id: "studio-build", displayName: "Build", exportName: "StudioBuildLabel", order: SIDEBAR_ORDER.build },
