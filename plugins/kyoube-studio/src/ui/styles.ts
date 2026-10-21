@@ -227,10 +227,12 @@ a.ks-now-title:hover { text-decoration: underline; text-underline-offset: 2px; }
 .ks-perm + .ks-perm { border-top: 1px solid var(--border, #e4e4e7); }
 .ks-seg { display: inline-flex; flex-shrink: 0; gap: 2px; padding: 2px; border: 1px solid var(--border, #e4e4e7); border-radius: 9px; }
 .ks-seg button { height: 28px; padding: 0 10px; border: 0; border-radius: 7px; background: none; font: inherit; font-size: 13px; font-weight: 500; color: var(--muted-foreground, #71717a); cursor: pointer; white-space: nowrap; }
-.ks-seg button:hover:not(:disabled) { background: color-mix(in oklab, var(--accent, #f0f0f2) 60%, transparent); }
+.ks-seg button:hover:not(:disabled):not([aria-checked="true"]) { background: color-mix(in oklab, var(--accent, #f0f0f2) 60%, transparent); }
 .ks-seg button[aria-checked="true"] { background: var(--kyoube-accent, #0f766e); color: #fff; }
 .ks-seg button:disabled { cursor: default; opacity: .6; }
-@media (max-width: 560px) { .ks-perm-wide { flex-wrap: wrap; } .ks-perm-wide .ks-seg { margin-left: auto; } }
+.ks-perm-wide { flex-wrap: wrap; }
+.ks-perm-wide .ks-text { flex: 1 1 200px; }
+.ks-perm-wide .ks-seg { margin-left: auto; }
 .ks-about { margin: 0; padding: 14px 16px; font-size: 13px; line-height: 1.5; color: var(--muted-foreground, #71717a); white-space: pre-line; }
 .ks-classic { margin: 0; font-size: 12.5px; }
 .ks-classic a { color: var(--muted-foreground, #71717a); }

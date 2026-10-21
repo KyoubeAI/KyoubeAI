@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { PluginPageProps } from "@paperclipai/plugin-sdk/ui";
 import { useHostContext, useHostLocation, useHostNavigation, usePluginAction, usePluginToast } from "@paperclipai/plugin-sdk/ui";
 import type { AskLevel } from "../ask-levels.js";
@@ -185,6 +185,14 @@ const ASK_TOASTS: Record<AskLevel, (name: string) => string> = {
   any: (name) => `${name} can now ask any agent`,
 };
 
+/** The level an arrow key moves to from `current` (wrapping at the ends), or null for a key the group does not use. */
+export function askLevelStep(current: AskLevel, key: string): AskLevel | null {
+  const step = key === "ArrowRight" || key === "ArrowDown" ? 1 : key === "ArrowLeft" || key === "ArrowUp" ? -1 : 0;
+  if (step === 0) return null;
+  const index = ASK_OPTIONS.findIndex((option) => option.level === current);
+  return ASK_OPTIONS[(index + step + ASK_OPTIONS.length) % ASK_OPTIONS.length]!.level;
+}
+
 /**
  * Which agents this agent may send a question card to when it is stuck
  * (docs/agent-rules.md, "Agent questions"). The task stays with it; the core
@@ -197,15 +205,25 @@ function AskLevelControl({ profile, access, onChanged }: { profile: AgentProfile
   const [busy, setBusy] = useState(false);
   // As on the duty switch: what the server just confirmed, until the next read agrees.
   const [confirmed, setConfirmed] = useState<AskLevel | null>(null);
+  // Set by an arrow key: once the change settles, focus moves to the option that is now checked.
+  const group = useRef<HTMLDivElement>(null);
+  const keyboardMove = useRef(false);
   const actual = access.askLevel ?? "line";
   const current = confirmed ?? actual;
   const locked = profile.agent.status === "pending_approval" || profile.agent.status === "terminated";
+  const disabled = busy || locked || !access.canManage;
   useEffect(() => {
     if (confirmed === null) return;
     if (confirmed === actual) { setConfirmed(null); return; }
     const timer = setTimeout(() => setConfirmed(null), 20_000);
     return () => clearTimeout(timer);
   }, [confirmed, actual]);
+  // A button that turns disabled while focused drops its focus, so the arrow key's focus is put back once the change has settled.
+  useEffect(() => {
+    if (busy || !keyboardMove.current) return;
+    keyboardMove.current = false;
+    group.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
+  }, [busy, current]);
   const choose = async (level: AskLevel) => {
     if (level === current) return;
     setBusy(true);
@@ -220,13 +238,22 @@ function AskLevelControl({ profile, access, onChanged }: { profile: AgentProfile
       setBusy(false);
     }
   };
+  // Arrow keys move the selection as in a radio group (WAI-ARIA), wrapping at the ends. Nothing happens while disabled.
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (disabled) return;
+    const next = askLevelStep(current, event.key);
+    if (next === null) return;
+    event.preventDefault();
+    keyboardMove.current = true;
+    void choose(next);
+  };
   const why = !access.canManage ? "Only company owners and admins can change this" : locked ? "Available once the agent is approved" : undefined;
   return (
     <div className="ks-perm ks-perm-wide">
       <span className="ks-text"><b>Can ask other agents</b><span>Lets this agent send another agent a question when it is stuck. The task stays with it. Takes effect within a minute.</span></span>
-      <div className="ks-seg" role="radiogroup" aria-label="Can ask other agents" title={why}>
+      <div ref={group} className="ks-seg" role="radiogroup" aria-label="Can ask other agents" title={why} onKeyDown={onKeyDown}>
         {ASK_OPTIONS.map((option) => (
-          <button key={option.level} type="button" role="radio" aria-checked={current === option.level} disabled={busy || locked || !access.canManage} onClick={() => void choose(option.level)}>{option.label}</button>
+          <button key={option.level} type="button" role="radio" aria-checked={current === option.level} tabIndex={option.level === current ? 0 : -1} disabled={disabled} onClick={() => void choose(option.level)}>{option.label}</button>
         ))}
       </div>
     </div>

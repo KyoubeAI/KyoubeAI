@@ -3,11 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import type { HomeSnapshot, TeamMember, TeamSnapshot } from "../src/model.js";
 import { AgentProfilePage, StudioBuildLabel, StudioFooter, StudioHome, StudioRoutinesLink, StudioTeam, WorkspacePage } from "../src/ui/index.js";
-import { parseTeamPath } from "../src/ui/Profile.js";
+import { askLevelStep, parseTeamPath } from "../src/ui/Profile.js";
 import { headline } from "../src/ui/Home.js";
 import { memberDetail } from "../src/ui/nav.js";
 import { isActivePath } from "../src/ui/shared.js";
-import { ensureStyles } from "../src/ui/styles.js";
+import { ensureStyles, STUDIO_CSS } from "../src/ui/styles.js";
 import { greeting, timeAgo } from "../src/ui/time.js";
 
 type BridgeGlobal = typeof globalThis & { __paperclipPluginBridge__?: { sdkUi?: Record<string, unknown> } };
@@ -28,6 +28,8 @@ function installBridge(data: Record<string, unknown>, pathname = "/BAP/dashboard
 afterEach(() => { delete (globalThis as BridgeGlobal).__paperclipPluginBridge__; });
 
 const render = (component: unknown, props: Record<string, unknown> = { context }) => renderToStaticMarkup(createElement(component as never, props as never));
+/** The opening tag of the button with this label, so its attributes can be checked one at a time. */
+const radioTag = (html: string, label: string) => html.match(new RegExp(`<button[^>]*>${label}</button>`))?.[0] ?? "";
 
 function member(i: number, overrides: Partial<TeamMember> = {}): TeamMember {
   return { id: `a${i}`, name: `Agent ${i}`, title: null, icon: "rocket", href: `/agents/agent-${i}`, state: "idle", detail: "Idle", lastActiveAt: null, task: null, ...overrides };
@@ -255,10 +257,38 @@ describe("agent profile", () => {
     expect(html).toMatch(/role="radio" aria-checked="true"[^>]*>Its line</);
     expect(html).toMatch(/role="radio" aria-checked="false"[^>]*>Any agent</);
     expect(html).toContain("The task stays with it. Takes effect within a minute.");
+    // An owner or admin can use the radios, so none is disabled. Only the checked one is a tab stop (roving tabindex).
+    expect(html).not.toMatch(/role="radio"[^>]*disabled/);
+    expect(radioTag(html, "Its line")).toContain('tabindex="0"');
+    expect(radioTag(html, "No agents")).toContain('tabindex="-1"');
+    expect(radioTag(html, "Any agent")).toContain('tabindex="-1"');
     installBridge({ agent: { ...profile, access: { canChangeAgents: false, canManage: false, askLevel: "none" } } }, "/BAP/team/ambassador-content-agent");
     const locked = render(AgentProfilePage);
     expect(locked).toMatch(/role="radio" aria-checked="true"[^>]*disabled=""[^>]*>No agents</);
     expect(locked).toContain("Only company owners and admins can change this");
+  });
+
+  it("locks the ask control for a pending agent, even for an owner or admin, and says why", () => {
+    installBridge({ agent: { ...profile, agent: { ...profile.agent, status: "pending_approval" }, access: { canChangeAgents: false, canManage: true, askLevel: "line" } } }, "/BAP/team/ambassador-content-agent");
+    const html = render(AgentProfilePage);
+    expect(html.match(/role="radio"[^>]*disabled=""/g)).toHaveLength(3);
+    expect(html).toContain('title="Available once the agent is approved"');
+  });
+
+  it("moves the ask level with the arrow keys, wrapping at the ends", () => {
+    expect(askLevelStep("none", "ArrowRight")).toBe("line");
+    expect(askLevelStep("line", "ArrowDown")).toBe("any");
+    expect(askLevelStep("any", "ArrowRight")).toBe("none");
+    expect(askLevelStep("none", "ArrowLeft")).toBe("any");
+    expect(askLevelStep("line", "ArrowUp")).toBe("none");
+    expect(askLevelStep("line", "Enter")).toBeNull();
+  });
+
+  it("keeps the checked label readable on hover, and drops the control under the text on a narrow row", () => {
+    expect(STUDIO_CSS).toContain('.ks-seg button:hover:not(:disabled):not([aria-checked="true"])');
+    expect(STUDIO_CSS).not.toMatch(/@media \(max-width: 560px\)[^}]*\.ks-perm-wide/);
+    expect(STUDIO_CSS).toContain(".ks-perm-wide { flex-wrap: wrap; }");
+    expect(STUDIO_CSS).toContain(".ks-perm-wide .ks-text { flex: 1 1 200px; }");
   });
 
   it("leaves the ask control out for a built-in agent or an older worker", () => {
