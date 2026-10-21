@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyRules, END_MARKER, HANDOFFS_SECTION, removeRules, RULES_BLOCK } from "../src/agent-rules/block.js";
+import { applyRules, END_MARKER, HANDOFFS_SECTION, removeRules, RULES_BLOCK, rulesBlock } from "../src/agent-rules/block.js";
 
 /** The core's default AGENTS.md (server/src/onboarding-assets/default, 2026.916.1), as the rebrand leaves it, abridged. */
 const CORE_DEFAULT = [
@@ -96,5 +96,39 @@ describe("removeRules", () => {
 
   it("refuses an end marker right before the start marker", () => {
     expect(removeRules(`${END_MARKER}<!-- kyoube:working-rules v1. x -->\n`).kind).toBe("corrupt");
+  });
+});
+
+describe("the v2 block", () => {
+  it("is v2, has seven rules, and line is the default", () => {
+    expect(RULES_BLOCK).toBe(rulesBlock("line"));
+    expect(RULES_BLOCK.startsWith("<!-- kyoube:working-rules v2. ")).toBe(true);
+    for (const n of [1, 2, 3, 4, 5, 6, 7]) expect(RULES_BLOCK).toMatch(new RegExp(`^${n}\\. \\*\\*`, "m"));
+    expect(RULES_BLOCK).not.toMatch(/^8\. /m);
+    expect(RULES_BLOCK).toContain("3. **Stuck? Ask one agent, only as a last resort.**");
+    expect(RULES_BLOCK).toContain("4. **Out of your scope? Ask before escalating.** If the work itself is outside your scope,");
+    expect(RULES_BLOCK).toContain("or rule 5 allows it.");
+    expect(RULES_BLOCK).toContain("7. **When an agent asks you a question,** answer it in the card and do nothing else.");
+    expect(RULES_BLOCK.endsWith(END_MARKER)).toBe(true);
+  });
+
+  it("differs between levels only in the level line", () => {
+    expect(rulesBlock("none")).toContain("   Your ask level: **no agents**. Don't ask other agents; use rule 4.");
+    expect(rulesBlock("line")).toContain("   Your ask level: **your line**: the managers above you (your `chainOfCommand`)\n   and the agents below you.");
+    expect(rulesBlock("any")).toContain("   Your ask level: **any agent** in the company.");
+    const strip = (block: string) => block.split("\n").filter((line) => !line.includes("Your ask level") && line !== "   and the agents below you.").join("\n");
+    expect(strip(rulesBlock("none"))).toBe(strip(rulesBlock("line")));
+    expect(strip(rulesBlock("any"))).toBe(strip(rulesBlock("line")));
+  });
+
+  it("replaces a v1 block, and rewrites the block when the level changes", () => {
+    const v1 = `<!-- kyoube:working-rules v1. Managed by KyoubeAI; changes inside this block are replaced. -->\nold\n${END_MARKER}\n\nYou are an agent.\n\n## Handoffs\n\nNone.\n`;
+    const once = changed(v1);
+    expect(once.startsWith(`${rulesBlock("line")}\n\nYou are an agent.`)).toBe(true);
+    const none = applyRules(once, "none");
+    expect(none.kind).toBe("changed");
+    if (none.kind !== "changed") return;
+    expect(none.content.startsWith(rulesBlock("none"))).toBe(true);
+    expect(applyRules(none.content, "none")).toEqual({ kind: "unchanged" });
   });
 });
