@@ -3,9 +3,12 @@ import { mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import {
-  LEGACY_ENV_KEYS, agentQuestionsCheck, agentQuestionsDoctorCheck, agentRulesChecks, agentRulesDoctorChecks, claudeCredentialDetail, exposureWarning, formatCheck, harnessChecks, harnessesInUseCheck, legacyEnvCheck, legacyHomeLinkCheck, licenceCheck, licenceEnforcementCheck, pushTestEndpointCheck, questionCountsText, skillsCheck, systemPackagesCheck,
+  LEGACY_ENV_KEYS, agentQuestionsCheck, boardKeyDoctorCheck, agentQuestionsDoctorCheck, agentRulesChecks, agentRulesDoctorChecks, claudeCredentialDetail, exposureWarning, formatCheck, harnessChecks, harnessesInUseCheck, legacyEnvCheck, legacyHomeLinkCheck, licenceCheck, licenceEnforcementCheck, pushTestEndpointCheck, questionCountsText, skillsCheck, systemPackagesCheck,
 } from "../src/commands/doctor.js";
 import { licenseStatus } from "@kyoube/license";
+import type { BoardKeyApi } from "../src/board-key-renewal.js";
+import { CoreApiError } from "../src/core-api.js";
+import { writeBoardKey } from "../src/key-store.js";
 import { summarizeQuestions } from "../src/agent-rules/questions-db.js";
 import { HARNESSES, type HarnessStatus } from "../src/harnesses.js";
 import { EMPTY_STATE, type AgentRulesState } from "../src/agent-rules/state.js";
@@ -496,5 +499,68 @@ describe("agent questions", () => {
       const check = await agentQuestionsDoctorCheck({ DATABASE_URL: "postgres://core/db" }, { read: async () => [], importModule: okModule, readText: async () => "plain" });
       expect(check).toMatchObject({ name: "agent questions", ok: false });
     });
+  });
+});
+
+describe("boardKeyDoctorCheck", () => {
+  const NOW = new Date("2026-10-21T10:00:00Z");
+
+  async function keyFile(withKey: boolean) {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "kyoube-doctor-key-"));
+    const keyPath = path.join(dir, "board-key.json");
+    if (withKey) await writeBoardKey(keyPath, { token: "stored", userId: "u1", createdAt: "2026-09-12T16:11:31.375Z" });
+    return keyPath;
+  }
+
+  function core(expiresAt: string | null | Error): BoardKeyApi {
+    const fail = async () => { if (expiresAt instanceof Error) throw expiresAt; };
+    return {
+      whoAmI: async () => { await fail(); return { userId: "u1", keyId: "k1" }; },
+      listKeys: async () => [{ id: "k1", expiresAt: expiresAt instanceof Error ? null : expiresAt }],
+      createKey: async () => { throw new Error("doctor never mints"); },
+      revokeKey: async () => { throw new Error("doctor never revokes"); },
+    };
+  }
+
+  const check = async (env: NodeJS.ProcessEnv, withKey: boolean, expiresAt: string | null | Error) =>
+    boardKeyDoctorCheck({ env, keyPath: await keyFile(withKey), apiBase: "http://app:3100", api: core(expiresAt), now: NOW });
+  const refused = new CoreApiError(401, null, "Agent token did not verify; obtain fresh credentials and retry");
+
+  it("says when the stored key expires, and that it is renewed", async () => {
+    expect(await check({}, true, "2026-11-10T10:00:00.000Z")).toEqual({ name: "board key", ok: true, detail: "stored (user u1), expires 2026-11-10, renewed automatically a week before" });
+    expect(await check({}, true, null)).toEqual({ name: "board key", ok: true, detail: "stored (user u1), never expires" });
+  });
+
+  it("gives the loop its hour to renew, then warns that renewal is not happening", async () => {
+    expect(await check({}, true, "2026-10-27T22:00:00.000Z")).toEqual({ name: "board key", ok: true, detail: "stored (user u1), expires 2026-10-27, renewed automatically a week before" });
+    expect(await check({}, true, "2026-10-26T10:00:00.000Z")).toEqual({
+      name: "board key",
+      ok: true,
+      warn: true,
+      detail: "stored (user u1), expires 2026-10-26 and was not renewed: the app log says why (kyoube: could not renew the board key)",
+    });
+  });
+
+  it("fails a key the core no longer takes, with the fix", async () => {
+    expect(await check({}, true, refused)).toEqual({
+      name: "board key",
+      ok: false,
+      detail: "stored (user u1), but the core no longer takes it (stored 2026-09-12; a key from kyoube setup lasts 30 days. Run kyoube setup and approve its link as an instance admin; docs/operations.md)",
+    });
+    expect(await check({ KYOUBE_BOARD_API_KEY: "env" }, false, refused)).toEqual({
+      name: "board key",
+      ok: false,
+      detail: "from environment, but the core no longer takes it (replace KYOUBE_BOARD_API_KEY; docs/operations.md)",
+    });
+  });
+
+  it("leaves a key from the environment to the operator, warning a week before it expires", async () => {
+    expect(await check({ KYOUBE_BOARD_API_KEY: "env" }, true, "2026-11-10T10:00:00.000Z")).toEqual({ name: "board key", ok: true, detail: "from environment, expires 2026-11-10" });
+    expect(await check({ KYOUBE_BOARD_API_KEY: "env" }, true, "2026-10-26T10:00:00.000Z")).toMatchObject({ ok: true, warn: true, detail: expect.stringContaining("replace KYOUBE_BOARD_API_KEY before then") });
+  });
+
+  it("reports a missing key, and only warns when the core cannot say when a key expires", async () => {
+    expect(await check({}, false, null)).toEqual({ name: "board key", ok: false, detail: "missing — run kyoube setup" });
+    expect(await check({}, true, new Error("connect ECONNREFUSED"))).toEqual({ name: "board key", ok: true, warn: true, detail: "stored (user u1); could not read when it expires: connect ECONNREFUSED" });
   });
 });

@@ -7,6 +7,8 @@ import { EMPTY_STATE, writeState } from "../src/agent-rules/state.js";
 import { agentRulesEnabled, PASS_INTERVAL_MS, PLUGIN_POLL_MS, PLUGIN_WAIT_MS, runAgentRules } from "../src/commands/agent-rules.js";
 import { NO_KEY_EXIT_CODE } from "../src/commands/ensure-plugins.js";
 import type { KyoubeConfig } from "../src/config.js";
+import { RENEWAL_CHECK_MS, type BoardKeyApi } from "../src/board-key-renewal.js";
+import { readBoardKey, resolveBoardKeyPath, writeBoardKey } from "../src/key-store.js";
 
 const QUIET_GUARD: GuardReport = { managers: [], updated: [], skipped: [], failures: [], selfTest: { status: "not_applicable", detail: "" } };
 
@@ -41,12 +43,31 @@ async function setup(fake = api()) {
   const deps = {
     readConfig: async () => config,
     createApi: () => fake,
+    createKeyApi: () => keyApi(null).api,
     waitForHealth: async () => {},
     sleep: async (ms: number) => { sleeps.push(ms); },
     log: (line: string) => lines.push(line),
     now: () => new Date("2026-10-01T10:00:00Z"),
   };
-  return { home, lines, sleeps, deps, fake };
+  return { home, config, lines, sleeps, deps, fake };
+}
+
+/** The core's view of the stored key "old" (id k1, expiring EXPIRES_AT); createKey mints "new" (k2, 30 days). */
+function keyApi(expiresAt: string | null, overrides: Partial<BoardKeyApi> = {}) {
+  const calls: string[] = [];
+  const keys = [{ id: "k1", expiresAt }];
+  const api: BoardKeyApi = {
+    whoAmI: async (token) => { calls.push(`me ${token}`); return { userId: "u1", keyId: token === "new" ? "k2" : "k1" }; },
+    listKeys: async () => { calls.push("list"); return [...keys]; },
+    createKey: async () => { calls.push("create"); keys.push({ id: "k2", expiresAt: "2026-10-31T10:00:00.000Z" }); return { id: "k2", token: "new", expiresAt: "2026-10-31T10:00:00.000Z" }; },
+    revokeKey: async (token, keyId) => { calls.push(`revoke ${keyId} with ${token}`); keys.splice(keys.findIndex((key) => key.id === keyId), 1); },
+    ...overrides,
+  };
+  return { api, calls };
+}
+
+async function storeKey(config: KyoubeConfig) {
+  await writeBoardKey(resolveBoardKeyPath(config), { token: "old", userId: "u1", createdAt: "2026-09-26T00:00:00.000Z" });
 }
 
 const ENV = { KYOUBE_BOARD_API_KEY: "k" };
@@ -147,6 +168,72 @@ describe("runAgentRules", () => {
     expect(fake.calls).toEqual(["guard", "guard", "guard"]);
     expect(sleeps).toEqual([PASS_INTERVAL_MS, PASS_INTERVAL_MS]);
     expect(lines).toHaveLength(1);
+  });
+
+  it("--watch renews a stored key with under a week left before its first pass, the pass uses the new key, and the old one goes an hour later", async () => {
+    for (const env of [{}, { KYOUBE_AGENT_RULES: "off" }]) {
+      const { deps, config, lines } = await setup();
+      await storeKey(config);
+      const core = keyApi("2026-10-05T10:00:00.000Z");
+      const keysSeen: Array<string | undefined> = [];
+      const createApi = (opts: { apiKey?: string }) => { keysSeen.push(opts.apiKey); return api(); };
+      let clock = new Date("2026-10-01T10:00:00Z").getTime();
+      const sleep = async (ms: number) => { clock += ms; };
+      const passes = RENEWAL_CHECK_MS / PASS_INTERVAL_MS + 1;
+      expect(await runAgentRules([], { watch: true }, env, { ...deps, createApi, createKeyApi: () => core.api, sleep, now: () => new Date(clock), maxPasses: passes })).toBe(0);
+      expect(core.calls).toEqual(["me old", "list", "create", "me new", "revoke k1 with new", "me new", "list"]);
+      expect((await readBoardKey(resolveBoardKeyPath(config)))?.token).toBe("new");
+      expect(new Set(keysSeen)).toEqual(new Set(["new"]));
+      expect(lines[0]).toBe("kyoube: board key renewed; the new one expires 2026-10-31, and the old one is revoked within the hour");
+    }
+  });
+
+  it("says when the replaced key cannot be revoked, once", async () => {
+    const { deps, config, lines } = await setup();
+    await storeKey(config);
+    const core = keyApi("2026-10-05T10:00:00.000Z", { revokeKey: async () => { throw new Error("boom"); } });
+    let clock = new Date("2026-10-01T10:00:00Z").getTime();
+    const sleep = async (ms: number) => { clock += ms; };
+    const passes = 2 * (RENEWAL_CHECK_MS / PASS_INTERVAL_MS) + 1;
+    await runAgentRules([], { watch: true }, {}, { ...deps, createKeyApi: () => core.api, sleep, now: () => new Date(clock), maxPasses: passes });
+    expect(lines.filter((line) => line.startsWith("kyoube: could not revoke the replaced board key k1;"))).toHaveLength(1);
+  });
+
+  it("--watch asks about the key at the first pass and then hourly, not every minute", async () => {
+    const { deps, config } = await setup();
+    await storeKey(config);
+    const core = keyApi("2026-12-01T10:00:00.000Z");
+    let clock = new Date("2026-10-01T10:00:00Z").getTime();
+    const sleep = async (ms: number) => { clock += ms; };
+    const passes = RENEWAL_CHECK_MS / PASS_INTERVAL_MS + 1;
+    expect(await runAgentRules([], { watch: true }, {}, { ...deps, createKeyApi: () => core.api, sleep, now: () => new Date(clock), maxPasses: passes })).toBe(0);
+    expect(core.calls).toEqual(["me old", "list", "me old", "list"]);
+  });
+
+  it("never renews a key from the environment or --api-key, nor in --once", async () => {
+    const { deps, config } = await setup();
+    await storeKey(config);
+    let asked = 0;
+    const createKeyApi = () => { asked += 1; return keyApi("2026-10-05T10:00:00.000Z").api; };
+    await runAgentRules([], { watch: true }, ENV, { ...deps, createKeyApi, maxPasses: 1 });
+    await runAgentRules([], { watch: true, "api-key": "flag" }, {}, { ...deps, createKeyApi, maxPasses: 1 });
+    await runAgentRules([], { once: true }, {}, { ...deps, createKeyApi });
+    expect(asked).toBe(0);
+  });
+
+  it("logs a failed renewal once, keeps the old key and still runs the pass", async () => {
+    const { deps, config, lines, fake } = await setup();
+    await storeKey(config);
+    let clock = new Date("2026-10-01T10:00:00Z").getTime();
+    const sleep = async (ms: number) => { clock += ms; };
+    let attempts = 0;
+    const core = keyApi("2026-10-05T10:00:00.000Z", { createKey: async () => { attempts += 1; throw new Error("boom"); } });
+    const passes = 2 * (RENEWAL_CHECK_MS / PASS_INTERVAL_MS) + 1;
+    expect(await runAgentRules([], { watch: true }, {}, { ...deps, createKeyApi: () => core.api, sleep, now: () => new Date(clock), maxPasses: passes })).toBe(0);
+    expect(attempts).toBe(3);
+    expect(lines.filter((line) => line.startsWith("kyoube: could not renew the board key: boom."))).toHaveLength(1);
+    expect((await readBoardKey(resolveBoardKeyPath(config)))?.token).toBe("old");
+    expect(fake.calls).toHaveLength(passes);
   });
 
   it("waits for the plugin worker before a pass", async () => {

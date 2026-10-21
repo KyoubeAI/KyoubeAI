@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { KyoubeConfig } from "./config.js";
 
@@ -51,9 +51,26 @@ export async function readBoardKey(
   };
 }
 
+/**
+ * Stores the board key (mode 600). It is written to a private temporary file, synced to disk and
+ * renamed into place, so the loops that re-read it every minute never see half a file when the
+ * agent-rules loop renews it, and a crash never leaves an empty one.
+ */
 export async function writeBoardKey(filePath: string, record: BoardKeyRecord): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+  const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    const handle = await open(temporary, "wx", 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify(record, null, 2)}\n`);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(temporary, filePath);
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }
 
 /**

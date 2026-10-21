@@ -2,6 +2,7 @@ import { readConfig, resolveConfigPath, type KyoubeConfig } from "../config.js";
 import { createCoreClient, type CoreClientOptions } from "../core-api.js";
 import { ensureRulesToken, resolveBoardApiKey, resolveBoardKeyPath, resolveRulesTokenPath } from "../key-store.js";
 import { createRulesApi, type RulesApi } from "../agent-rules/api.js";
+import { createBoardKeyApi, renewBoardKeyIfDue, RENEWAL_CHECK_MS, revokeReplacedKey, type BoardKeyApi, type BoardKeyRenewal } from "../board-key-renewal.js";
 import { applyPass, groupsPass, revertPass } from "../agent-rules/pass.js";
 import { failureLines, summarize } from "../agent-rules/report.js";
 import { assertStateWritable, mergeGovernancePrevious, readState, resolveStatePath, writeState } from "../agent-rules/state.js";
@@ -25,6 +26,8 @@ export interface RunAgentRulesDeps {
   readConfig: (filePath: string) => Promise<KyoubeConfig>;
   /** `rulesToken` goes in the body of every plugin route call (ruling R18). */
   createApi: (opts: CoreClientOptions, rulesToken: string) => RulesApi;
+  /** Renews the stored board key before the core lets it expire (board-key-renewal.ts). */
+  createKeyApi: (opts: Pick<CoreClientOptions, "apiBase">) => BoardKeyApi;
   waitForHealth: (apiBase: string) => Promise<void>;
   sleep: (ms: number) => Promise<void>;
   log: (line: string) => void;
@@ -36,6 +39,7 @@ export interface RunAgentRulesDeps {
 const defaultDeps: RunAgentRulesDeps = {
   readConfig,
   createApi: createRulesApi,
+  createKeyApi: createBoardKeyApi,
   waitForHealth: async (apiBase) => {
     await createCoreClient({ apiBase }).waitForHealth({ timeoutMs: 15 * 60_000, intervalMs: 2000 });
   },
@@ -45,6 +49,21 @@ const defaultDeps: RunAgentRulesDeps = {
 };
 
 const USAGE = "usage: kyoube agent-rules --once | --watch | off";
+
+/** What the loop logs about a renewal; nothing when the key was not due. */
+export function renewalLine(renewal: BoardKeyRenewal | null): string {
+  if (renewal?.status === "renewed") {
+    const expires = renewal.expiresAt ? `expires ${renewal.expiresAt.slice(0, 10)}` : "never expires";
+    return `kyoube: board key renewed; the new one ${expires}, and the old one is revoked within the hour`;
+  }
+  if (renewal?.status === "failed") {
+    return (
+      `kyoube: could not renew the board key: ${renewal.reason}. It is tried again in an hour; if the key expires, ` +
+      "plugin updates and the agent rules stop until kyoube setup issues a new one (docs/operations.md)"
+    );
+  }
+  return "";
+}
 
 /**
  * The core reports healthy before its plugin loader has started the workers,
@@ -65,7 +84,9 @@ async function waitForPlugin(api: RulesApi, sleep: (ms: number) => Promise<void>
  * entrypoint starts it), and `off` takes everything back out. In `--watch` an
  * unchanged summary or failure is logged once, not every minute. With
  * KYOUBE_AGENT_RULES=off, `--once` and `--watch` run only the user-groups step
- * (docs/groups.md).
+ * (docs/groups.md). `--watch` also renews the board key `kyoube setup` stored,
+ * once it has less than a week left (board-key-renewal.ts): it checks at the
+ * first pass and then hourly, whatever KYOUBE_AGENT_RULES is set to.
  */
 export async function runAgentRules(
   positionals: string[],
@@ -90,12 +111,15 @@ export async function runAgentRules(
   const explicitKey = typeof flags["api-key"] === "string" ? flags["api-key"] : undefined;
   let lastSummary = "";
   let lastFailures = "";
+  let lastKeyLine = "";
+  let lastKeyCheck = Number.NEGATIVE_INFINITY;
+  let replacedKeyId: string | null = null;
   let passes = 0;
 
   while (true) {
     try {
       await deps.waitForHealth(config.paperclipApiUrl);
-      const apiKey = await resolveBoardApiKey(env, keyPath, explicitKey);
+      let apiKey = await resolveBoardApiKey(env, keyPath, explicitKey);
       if (!apiKey) {
         if (mode !== "watch") {
           deps.log("kyoube: no board API key yet — run kyoube setup");
@@ -104,6 +128,28 @@ export async function runAgentRules(
         if (lastSummary !== "no-key") deps.log("kyoube: agent rules wait for a board API key (kyoube setup)");
         lastSummary = "no-key";
       } else {
+        // Only the key kyoube setup stored is renewed; one from the environment or --api-key is the operator's.
+        const keyIsStored = !explicitKey && !env.KYOUBE_BOARD_API_KEY?.trim();
+        if (mode === "watch" && keyIsStored && deps.now().getTime() - lastKeyCheck >= RENEWAL_CHECK_MS) {
+          lastKeyCheck = deps.now().getTime();
+          const keyApi = deps.createKeyApi({ apiBase: config.paperclipApiUrl });
+          if (replacedKeyId) {
+            if (!(await revokeReplacedKey({ api: keyApi, keyPath, keyId: replacedKeyId }).catch(() => false))) {
+              deps.log(`kyoube: could not revoke the replaced board key ${replacedKeyId}; it expires on its own within a week`);
+            }
+            replacedKeyId = null;
+          }
+          const renewal = await renewBoardKeyIfDue({ api: keyApi, keyPath, now: deps.now() }).catch(
+            (error: unknown): BoardKeyRenewal => ({ status: "failed", reason: error instanceof Error ? error.message : String(error) }),
+          );
+          const keyLine = renewalLine(renewal);
+          if (keyLine && keyLine !== lastKeyLine) deps.log(keyLine);
+          lastKeyLine = keyLine;
+          if (renewal?.status === "renewed") {
+            replacedKeyId = renewal.oldKeyId;
+            apiKey = (await resolveBoardApiKey(env, keyPath)) ?? apiKey;
+          }
+        }
         // Created on the first run (mode 600, as node), then reused; the plugins read the same file.
         const rulesToken = await ensureRulesToken(rulesTokenPath);
         const api = deps.createApi({ apiBase: config.paperclipApiUrl, apiKey }, rulesToken);

@@ -3,7 +3,8 @@ import net from "node:net";
 import path from "node:path";
 import { readConfig, resolveConfigPath, type KyoubeConfig } from "../config.js";
 import { readBoardKey, resolveBoardApiKey, resolveBoardKeyPath } from "../key-store.js";
-import { createCoreClient, type CompanySkill, type CompanySummary } from "../core-api.js";
+import { CoreApiError, createCoreClient, type CompanySkill, type CompanySummary } from "../core-api.js";
+import { createBoardKeyApi, currentKey, RENEW_WITHIN_MS, type BoardKeyApi } from "../board-key-renewal.js";
 import { describeHarness, harnessesForAdapterTypes, missingHarnesses, probeHarnesses, systemProbe, type HarnessSpec, type HarnessStatus } from "../harnesses.js";
 import { describeMissing, KYOUBE_SKILLS, missingKyoubeSkills } from "../skills.js";
 import { readState, resolveStatePath, type AgentRulesState } from "../agent-rules/state.js";
@@ -396,6 +397,47 @@ export async function agentQuestionsDoctorCheck(
   return agentQuestionsCheck({ env, summaries, importModule: deps.importModule, readText: deps.readText });
 }
 
+/** Under this much time left, the stored key should already have been renewed (at a week, within the hour). */
+export const RENEWAL_OVERDUE_MS = RENEW_WITHIN_MS - 24 * 60 * 60 * 1000;
+
+/**
+ * The `board key` line: where the key comes from and when the core stops taking it. Keys from
+ * `kyoube setup` last 30 days and the agent-rules loop renews the stored one a week before
+ * (board-key-renewal.ts); one from KYOUBE_BOARD_API_KEY is the operator's to renew.
+ */
+export async function boardKeyDoctorCheck(input: { env: NodeJS.ProcessEnv; keyPath: string; apiBase: string; api?: BoardKeyApi; now?: Date }): Promise<Check> {
+  const name = "board key";
+  const apiKey = await resolveBoardApiKey(input.env, input.keyPath);
+  if (!apiKey) return { name, ok: false, detail: "missing — run kyoube setup" };
+  const fromEnv = Boolean(input.env.KYOUBE_BOARD_API_KEY?.trim());
+  const stored = fromEnv ? null : await readBoardKey(input.keyPath);
+  const source = fromEnv ? "from environment" : `stored (user ${stored?.userId ?? "?"})`;
+  const api = input.api ?? createBoardKeyApi({ apiBase: input.apiBase });
+  const now = input.now ?? new Date();
+  try {
+    const key = await currentKey(api, apiKey);
+    if (key.expiresAt === null) return { name, ok: true, detail: `${source}, never expires` };
+    const left = Date.parse(key.expiresAt) - now.getTime();
+    const day = key.expiresAt.slice(0, 10);
+    if (fromEnv) {
+      return left > RENEW_WITHIN_MS
+        ? { name, ok: true, detail: `${source}, expires ${day}` }
+        : { name, ok: true, warn: true, detail: `${source}, expires ${day}: replace KYOUBE_BOARD_API_KEY before then (KyoubeAI renews only the key kyoube setup stored)` };
+    }
+    return left > RENEWAL_OVERDUE_MS
+      ? { name, ok: true, detail: `${source}, expires ${day}, renewed automatically a week before` }
+      : { name, ok: true, warn: true, detail: `${source}, expires ${day} and was not renewed: the app log says why (kyoube: could not renew the board key)` };
+  } catch (error) {
+    if (error instanceof CoreApiError && error.status === 401) {
+      const fix = fromEnv
+        ? "replace KYOUBE_BOARD_API_KEY"
+        : `stored ${stored?.createdAt.slice(0, 10) ?? "?"}; a key from kyoube setup lasts 30 days. Run kyoube setup and approve its link as an instance admin`;
+      return { name, ok: false, detail: `${source}, but the core no longer takes it (${fix}; docs/operations.md)` };
+    }
+    return { name, ok: true, warn: true, detail: `${source}; could not read when it expires: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
 export function formatCheck(check: Check): string {
   return `${check.ok ? (check.warn ? "WARN" : "ok  ") : "FAIL"} ${check.name.padEnd(20)} ${check.detail}`;
 }
@@ -439,17 +481,7 @@ export async function runDoctor(env: NodeJS.ProcessEnv): Promise<number> {
 
   const keyPath = resolveBoardKeyPath(config);
   const apiKey = await resolveBoardApiKey(env, keyPath);
-  const storedKey = await readBoardKey(keyPath);
-  const keyFromEnv = Boolean(env.KYOUBE_BOARD_API_KEY?.trim());
-  checks.push({
-    name: "board key",
-    ok: Boolean(apiKey),
-    detail: !apiKey
-      ? "missing — run kyoube setup"
-      : keyFromEnv
-        ? "from environment"
-        : `stored (user ${storedKey?.userId ?? "?"})`,
-  });
+  checks.push(await boardKeyDoctorCheck({ env, keyPath, apiBase: config.paperclipApiUrl }));
 
   let inUse: Map<string, number> | null = null;
   if (apiKey) {

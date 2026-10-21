@@ -28,6 +28,18 @@ describe("key-store", () => {
     }
   });
 
+  it("replaces an existing key file whole, owner-readable only, leaving no temporary file", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "kyoube-key-"));
+    const filePath = path.join(dir, "board-key.json");
+    await writeFile(filePath, "old", { mode: 0o644 });
+    await writeBoardKey(filePath, { token: "pcp_new", userId: "u1", createdAt: "2026-10-21T00:00:00.000Z" });
+    expect((await readBoardKey(filePath))?.token).toBe("pcp_new");
+    expect(await readdir(dir)).toEqual(["board-key.json"]);
+    if (process.platform !== "win32") {
+      expect((await stat(filePath)).mode & 0o777).toBe(0o600);
+    }
+  });
+
   it("treats a malformed key file as missing and warns instead of throwing", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "kyoube-key-"));
     const filePath = path.join(dir, "board-key.json");

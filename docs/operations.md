@@ -307,7 +307,8 @@ docker compose exec app kyoube doctor
 config, the deployment's `exposure` (it fails when `KYOUBE_DEPLOYMENT_EXPOSURE=public` and
 `KYOUBE_PUBLIC_URL` is not an `https://` address — put TLS in front before exposing an instance;
 a `private` deployment always passes), the core's `/api/health`, TCP reachability of the `kyoube`
-database, whether a board key is present and where it came from, every `kyoube.*` plugin as
+database, whether a board key is present, where it came from and when it expires (see
+[The board key expires](#the-board-key-expires)), every `kyoube.*` plugin as
 `key@version=status`, the Kyoube skills in every company, and the harness and system-package checks
 below. The credential lines at the end (Claude Code, pi, Hermes) are informational — they report
 "not found" until someone authenticates — so a non-zero exit always comes from one of the checks above
@@ -347,14 +348,42 @@ kyoube license [show|set <key>|clear|refresh]   # show the licence; apply, remov
 kyoube users list|remove <email> [--yes]        # list users; remove one to free a seat
 ```
 
+## The board key expires
+
+The core gives a board key from `kyoube setup` 30 days. An expired key stops every `kyoube` call
+that needs it: plugin updates, the agent working rules and user groups. The app itself keeps
+running, so the only signs are in `kyoube doctor` and the app log. From 1.12.1, the agent rules loop
+renews the stored key a week before it expires (it does with `KYOUBE_AGENT_RULES=off` too). It asks
+the core for a new key for the same person, checks that the core takes it and stores it in place of
+the old one. It revokes the old key an hour later, so nothing that read it just before is refused
+mid-call. It checks at start and then every hour, and logs `kyoube: board key renewed` or `kyoube:
+could not renew the board key` with the reason, retrying hourly. If `kyoube setup` stores a key
+while a renewal runs, setup's key is kept. The person sees the new key, named `kyoube (renewed)`,
+under **Settings → API keys**.
+
+`kyoube doctor`'s `board key` line shows the expiry date. It warns when less than six days are left,
+which means renewal is failing. It fails once the core no longer takes the key. A key that has
+already expired cannot renew itself: issue a new one with `kyoube setup` (step 2 below; the old key
+needs no revoking).
+
+A key set in `KYOUBE_BOARD_API_KEY` is never renewed. `kyoube doctor` warns a week before it
+expires, and you replace it yourself.
+
+The stored key can still lapse while nothing renews it: a stack stopped for longer than the key has
+left, a rollback to a release before 1.12.1, or a restore of a backup older than the last renewal.
+A restored key file can also name a key the restored database never had. In each case the
+`board key` line fails, and `kyoube setup` issues a new key.
+
 ## Rotating the board API key
 
 The board key is an instance-admin API key. Anyone holding it can install plugins and read every
 company through the board API, so rotate it if it may have leaked, and after anyone with access to
-the container leaves.
+the container leaves. Renewal does not replace rotation: a renewed key is new, but whoever held the
+old one can have minted keys of their own with it.
 
 1. Revoke the old key in the UI, under **Settings → API keys** — deleting the file alone does not
-   invalidate the key.
+   invalidate the key. After a leak, revoke every key listed for that person, since whoever held
+   the key could have minted more; a renewed key is named `kyoube (renewed)`.
 2. Delete the stored copy and issue a new one:
 
    ```bash
