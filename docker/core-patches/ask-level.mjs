@@ -26,7 +26,7 @@ const NAMES_SHOWN = 20;
 
 export const MESSAGES = {
   none: "Your ask level does not let you ask other agents. Finish the task yourself, or hand it back to the person who started it (rule 4).",
-  open: "This task already has an open question to an agent. Wait for its answer.",
+  open: "This task already has an open question to an agent. End your run; its answer wakes you.",
   limit: `This task has used its ${QUESTION_LIMIT} questions to agents. Hand it back to the person who started it (rule 4).`,
   checkFailed: "Your question could not be checked. Hand the task back to the person who started it (rule 4).",
 };

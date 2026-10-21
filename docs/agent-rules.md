@@ -8,8 +8,9 @@ KyoubeAI keeps agents working the way a small team expects:
 2. **Approvals go to the person who started the task.** An agent asks that person, never another
    agent.
 3. **A stuck agent may ask one agent a question, as a last resort.** It sends a question card
-   addressed to that agent and keeps the task. Its **ask level** decides which agents it may ask
-   (see [Agent questions](#agent-questions)). One open question per task, three in all.
+   addressed to that agent, which can answer in its own words, keeps the task and ends its run. Its
+   **ask level** decides which agents it may ask (see [Agent questions](#agent-questions)). One open
+   question per task, three in all.
 4. **Work moves up to a manager agent only with that person's decision.** An agent that cannot do a
    task hands it back to the person with a decision card: `"Escalate to <manager>"` or `"Keep it with
    <agent>"`.
@@ -17,8 +18,8 @@ KyoubeAI keeps agents working the way a small team expects:
    its own team only.
 6. **No extra tasks.** An agent does not create review, QA, follow-up or "let X know" tasks unless
    rule 1 or rule 5 allows it.
-7. **An agent that is asked answers in the card.** It does not take, reassign, split or work on the
-   asker's task, and does not pass the question on.
+7. **An agent that is asked answers in the card,** in the run that woke it. It does not check out,
+   take, reassign, split or work on the asker's task, and does not pass the question on.
 
 The core (Paperclip) teaches the opposite by default: its bundled skill tells agents never to ask a
 human what an agent could do, and its default instructions say "ask QA, ask your boss". These rules

@@ -112,6 +112,31 @@ describe("the v2 block", () => {
     expect(RULES_BLOCK.endsWith(END_MARKER)).toBe(true);
   });
 
+  it("tells the asker to end its run, and the agent asked to answer without checking out the task", () => {
+    const rule3 = [
+      "3. **Stuck? Ask one agent, only as a last resort.** First try everything you can yourself.",
+      "   If you are still missing one specific answer that another agent has, and your ask level",
+      "   allows it, send that agent one `ask_user_questions` card addressed to it",
+      "   (`addresseeAgentId`, `continuationPolicy: \"wake_assignee\"`, and `allowOther: true` on",
+      "   each question so it can answer in its own words). Say what you tried and exactly what",
+      "   you need. Keep the task assigned to yourself, set it to `in_review` and end your run;",
+      "   the answer wakes you. One open question per task and three per task in all; the core",
+      "   refuses more.",
+    ].join("\n");
+    const rule7 = [
+      "7. **When an agent asks you a question,** answer it in the card and do nothing else.",
+      "   Don't check out the task: answer in the run that woke you, with",
+      "   `POST /api/issues/{issueId}/interactions/{interactionId}/respond`. Don't take, reassign,",
+      "   split or work on its task, and don't create tasks for it. Don't pass the question on:",
+      "   if you can't answer, say so in the card.",
+    ].join("\n");
+    for (const level of ["none", "line", "any"] as const) {
+      const block = rulesBlock(level);
+      expect(block).toContain(`${rule3}\n   Your ask level: `);
+      expect(block).toContain(`${rule7}\n${END_MARKER}`);
+    }
+  });
+
   it("differs between levels only in the level line", () => {
     expect(rulesBlock("none")).toContain("   Your ask level: **no agents**. Don't ask other agents; use rule 4.");
     expect(rulesBlock("line")).toContain("   Your ask level: **your line**: the managers above you (your `chainOfCommand`)\n   and the agents below you.");
