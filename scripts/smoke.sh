@@ -1070,11 +1070,16 @@ echo "==> agent questions: a report asks its manager; refusals outside its line,
 A_ID="$(make_agent smoke-asker process "$M_ID" '{"cwd":"/kyoubeai/workspaces/smoke","command":"node","args":["/kyoubeai/workspaces/smoke/ask.mjs"]}')"
 [[ -n "$A_ID" && "$A_ID" != "null" ]] || { echo "agent create failed (smoke-asker)" >&2; exit 1; }
 compose exec -T -u node app sh -c 'mkdir -p /kyoubeai/workspaces/smoke && cat > /kyoubeai/workspaces/smoke/ask.mjs' <<'JS'
+import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 const base = String(process.env.PAPERCLIP_API_URL || "").replace(/\/+$/, "").replace(/\/api$/, "");
 const headers = { authorization: "Bearer " + process.env.PAPERCLIP_API_KEY, "content-type": "application/json", "x-paperclip-run-id": String(process.env.PAPERCLIP_RUN_ID || "") };
 const me = process.env.PAPERCLIP_AGENT_ID;
 const plan = JSON.parse(await readFile("/kyoubeai/workspaces/smoke/ask-plan.json", "utf8"));
+// The core can wake this agent again (a deferred answer, a task left in progress), and a late run
+// would ask from the wrong run and overwrite the results; only the first run that does the plan counts.
+const resultsPath = "/kyoubeai/workspaces/smoke/ask-results-" + plan.mode + ".json";
+if (existsSync(resultsPath)) { console.log("this plan is done; nothing to do"); process.exit(0); }
 async function attempt(method, path, body) {
   const response = await fetch(base + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await response.text();
@@ -1086,7 +1091,8 @@ async function attempt(method, path, body) {
 const brief = (r) => ({ status: r.status, code: r.body?.code ?? null, id: r.body?.id ?? null, effectiveResolverPolicy: r.body?.effectiveResolverPolicy ?? null });
 const current = await attempt("GET", "/api/issues/" + plan.task);
 if (current.body?.assigneeAgentId !== me) { console.log("not the planned task; nothing to do"); process.exit(0); }
-await attempt("POST", "/api/issues/" + plan.task + "/checkout", { agentId: me, expectedStatuses: ["todo", "backlog", "in_progress"] });
+const checkout = await attempt("POST", "/api/issues/" + plan.task + "/checkout", { agentId: me, expectedStatuses: ["todo", "backlog", "in_progress"] });
+if (checkout.status < 200 || checkout.status >= 300) { console.log("another run has the task; nothing to do"); process.exit(0); }
 const ask = async (key, addresseeAgentId) => brief(await attempt("POST", "/api/issues/" + plan.task + "/interactions", {
   kind: "ask_user_questions",
   idempotencyKey: "smoke:" + plan.task + ":" + key,
@@ -1118,10 +1124,11 @@ if (plan.mode === "single") {
   results.person2 = await ask("person2", null);
   results.q4 = await ask("q4", plan.manager);
 }
-await writeFile("/kyoubeai/workspaces/smoke/ask-results-" + plan.mode + ".json", JSON.stringify(results));
+await writeFile(resultsPath, JSON.stringify(results), { flag: "wx" }).catch(() => console.log("another run wrote the results first"));
 // A run that leaves its task assigned and in progress makes the core wake the agent again to finish it,
-// so hand the task back to the person, as rule 4 says.
-await attempt("PATCH", "/api/issues/" + plan.task, { assigneeAgentId: null, assigneeUserId: plan.owner, status: "in_review", comment: "The smoke's questions are done; handing the task back to the person." });
+// so hand the task back to the person, as rule 4 says (the smoke also takes it back as the board).
+const handBack = await attempt("PATCH", "/api/issues/" + plan.task, { assigneeAgentId: null, assigneeUserId: plan.owner, status: "in_review", comment: "The smoke's questions are done; handing the task back to the person." });
+if (handBack.status < 200 || handBack.status >= 300) await attempt("PATCH", "/api/issues/" + plan.task, { status: "in_review" });
 JS
 
 wait_file() { # path seconds -> the file's content on stdout
@@ -1130,6 +1137,23 @@ wait_file() { # path seconds -> the file's content on stdout
     sleep 1
   done
   echo "no $1 within $2 s" >&2; compose logs --no-color --tail 80 app >&2; return 1
+}
+take_back() { # task-id — as the board, so no later wake of smoke-asker finds the task still its own
+  curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X PATCH "$BASE_URL/api/issues/$1" \
+    --data "{\"assigneeAgentId\":null,\"assigneeUserId\":\"$OWNER_ID\",\"status\":\"in_review\"}" >/dev/null
+}
+wait_idle() { # agent-id — until it has no run queued, retrying or running, five checks in a row
+  local quiet=0
+  for _ in $(seq 1 120); do
+    if curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/companies/$COMPANY_ID/heartbeat-runs?agentId=$1" \
+      | jq -e '[.[] | select(.status == "queued" or .status == "scheduled_retry" or .status == "running")] | length == 0' >/dev/null; then
+      quiet=$((quiet + 1)); [[ $quiet -ge 5 ]] && return 0
+    else
+      quiet=0
+    fi
+    sleep 1
+  done
+  echo "agent $1 still has a run after 120 s" >&2; return 1
 }
 check_result() { # jq-filter description
   jq -e "$1" "$TMP/ask-results.json" >/dev/null || { echo "$2: $(cat "$TMP/ask-results.json")" >&2; exit 1; }
@@ -1179,6 +1203,7 @@ as_agent "$M_KEY" POST "/api/issues/$QTASK_ID/interactions/$Q1_ID/respond" '{"an
 [[ "$HTTP_STATUS" =~ ^2 ]] || { echo "the manager could not answer the question addressed to it: $HTTP_STATUS $(cat "$TMP/resp.json")" >&2; exit 1; }
 
 wait_file /kyoubeai/workspaces/smoke/ask-results-sequence.json 120 >"$TMP/ask-results.json"
+take_back "$QTASK_ID"
 check_result '(.q1.status | tostring | test("^2")) and .q1.effectiveResolverPolicy == "not_creator"' "a question to the manager was not let through, answerable by the manager"
 check_result '.again.status == 422 and .again.code == "kyoube_ask_open_question"' "a second open question to an agent was not refused"
 check_result '.outside.status == 422 and .outside.code == "kyoube_ask_outside_line"' "a question outside the asker's line was not refused"
@@ -1197,6 +1222,8 @@ curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/agents/$A_ID" | jq -e
 curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/agents/$NA_ID/instructions-bundle/file?path=AGENTS.md" | jq -r '.content' >"$TMP/agents-md-none.txt"
 grep -q 'Your ask level: \*\*no agents\*\*' "$TMP/agents-md-none.txt" \
   || { echo "the rules block of an agent set to no agents does not say so" >&2; head -12 "$TMP/agents-md-none.txt" >&2; exit 1; }
+# The next plan goes out only once no wake left over from the first task can pick it up.
+wait_idle "$A_ID"
 Q2TASK_ID="$(curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X POST "$BASE_URL/api/companies/$COMPANY_ID/issues" \
   --data '{"title":"smoke: no agents","status":"todo"}' | jq -r '.id')"
 [[ -n "$Q2TASK_ID" && "$Q2TASK_ID" != "null" ]] || { echo "could not create the no-agents task" >&2; exit 1; }
@@ -1204,6 +1231,7 @@ jq -nc --arg t "$Q2TASK_ID" --arg m "$M_ID" --arg o "$OWNER_ID" '{task: $t, mode
   | compose exec -T -u node app sh -c 'cat > /kyoubeai/workspaces/smoke/ask-plan.json'
 curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X PATCH "$BASE_URL/api/issues/$Q2TASK_ID" --data "{\"assigneeAgentId\":\"$A_ID\"}" >/dev/null
 wait_file /kyoubeai/workspaces/smoke/ask-results-single.json 90 >"$TMP/ask-results.json"
+take_back "$Q2TASK_ID"
 check_result '.ask.status == 422 and .ask.code == "kyoube_ask_level_none"' "an agent at no agents could ask its manager"
 
 # Back to its line, and the key leaves the metadata.
