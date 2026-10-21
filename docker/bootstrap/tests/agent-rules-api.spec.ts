@@ -110,6 +110,24 @@ describe("createRulesApi", () => {
     expect(seen[0]).toMatchObject({ url: "http://app:3100/api/companies/c%201/agents", method: "GET" });
   });
 
+  it("keeps a missing metadata field apart from an empty one, so the pass never writes over metadata it was not shown", async () => {
+    const rows = [
+      { id: "a1", name: "Writer", status: "idle" },
+      { id: "a2", name: "Plain", status: "idle", metadata: null },
+    ];
+    const expected = [
+      { id: "a1", name: "Writer", status: "idle", metadata: undefined },
+      { id: "a2", name: "Plain", status: "idle", metadata: null },
+    ];
+    for (const body of [rows, { agents: rows }]) {
+      const { impl } = fakeFetch(() => ({ status: 200, body }));
+      const listed = await api(impl).listAgents("c1");
+      expect(listed).toEqual(expected);
+      expect(listed[0]?.metadata).toBeUndefined();
+      expect(listed[1]?.metadata).toBeNull();
+    }
+  });
+
   it("reads Studio's ask levels with the rules token, strictly", async () => {
     const { impl, seen } = fakeFetch(() => ({ status: 200, body: { levels: { a1: "none", a2: "any" } } }));
     expect(await api(impl).getAskLevels("c1")).toEqual({ a1: "none", a2: "any" });

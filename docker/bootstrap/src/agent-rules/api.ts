@@ -5,7 +5,11 @@ export interface AgentRef {
   id: string;
   name: string;
   status: string;
-  /** The agent's metadata, where the ask level is copied (ask-levels.ts). Null when it has none. */
+  /**
+   * The agent's metadata, where the ask level is copied (ask-levels.ts). Null when it has none (or
+   * not an object); undefined when the core's list left the field out, which the pass must never
+   * read as "no metadata": writing the level alone would wipe every other key.
+   */
   metadata?: Record<string, unknown> | null;
 }
 
@@ -158,7 +162,11 @@ export function createRulesApi(opts: CoreClientOptions, rulesToken: string): Rul
           id: text(row.id),
           name: text(row.name),
           status: text(row.status),
-          metadata: typeof metadata === "object" && metadata !== null && !Array.isArray(metadata) ? (metadata as Record<string, unknown>) : null,
+          metadata: !Object.hasOwn(row, "metadata")
+            ? undefined
+            : typeof metadata === "object" && metadata !== null && !Array.isArray(metadata)
+              ? (metadata as Record<string, unknown>)
+              : null,
         };
       });
     },

@@ -161,13 +161,29 @@ async function groupsStep(deps: PassDeps, companyId: string, entry: CompanyRepor
   }
 }
 
+/** Records one metadata write of the ask-level step, or its failure; true when it was written. */
+async function writeAskLevel(deps: PassDeps, agent: AgentRef & { metadata: Record<string, unknown> | null }, level: AskLevel, entry: CompanyReport): Promise<boolean> {
+  try {
+    await deps.api.updateAgentMetadata(agent.id, withAskLevel(agent.metadata, level));
+    entry.askLevelsUpdated = [...(entry.askLevelsUpdated ?? []), agent.name];
+    entry.writes += 1;
+    return true;
+  } catch (error) {
+    entry.failures.push({ step: "asklevels", agent: agent.name, error: describeError(error, entry.name) });
+    return false;
+  }
+}
+
 /**
  * Ask levels (docs/agent-rules.md, "Agent questions"): read each agent's level from kyoube.studio
  * and copy it into the agent's metadata, where the core patch reads it. Returns the level each
  * agent now has, for its rules block. A failed read skips the copy and is never applied as "no
  * levels": every agent keeps the level its metadata already holds. While Studio is not installed
- * or not started, the step is skipped quietly. Built-in agents, terminated agents and agents
- * waiting for approval are left alone.
+ * or not started, the step is skipped quietly. Terminated agents and agents waiting for approval
+ * are left alone. A built-in agent stays at its line whatever Studio says: a level in its metadata
+ * (which it can edit itself) is removed, with the core's marker kept as it is, and the core patch
+ * holds it at its line too. An agent listed without a metadata field is never written: writing
+ * the level alone would wipe the metadata the list left out.
  */
 async function askLevelsStep(deps: PassDeps, companyId: string, entry: CompanyReport): Promise<Map<string, AskLevel>> {
   const now = new Map<string, AskLevel>();
@@ -185,25 +201,29 @@ async function askLevelsStep(deps: PassDeps, companyId: string, entry: CompanyRe
     if (!pluginNotStarted(error)) entry.failures.push({ step: "asklevels", error: describeError(error, entry.name) });
   }
   for (const agent of agents) {
-    if (agent.status === "terminated" || agent.status === "pending_approval" || isBuiltInAgent(agent.metadata)) continue;
-    const current = askLevelOf(agent.metadata);
+    if (agent.status === "terminated" || agent.status === "pending_approval") continue;
+    const metadata = agent.metadata;
+    if (metadata === undefined) continue;
+    if (isBuiltInAgent(metadata)) {
+      now.set(agent.id, "line");
+      if (hasAskLevel(metadata)) await writeAskLevel(deps, { ...agent, metadata }, "line", entry);
+      continue;
+    }
+    const current = askLevelOf(metadata);
     now.set(agent.id, current);
     if (!levels) continue;
     const desired: AskLevel = levels[agent.id] ?? "line";
     if (desired === current) continue;
-    try {
-      await deps.api.updateAgentMetadata(agent.id, withAskLevel(agent.metadata, desired));
-      now.set(agent.id, desired);
-      entry.askLevelsUpdated = [...(entry.askLevelsUpdated ?? []), agent.name];
-      entry.writes += 1;
-    } catch (error) {
-      entry.failures.push({ step: "asklevels", agent: agent.name, error: describeError(error, entry.name) });
-    }
+    if (await writeAskLevel(deps, { ...agent, metadata }, desired, entry)) now.set(agent.id, desired);
   }
   return now;
 }
 
-/** `kyoube agent-rules off`: the ask-level key comes out of every agent's metadata that has it; every other key stays. */
+/**
+ * `kyoube agent-rules off`: the ask-level key comes out of every agent's metadata that has it,
+ * built-in agents included; every other key stays. An agent listed without a metadata field is
+ * never written.
+ */
 async function clearAskLevels(api: RulesApi, companyId: string, entry: CompanyReport): Promise<void> {
   let agents: AgentRef[];
   try {
@@ -213,7 +233,7 @@ async function clearAskLevels(api: RulesApi, companyId: string, entry: CompanyRe
     return;
   }
   for (const agent of agents) {
-    if (agent.status === "terminated" || agent.status === "pending_approval" || isBuiltInAgent(agent.metadata) || !hasAskLevel(agent.metadata)) continue;
+    if (agent.status === "terminated" || agent.status === "pending_approval" || agent.metadata === undefined || !hasAskLevel(agent.metadata)) continue;
     try {
       await api.updateAgentMetadata(agent.id, withAskLevel(agent.metadata, "line"));
       entry.writes += 1;
