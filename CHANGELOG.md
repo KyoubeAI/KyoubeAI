@@ -4,6 +4,22 @@ All notable changes to KyoubeAI are recorded here, in terms of what changed for 
 building on it. The format is loosely [Keep a Changelog](https://keepachangelog.com/); versioning is
 [SemVer](https://semver.org/).
 
+## 1.12.1 - 2026-10-22
+
+### Fixed
+
+- **The board key no longer runs out.** The core gives a board key from `kyoube setup` 30 days, and
+  nothing renewed it. Once it expired, plugin updates, the agent working rules and user groups
+  stopped, while the app kept running and looked healthy. The agent rules loop now renews the
+  stored key a week before it expires. It mints a new key for the same person, checks it and stores
+  it, revokes the old one an hour later, and retries hourly if something fails. A key that has already expired still
+  needs `kyoube setup`, and a key in `KYOUBE_BOARD_API_KEY` is still yours to replace
+  ([docs/operations.md](docs/operations.md#the-board-key-expires)).
+- `kyoube doctor`'s `board key` line shows when the key expires. It warns when renewal is overdue
+  and fails when the core no longer takes the key, with the fix.
+- The board key file is written whole (a temporary file, synced and renamed into place) and is always
+  mode `600`.
+
 ## 1.12.0 - 2026-10-21
 
 ### Added
