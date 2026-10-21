@@ -13,7 +13,9 @@
  * copies there from Studio every minute: "none", "any", or anything else
  * (missing included) as "line", meaning the managers above the agent and the
  * agents below it. docker/bootstrap/src/agent-rules/ask-levels.ts reads the same
- * key the same way.
+ * key the same way. A built-in agent (the core's own bundled agents) is always at
+ * "line": the loop leaves its level at the default, and an agent can edit its own
+ * metadata, so a level found there is never trusted.
  */
 
 export const ASK_LEVEL_KEY = "kyoubeAskLevel";
@@ -33,6 +35,16 @@ export const MESSAGES = {
 export function askLevelOf(metadata) {
   const value = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata[ASK_LEVEL_KEY] : undefined;
   return value === "none" || value === "any" ? value : "line";
+}
+
+function plain(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+/** Whether the core's metadata marks an agent as one of its bundled agents (isBuiltInAgent in ask-levels.ts, the same rule). */
+export function isBuiltInAgent(metadata) {
+  const marker = plain(plain(metadata)?.paperclipBuiltInAgent);
+  return marker !== null && typeof marker.key === "string";
 }
 
 /**
@@ -92,7 +104,8 @@ function outsideLineMessage(agents, addresseeId, line) {
  */
 export function decideAskLevel({ askerId, addresseeId, agents, questions, idempotencyKey }) {
   if (idempotencyKey && questions.some((question) => question.idempotencyKey === idempotencyKey)) return { allow: true };
-  const level = askLevelOf(agents.find((row) => row.id === askerId)?.metadata);
+  const askerMetadata = agents.find((row) => row.id === askerId)?.metadata;
+  const level = isBuiltInAgent(askerMetadata) ? "line" : askLevelOf(askerMetadata);
   if (level === "none") return { allow: false, code: "kyoube_ask_level_none", message: MESSAGES.none };
   if (level === "line") {
     const line = lineOf(agents, askerId);

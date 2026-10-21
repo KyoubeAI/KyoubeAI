@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { applyAskLevel, ASK_LEVEL_KEY, askLevelOf, decideAskLevel, lineOf, MESSAGES, QUESTION_LIMIT } from "../ask-level.mjs";
+import { applyAskLevel, ASK_LEVEL_KEY, askLevelOf, decideAskLevel, isBuiltInAgent, lineOf, MESSAGES, QUESTION_LIMIT } from "../ask-level.mjs";
 
 const agent = (id, name, reportsTo = null, status = "idle", metadata = null) => ({ id, name, reportsTo, status, metadata });
 // top <- m <- r <- r2 ; m <- s (r's peer) ; p alone
@@ -25,6 +25,19 @@ describe("askLevelOf", () => {
     expect(askLevelOf(null)).toBe("line");
     expect(askLevelOf(undefined)).toBe("line");
     expect(askLevelOf(["none"])).toBe("line");
+  });
+});
+
+describe("isBuiltInAgent", () => {
+  it("reads the core's marker the way ask-levels.ts does: a plain object with a string key", () => {
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: "reflection-coach", featureKeys: [] } })).toBe(true);
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: "reflection-coach" } })).toBe(true);
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: { key: 1 } })).toBe(false);
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: ["x"] })).toBe(false);
+    expect(isBuiltInAgent({ paperclipBuiltInAgent: null })).toBe(false);
+    expect(isBuiltInAgent({})).toBe(false);
+    expect(isBuiltInAgent(null)).toBe(false);
+    expect(isBuiltInAgent(undefined)).toBe(false);
   });
 });
 
@@ -89,6 +102,12 @@ describe("decideAskLevel", () => {
   it("allows anyone at any agent, the core still checks the company", () => {
     expect(decide({ agents: withLevel(ORG, "r", "any"), addresseeId: "p" })).toEqual({ allow: true });
     expect(decide({ agents: withLevel(ORG, "r", "any"), addresseeId: "someone-elsewhere" })).toEqual({ allow: true });
+  });
+
+  it("holds a built-in agent at its line whatever level its metadata says", () => {
+    const builtIn = (level) => ORG.map((row) => (row.id === "r" ? { ...row, metadata: { paperclipBuiltInAgent: { key: "reflection-coach" }, [ASK_LEVEL_KEY]: level } } : row));
+    expect(decide({ agents: builtIn("any"), addresseeId: "p" })).toMatchObject({ allow: false, code: "kyoube_ask_outside_line" });
+    expect(decide({ agents: builtIn("none"), addresseeId: "m" })).toEqual({ allow: true });
   });
 
   it("refuses a second question while one is open", () => {
