@@ -3,9 +3,10 @@ import { mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import {
-  LEGACY_ENV_KEYS, agentRulesChecks, agentRulesDoctorChecks, claudeCredentialDetail, exposureWarning, formatCheck, harnessChecks, harnessesInUseCheck, legacyEnvCheck, legacyHomeLinkCheck, licenceCheck, licenceEnforcementCheck, pushTestEndpointCheck, skillsCheck, systemPackagesCheck,
+  LEGACY_ENV_KEYS, agentQuestionsCheck, agentRulesChecks, agentRulesDoctorChecks, claudeCredentialDetail, exposureWarning, formatCheck, harnessChecks, harnessesInUseCheck, legacyEnvCheck, legacyHomeLinkCheck, licenceCheck, licenceEnforcementCheck, pushTestEndpointCheck, questionCountsText, skillsCheck, systemPackagesCheck,
 } from "../src/commands/doctor.js";
 import { licenseStatus } from "@kyoube/license";
+import { summarizeQuestions } from "../src/agent-rules/questions-db.js";
 import { HARNESSES, type HarnessStatus } from "../src/harnesses.js";
 import { EMPTY_STATE, type AgentRulesState } from "../src/agent-rules/state.js";
 import type { PassReport } from "../src/agent-rules/report.js";
@@ -377,5 +378,60 @@ describe("pushTestEndpointCheck", () => {
     expect(await pushTestEndpointCheck("/kyoubeai", {}, exists)).toMatchObject({ name: "push test endpoint", ok: true, warn: true });
     expect(await pushTestEndpointCheck("/kyoubeai", { PAPERCLIP_DEPLOYMENT_EXPOSURE: "public" }, exists)).toMatchObject({ name: "push test endpoint", ok: false });
     expect(seen[0]).toBe("/kyoubeai/kyoube/push-test-endpoint");
+  });
+});
+
+describe("agent questions", () => {
+  const row = (companyName: string, issueId: string, agentId: string, agentName: string | null, recent: number, total = recent) => ({ companyName, issueId, agentId, agentName, recent, total });
+
+  it("sums the last 7 days per company: questions, askers, the top asker and tasks at the limit", () => {
+    expect(summarizeQuestions([
+      row("Acme", "i1", "a1", "Writer", 2, 3),
+      row("Acme", "i2", "a1", "Writer", 1),
+      row("Acme", "i3", "a2", "Coder", 1),
+      row("Beta", "i9", "b1", null, 1),
+    ])).toEqual([
+      { company: "Acme", asked: 4, askers: 2, top: { name: "Writer", asked: 3 }, tasksAtLimit: 1 },
+      { company: "Beta", asked: 1, askers: 1, top: { name: "b1", asked: 1 }, tasksAtLimit: 0 },
+    ]);
+    expect(summarizeQuestions([])).toEqual([]);
+  });
+
+  it("adds every agent's questions on one task toward that task's limit", () => {
+    expect(summarizeQuestions([row("Acme", "i1", "a1", "Writer", 1, 2), row("Acme", "i1", "m1", "Manager", 1, 1)])[0]?.tasksAtLimit).toBe(1);
+  });
+
+  it("says the counts in one line", () => {
+    expect(questionCountsText(null)).toBe("counts unavailable (the core database cannot be read)");
+    expect(questionCountsText([])).toBe("no questions between agents in the last 7 days");
+    expect(questionCountsText([{ company: "Acme", asked: 3, askers: 1, top: { name: "Writer", asked: 3 }, tasksAtLimit: 1 }]))
+      .toBe("last 7 days: Acme 3 questions by 1 agent (most: Writer, 3), 1 task at the limit");
+    expect(questionCountsText([{ company: "Acme", asked: 1, askers: 1, top: { name: "W", asked: 1 }, tasksAtLimit: 0 }, { company: "Beta", asked: 5, askers: 2, top: { name: "X", asked: 4 }, tasksAtLimit: 2 }]))
+      .toBe("last 7 days: Acme 1 question by 1 agent (most: W, 1); Beta 5 questions by 2 agents (most: X, 4), 2 tasks at the limit");
+  });
+
+  const okModule = async () => ({ applyAskLevel: () => {} });
+  const patched = async () => "x /* kyoube-ask-level (docs/agent-rules.md) */ y";
+
+  it("is ok when the patch and the module are both there, with the counts", async () => {
+    expect(await agentQuestionsCheck({ env: {}, summaries: [], importModule: okModule, readText: patched }))
+      .toEqual({ name: "agent questions", ok: true, detail: "active; no questions between agents in the last 7 days" });
+  });
+
+  it("fails when the module does not load or has no applyAskLevel", async () => {
+    const broken = await agentQuestionsCheck({ env: {}, summaries: [], importModule: async () => { throw new Error("ENOENT"); }, readText: patched });
+    expect(broken).toMatchObject({ ok: false });
+    expect(broken.detail).toMatch(/does not load \(ENOENT\): every question from an agent to an agent is refused/);
+    expect(await agentQuestionsCheck({ env: {}, summaries: [], importModule: async () => ({}), readText: patched })).toMatchObject({ ok: false, detail: expect.stringMatching(/has no applyAskLevel/) });
+  });
+
+  it("fails when the core patch did not apply", async () => {
+    expect(await agentQuestionsCheck({ env: {}, summaries: [], importModule: okModule, readText: async () => "plain" }))
+      .toMatchObject({ ok: false, detail: expect.stringMatching(/the core patch did not apply, so agents' questions to agents stay people-only/) });
+  });
+
+  it("says off when the rules are off", async () => {
+    expect(await agentQuestionsCheck({ env: { KYOUBE_AGENT_RULES: "off" }, summaries: null, importModule: okModule, readText: patched }))
+      .toEqual({ name: "agent questions", ok: true, detail: "off (KYOUBE_AGENT_RULES=off): agents' questions follow the core's own rules" });
   });
 });

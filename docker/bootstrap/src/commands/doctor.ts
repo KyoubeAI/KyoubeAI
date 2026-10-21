@@ -8,6 +8,7 @@ import { describeHarness, harnessesForAdapterTypes, missingHarnesses, probeHarne
 import { describeMissing, KYOUBE_SKILLS, missingKyoubeSkills } from "../skills.js";
 import { readState, resolveStatePath, type AgentRulesState } from "../agent-rules/state.js";
 import { failureLines } from "../agent-rules/report.js";
+import { readQuestionSummaries, type QuestionSummary } from "../agent-rules/questions-db.js";
 import { agentRulesEnabled } from "./agent-rules.js";
 import { AUTH_MODULE_PATH, ENFORCE_MODULE_PATH, HOOK_MARKER, licensePaths, licenseStatus, readTrimmed, readUserSnapshot, TRUSTED_KEYS, type LicenseStatus } from "@kyoube/license";
 import { pathToFileURL } from "node:url";
@@ -325,6 +326,67 @@ async function licenceDoctorChecks(env: NodeJS.ProcessEnv, home: string): Promis
   return [enforcement, licenceCheck(status, snapshotAt)];
 }
 
+/** Where the image ships the agent-questions module and the core file the standing patch changes (docker/Dockerfile). */
+export const ASK_LEVEL_MODULE_PATH = "/opt/kyoube/core-patches/ask-level.mjs";
+export const ASK_LEVEL_PATCHED_PATH = "/app/server/dist/services/issue-thread-interactions.js";
+export const ASK_LEVEL_MARKER = "kyoube-ask-level";
+
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+export function questionCountsText(summaries: QuestionSummary[] | null): string {
+  if (summaries === null) return "counts unavailable (the core database cannot be read)";
+  if (summaries.length === 0) return "no questions between agents in the last 7 days";
+  return `last 7 days: ${summaries.map((summary) => {
+    const most = summary.top ? ` (most: ${summary.top.name}, ${summary.top.asked})` : "";
+    const atLimit = summary.tasksAtLimit > 0 ? `, ${plural(summary.tasksAtLimit, "task", "tasks")} at the limit` : "";
+    return `${summary.company} ${plural(summary.asked, "question", "questions")} by ${plural(summary.askers, "agent", "agents")}${most}${atLimit}`;
+  }).join("; ")}`;
+}
+
+/**
+ * Whether agent questions are checked (docs/agent-rules.md): the module loads,
+ * and the served interactions service carries the patch's marker. Either
+ * missing means questions to agents are refused (module) or stay people-only
+ * (patch). With the rules on and both present, it adds how often agents asked.
+ */
+export async function agentQuestionsCheck(opts: {
+  env: NodeJS.ProcessEnv;
+  summaries: QuestionSummary[] | null;
+  modulePath?: string;
+  patchedPath?: string;
+  importModule?: (file: string) => Promise<unknown>;
+  readText?: (file: string) => Promise<string | null>;
+}): Promise<Check> {
+  const name = "agent questions";
+  if (!agentRulesEnabled(opts.env)) return { name, ok: true, detail: "off (KYOUBE_AGENT_RULES=off): agents' questions follow the core's own rules" };
+  const modulePath = opts.modulePath ?? ASK_LEVEL_MODULE_PATH;
+  const patchedPath = opts.patchedPath ?? ASK_LEVEL_PATCHED_PATH;
+  const importModule = opts.importModule ?? ((file: string) => import(pathToFileURL(file).href));
+  const readText = opts.readText ?? readOptional;
+  try {
+    const module = (await importModule(modulePath)) as { applyAskLevel?: unknown };
+    if (typeof module.applyAskLevel !== "function") return { name, ok: false, detail: `${modulePath} has no applyAskLevel; rebuild the image` };
+  } catch (error) {
+    return { name, ok: false, detail: `${modulePath} does not load (${error instanceof Error ? error.message : String(error)}): every question from an agent to an agent is refused until the image is fixed` };
+  }
+  if (!(await readText(patchedPath))?.includes(ASK_LEVEL_MARKER)) {
+    return { name, ok: false, detail: `${patchedPath} has no ask-level check: the core patch did not apply, so agents' questions to agents stay people-only` };
+  }
+  return { name, ok: true, detail: `active; ${questionCountsText(opts.summaries)}` };
+}
+
+async function agentQuestionsDoctorCheck(env: NodeJS.ProcessEnv): Promise<Check> {
+  let summaries: QuestionSummary[] | null = null;
+  if (agentRulesEnabled(env)) {
+    try {
+      summaries = await readQuestionSummaries(coreDatabaseUrl(env));
+    } catch {
+      summaries = null;
+    }
+  }
+  return agentQuestionsCheck({ env, summaries });
+}
+
 export function formatCheck(check: Check): string {
   return `${check.ok ? (check.warn ? "WARN" : "ok  ") : "FAIL"} ${check.name.padEnd(20)} ${check.detail}`;
 }
@@ -427,6 +489,7 @@ export async function runDoctor(env: NodeJS.ProcessEnv): Promise<number> {
     path.posix.join(stateDir, "apt-restore.log"),
   ));
   checks.push(...await agentRulesDoctorChecks(env, resolveStatePath(config.home), Date.now()));
+  checks.push(await agentQuestionsDoctorCheck(env));
   checks.push(...await licenceDoctorChecks(env, config.home));
 
   const claudeFile = path.posix.join(config.home, ".claude", ".credentials.json");
