@@ -356,10 +356,11 @@ running, so the only signs are in `kyoube doctor` and the app log. From 1.12.1, 
 renews the stored key a week before it expires (it does with `KYOUBE_AGENT_RULES=off` too). It asks
 the core for a new key for the same person, checks that the core takes it and stores it in place of
 the old one. It revokes the old key an hour later, so nothing that read it just before is refused
-mid-call. It checks at start and then every hour, and logs `kyoube: board key renewed` or `kyoube:
-could not renew the board key` with the reason, retrying hourly. If `kyoube setup` stores a key
-while a renewal runs, setup's key is kept. The person sees the new key, named `kyoube (renewed)`,
-under **Settings → API keys**.
+mid-call (if the container restarts within that hour, the old key stays live until it expires, at
+most a week later). It checks at start and then every hour, and logs `kyoube: board key renewed` or
+`kyoube: could not renew the board key` with the reason, retrying hourly. If `kyoube setup` stores a
+key while a renewal runs, setup's key is kept. The person sees the new key, named `kyoube
+(renewed)`, under **Settings → API keys**.
 
 `kyoube doctor`'s `board key` line shows the expiry date. It warns when less than six days are left,
 which means renewal is failing. It fails once the core no longer takes the key. A key that has
@@ -370,9 +371,9 @@ A key set in `KYOUBE_BOARD_API_KEY` is never renewed. `kyoube doctor` warns a we
 expires, and you replace it yourself.
 
 The stored key can still lapse while nothing renews it: a stack stopped for longer than the key has
-left, a rollback to a release before 1.12.1, or a restore of a backup older than the last renewal.
-A restored key file can also name a key the restored database never had. In each case the
-`board key` line fails, and `kyoube setup` issues a new key.
+left, a rollback to a release before 1.12.1, or a restore of a backup whose key has since expired
+(one older than about 30 days). In each case the `board key` line fails, and `kyoube setup` issues a
+new key.
 
 ## Rotating the board API key
 

@@ -60,9 +60,9 @@ and upgrades any that differ. You do not run `kyoube setup` again, because the b
 `kyoubeai-home` volume is still valid: from 1.12.1 the agent rules loop renews it before the core's
 30 days run out. An install that ran an earlier release for more than 30 days after `kyoube setup`
 may hold an expired key, and so may a stack stopped for weeks, a rollback to 1.12.0 or earlier, or a
-restore of an old backup. If `kyoube doctor` says `Agent token did not verify`, run `kyoube setup`
-once ([operations.md](operations.md#the-board-key-expires)). Watch the plugins update with
-`docker compose logs -f app`.
+restore of a backup more than about 30 days old. If `kyoube doctor` says `Agent token did not
+verify`, run `kyoube setup` once ([operations.md](operations.md#the-board-key-expires)). Watch the
+plugins update with `docker compose logs -f app`.
 
 Two upgrade paths exist, and which one is taken is decided upstream. A plain version bump goes
 through `POST /api/plugins/:id/upgrade`. A manifest that declares a **new capability** cannot be
