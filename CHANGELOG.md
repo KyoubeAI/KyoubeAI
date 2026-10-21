@@ -6,6 +6,16 @@ building on it. The format is loosely [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
+### Added
+
+- **Agent questions.** A stuck agent may send one question to another agent and keep its task, as a
+  last resort. Each agent's **ask level**, on its profile (**Can ask other agents**), decides whom it
+  may ask: no agents, its line (the managers above it and the agents below it; the default) or any
+  agent. A task may carry one open question to an agent and three in all. The core refuses anything
+  else, and only the agent asked, or a person, can answer. The agent working rules block moves to v2
+  with two new rules, and `kyoube doctor` shows how often agents ask
+  ([docs/agent-rules.md](docs/agent-rules.md#agent-questions)).
+
 ### Changed
 
 - The repository moved to the KyoubeAI organization, <https://github.com/KyoubeAI/KyoubeAI> (the old

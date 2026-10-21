@@ -341,13 +341,17 @@ each plugin's own dependency:
 ### Core patches
 
 The image is the pinned core, rebranded and themed, with a short, bounded list of behaviour fixes.
-There are two standing behaviour changes in the core. The first is the licensing hook
+There are three standing behaviour changes in the core. The first is the licensing hook
 (`docs/licensing.md`): a Better Auth `user.create.before` hook that calls `/opt/kyoube/license/enforce.mjs`.
 The second is for user groups (`docs/groups.md`): `groups-chat-open-assign-check` and
 `groups-chat-message-assign-check` add the core's own assignment check to the Agent Chat routes, for
 protected agents only, because those routes otherwise skip it.
+The third is for agent questions (`docs/agent-rules.md`): `agent-questions-ask-level` calls
+`/opt/kyoube/core-patches/ask-level.mjs` when the core creates a question card an agent addresses to
+another agent, which refuses it or makes it answerable by that agent, depending on the asker's ask
+level.
 `docker/core-patches/patches.mjs` carries fixes to upstream bugs that had to ship here first, and the
-standing entries (licensing, user groups). The temporary fixes are nine in the served UI (the first-run wizard's "Skip
+standing entries (licensing, user groups, agent questions). The temporary fixes are nine in the served UI (the first-run wizard's "Skip
 for now", and the pi and Hermes task-chat transcript fixes), one in the Hermes adapter's server source
 (`hermes-quiet-default`, upstream PR #12016, in `packages/adapters/hermes/src/server/execute.ts`, which
 the server runs through tsx) and one in the compiled server code: `anthropic-signin-setup-token` (the command Claude subscription
@@ -360,7 +364,7 @@ that code or already carries the fix fails the build with the patch's id — the
 entry. The one exception: an entry may also declare the shape of the upstream fix (`upstreamFix`), and
 on a core that carries it exactly once the entry is skipped with `<id>: already fixed upstream` in the
 build log, so the weekly build against the core's pre-releases keeps working; the entry is still deleted
-at the first stable core that carries the fix. The temporary entries are meant to go away, the standing ones (licensing, user groups) stay; `CONTRIBUTING.md` ("Never patch the core") has the rules, and
+at the first stable core that carries the fix. The temporary entries are meant to go away, the standing ones (licensing, user groups, agent questions) stay; `CONTRIBUTING.md` ("Never patch the core") has the rules, and
 `docs/upgrading.md` what to do when the step fails at a bump.
 
 ### Plugin hot reload

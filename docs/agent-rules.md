@@ -7,13 +7,18 @@ KyoubeAI keeps agents working the way a small team expects:
    who started the task asks for that, or the agent's own **Handoffs** section names that agent.
 2. **Approvals go to the person who started the task.** An agent asks that person, never another
    agent.
-3. **Work moves up to a manager agent only with that person's decision.** An agent that cannot do a
+3. **A stuck agent may ask one agent a question, as a last resort.** It sends a question card
+   addressed to that agent and keeps the task. Its **ask level** decides which agents it may ask
+   (see [Agent questions](#agent-questions)). One open question per task, three in all.
+4. **Work moves up to a manager agent only with that person's decision.** An agent that cannot do a
    task hands it back to the person with a decision card: `"Escalate to <manager>"` or `"Keep it with
    <agent>"`.
-4. **An agent with reports may orchestrate.** It does small tasks itself and splits big ones across
+5. **An agent with reports may orchestrate.** It does small tasks itself and splits big ones across
    its own team only.
-5. **No extra tasks.** An agent does not create review, QA, follow-up or "let X know" tasks unless
-   rule 1 or rule 4 allows it.
+6. **No extra tasks.** An agent does not create review, QA, follow-up or "let X know" tasks unless
+   rule 1 or rule 5 allows it.
+7. **An agent that is asked answers in the card.** It does not take, reassign, split or work on the
+   asker's task, and does not pass the question on.
 
 The core (Paperclip) teaches the opposite by default: its bundled skill tells agents never to ask a
 human what an agent could do, and its default instructions say "ask QA, ask your boss". These rules
@@ -23,10 +28,11 @@ override that without changing any core file.
 
 | Part | What it does | Enforced by |
 |---|---|---|
-| Rules block | A marked block at the top of every agent's `AGENTS.md` with the five rules above, plus a `## Handoffs` section. The core puts `AGENTS.md` into the agent's system prompt. | The instructions themselves |
-| People-only cards | The company setting that caps confirmation, question, checkbox, verdict and suggested-task cards at `human_only`. No agent can answer one, not even the one that asked. | The core |
+| Rules block | A marked block at the top of every agent's `AGENTS.md` with the seven rules above, and a line that says which agents that agent may ask, plus a `## Handoffs` section. The core puts `AGENTS.md` into the agent's system prompt. | The instructions themselves |
+| People-only cards | The company setting that caps confirmation, question, checkbox, verdict and suggested-task cards at `human_only`. No agent can answer one, not even the one that asked, except a question to another agent that the asker's ask level allows (see [Agent questions](#agent-questions)). | The core |
 | Protected managers | Every agent with a direct report is protected: another agent can assign it work only with a grant. Each manager holds one grant, for itself and everyone below it. The core's default "assign to anyone" grant is taken from every agent. | The core |
 | Escalation | A decision card only a person can decide; on "Escalate" the core moves the task to the manager. | The core |
+| Agent questions | A standing core patch checks every question card an agent addresses to another agent against the asker's ask level and the per-task limits. A question it lets through can be answered by that agent; anything else stays people-only. | The core (patch) |
 | Top agent may change agents | The one agent that reports to nobody gets `agents:configure` and `skills:create`, so it can change its own and other agents' instructions, skills and settings. Core 2026.1012.0 gives both to every new standard agent itself, with twelve more grants (tools, inbox, audit, task assignment and checkouts); before that it gave them only to a top agent whose role is `ceo`, and KyoubeAI hires the first agent as `general`, so this rule covers agents hired on an earlier core. Given once: switch it off on the agent's profile (**Can change agents**) and it stays off. Nobody gets it while more than one agent reports to nobody; switch it on per agent instead. | The core |
 
 `kyoube agent-rules --watch` starts with the container. It runs as `node`, makes one pass a minute,
@@ -35,11 +41,12 @@ and writes only what differs:
   board key.
 - It asks the `kyoube.agent-rules` plugin to set the managers' protection and grants. The core lets
   only a plugin set an agent's scoped grant.
+- It copies each agent's ask level from Studio into the agent's metadata, where the patch reads it.
 - It records each pass in `/kyoubeai/.kyoube/agent-rules.json`, which `kyoube doctor` reads.
 
-The plugin routes the loop calls (`/reconcile`, `/revert`, and the group routes below) refuse
-anyone but the loop itself or a company owner or admin, because every signed-in person passes the
-core's own "board" check. The loop proves itself with the **rules token**: a random secret in
+The plugin routes the loop calls (`/reconcile`, `/revert`, Studio's `/ask-levels`, and the group
+routes below) refuse anyone but the loop itself or a company owner or admin, because every signed-in
+person passes the core's own "board" check. The loop proves itself with the **rules token**: a random secret in
 `/kyoubeai/kyoube/rules-token` (mode 600), which `kyoube agent-rules` creates on its first run and
 sends in the body of each call. Only the container's own processes can read the file, so a request carrying it came from the
 loop. The board key's user must still be a member (any role) of each company, or the core refuses
@@ -84,11 +91,48 @@ agent's `## Handoffs` section, on its Instructions tab:
 
     QA Agent tests every code change before it is marked done.
 
-KyoubeAI never edits that section. Everything between `<!-- kyoube:working-rules v1 … -->` and
+KyoubeAI never edits that section. Everything between `<!-- kyoube:working-rules v2 … -->` and
 `<!-- /kyoube:working-rules -->` is replaced on the next pass, so put your own instructions outside it.
 
 A handoff up to a manager always goes through the person, even when a Handoffs line names the
 manager: the manager is protected.
+
+## Agent questions
+
+An agent that is stuck on one missing answer may ask another agent instead of stopping for a person.
+It sends an `ask_user_questions` card addressed to that agent (`addresseeAgentId`), keeps the task
+assigned to itself, sets it to `in_review` and ends its run. The core then wakes the agent it asked.
+Only that agent or a person can answer, and the answer wakes the asker. The task never changes hands.
+
+**Ask levels.** Set on the agent's profile (Team → the agent → Permissions → **Can ask other
+agents**), by company owners and admins:
+
+| Level | Who it may ask |
+|---|---|
+| No agents | Nobody. It finishes the task or hands it back to the person (rule 4). |
+| Its line (default) | Every manager above it up to the top agent, and every agent below it. Terminated agents never count. |
+| Any agent | Any agent in the company. |
+
+A change takes effect within a minute: Studio keeps the level, and the loop copies it into the
+agent's metadata, where the core patch reads it.
+
+**Limits.** One open question to an agent per task, and three in all. Answered, expired and
+cancelled questions count too. A question the agent then asks its person replaces its open question
+to an agent, as the core does with any newer question.
+
+**Refusals.** The core refuses a question the level or the limits do not allow, with a message that
+says what to do instead:
+
+| Code | When |
+|---|---|
+| `kyoube_ask_level_none` | The asker's level is No agents. |
+| `kyoube_ask_outside_line` | The agent asked is outside the asker's line. The message lists who it may ask, or says there is nobody. |
+| `kyoube_ask_open_question` | The task already has an open question to an agent. |
+| `kyoube_ask_limit` | The task has used its three questions to agents. |
+| `kyoube_ask_check_failed` | The check itself failed. The question is refused (fail closed). |
+
+Questions to a person, questions with no addressee, and every other card kind stay people-only, as
+before.
 
 ## What the rules cannot stop
 
@@ -98,6 +142,9 @@ manager: the manager is protected.
 - A CEO-role agent may change another agent's permissions, which can give back the broad assign
   grant. An agent may also change its own `reportsTo`. Either change lasts only until the next pass,
   at most a minute, and the task's history shows it.
+- An agent with `agents:configure` (core 2026.1012.0 gives it to every new agent) can change its own
+  `reportsTo`, which changes what "its line" covers, or edit its own ask level in its metadata. The
+  loop puts the level back within a minute, and the task's history shows the change.
 - KyoubeAI owns two settings and puts them back on the next pass if someone changes them in the UI:
   an agent's "can assign tasks" permission, and the resolver policy of the five card kinds. To change
   either for good, turn the rules off.
@@ -109,6 +156,9 @@ manager: the manager is protected.
 - `agent rules` is ok when the last pass was under 5 minutes ago, recorded no failure, and the
   self-test did not fail. The self-test asks the core's own assignment check whether a report can
   assign to its manager (it must not) and whether the manager can assign to the report (it must).
+- `agent questions` is ok when the core patch is in place and its module loads. It also shows how
+  many questions agents asked agents in the last 7 days, per company, who asked most, and how many
+  tasks reached the limit.
 - `agent rules skipped` lists agents left alone on purpose:
   - one whose instructions are not a core-managed bundle
   - one still on the legacy prompt template
@@ -129,13 +179,16 @@ before their own `kyoube doctor`, so they normally never show this.
 
 ## Turn it off
 
-1. Set `KYOUBE_AGENT_RULES=off` in `.env` and `docker compose up -d`.
+1. Set `KYOUBE_AGENT_RULES=off` in `.env` and `docker compose up -d`. With `KYOUBE_AGENT_RULES=off`,
+   the core patch does nothing, and agents' questions follow the core's own rules.
 2. `docker compose exec app kyoube agent-rules off`. This:
    - removes the blocks
    - puts the company setting back as it was
    - lifts the protection and grants KyoubeAI set, the top agent's `agents:configure` and
      `skills:create` included (only the ones it added)
    - gives the default grant back to the agents it was taken from
+   - removes the ask level it copied into each agent's metadata (the levels people set stay in
+     Studio)
 
 It leaves the Handoffs sections, and does not put back the two "ask QA / ask your boss" sentences it
 removed from the core's default text.
@@ -148,9 +201,10 @@ touches group restrictions; delete the groups to lift them ([groups.md](groups.m
 
 ## After a core update
 
-Nothing here patches the core, so a core update cannot quietly undo it. Everything lives in the
-database, and the loop re-applies it every minute. A core that changes one of the calls this relies
-on shows up twice:
+Apart from the standing core patches (the chat check and the agent-questions check), nothing here
+patches the core, so a core update cannot quietly undo it. Everything else lives in the database, and
+the loop re-applies it every minute. A core that changes one of the calls this relies on shows up
+twice:
 - as a failed `agent rules` section in the smoke test, which CI runs against the pinned core and
   weekly against the core's next beta
 - as a failed `agent rules` line in `kyoube doctor` on a running instance, naming the call the core
@@ -163,3 +217,5 @@ The calls this relies on:
 - decisions with an `assign_issue` effect
 - the plugin routes answering 503 while the plugin worker starts, which the loop waits on
   before each pass
+- the core's card creation code, which the agent-questions patch anchors on (the build fails if it
+  moves)

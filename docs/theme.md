@@ -38,8 +38,8 @@ KyoubeAI's own look ("Studio") comes from two parts, and neither edits the core:
   character and live status, its name in the display face, its title, whom it reports to and the
   harness it runs on; an **On duty** switch, **Chat** (opens the task you would talk to it in) and
   **Assign task**. Tabs: **Overview** (what it is working on now with its own latest notes, recent work,
-  tasks done this week, open tasks, spend this month, its skills, a **Can change agents** switch, who it
-  works with) and **Tasks** are
+  tasks done this week, open tasks, spend this month, its skills, a **Can change agents** switch and a
+  **Can ask other agents** control, who it works with) and **Tasks** are
   Studio's; **Instructions**, **Skills** and **Settings** open the core's own agent views, and **Runs**
   opens the core's Audit runs filtered to the agent. Every link to an agent's default view opens the
   profile: the roster, Home, the org chart, the agents list and the task assignee links alike (the
@@ -66,6 +66,7 @@ KyoubeAI's own look ("Studio") comes from two parts, and neither edits the core:
 | Studio plugin | the published plugin SDK (slots, `order`, `useHostNavigation`, `useHostLocation`, `ctx.agents/issues/approvals`) | the SDK pin, the plugin's tests, the smoke, and the weekly upstream-beta run |
 | Agent profile actions | the core's documented board API (`POST /api/agents/{id}/pause`, `/resume`, `POST /api/companies/{id}/issues`), called as the signed-in person | the core's own permission checks; the live check follows an agent through the profile and the core tabs |
 | Can change agents switch | the plugin SDK's `ctx.authorization.grants` (the core's board API lists no agent's grants and replaces them all on write), adding or removing the agent's `agents:configure` grant and keeping every other | the Studio worker lets only a company owner or admin flip it, read from the host's signed-in actor; the core UI has no control for this grant |
+| Can ask other agents control | the Studio worker's `agent.change-ask-level` action, which keeps the level in Studio's plugin state; `kyoube agent-rules` reads it through Studio's `POST /ask-levels` route | the Studio worker lets only a company owner or admin change it, read from the host's signed-in actor; the route admits only the loop's rules token or an owner or admin |
 
 **Shell.** Core 2026.916 made its streamlined shell (a Work section, an Org section and Recent tasks)
 the default, and the skin targets it. An instance can switch back to the legacy shell under

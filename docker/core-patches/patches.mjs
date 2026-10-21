@@ -9,7 +9,7 @@
  * that no longer has the bug — or that changed the code's shape — fails the
  * build with the patch's id, which is the cue to remove (or redo) it.
  *
- * One kind of entry is permanent: a `standing` entry (KyoubeAI licensing)
+ * One kind of entry is permanent: a `standing` entry (KyoubeAI licensing, user groups and agent questions)
  * carries `standing: "<what it is for>"` in place of `upstream` and is never
  * deleted. When a core release moves the code it anchors on, the build fails
  * the same way, and the fix is to redo the entry for that core.

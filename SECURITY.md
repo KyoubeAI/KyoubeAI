@@ -267,8 +267,9 @@ and what data level they hold. Group tables are in `kyoube_meta` (`groups`, `gro
 - **Sync routes: the kyoube CLI, or owners and admins.** A plugin route declared `auth: "board"` is
   not limited to instance admins: the core's board check only asks whether the caller is a signed-in
   person rather than an agent, so every company member passes it. "Board-only" therefore means "no
-  agents". The routes that read or change who may use which agent check more: `kyoube.apps`
-  `POST /groups/agent-access` and `POST /groups/sync-report`, and `kyoube.agent-rules`
+  agents". The routes that read or change who may use which agent, or which agents may ask which,
+  check more: `kyoube.apps` `POST /groups/agent-access` and `POST /groups/sync-report`,
+  `kyoube.studio` `POST /ask-levels`, and `kyoube.agent-rules`
   `POST /groups/apply`, `POST /reconcile` and `POST /revert` answer 403 unless the request body's
   `rulesToken` matches the **rules token**, or the caller's company role, read fresh from the core's
   members list, is owner or admin. The check runs before any work, so a refused request reads, writes
@@ -289,6 +290,15 @@ and what data level they hold. Group tables are in `kyoube_meta` (`groups`, `gro
   Someone who loses the right cannot reopen their chat panel; the conversation stays readable as an
   issue. Viewers cannot assign or chat with any agent on this core, which refuses their every
   non-GET request; agent-rules never gives a viewer an assignment grant.
+- **Agent questions.** A standing core patch (`agent-questions-ask-level`) checks every question card
+  an agent addresses to another agent: the asker's ask level (no agents, its line, any agent) and the
+  per-task limits (one open, three in all). A question it lets through is answerable by the addressed
+  agent or a person; every other card stays people-only. The check reads the level from the agent's
+  metadata, which the loop copies from Studio once a minute. If the check cannot run, the question is
+  refused. **Residuals:** an agent with `agents:configure` (every new agent on core 2026.1012.0) can
+  edit its own metadata or `reportsTo`, widening what it may ask until the next pass, at most a minute
+  for the level. Refused questions are not recorded, so `kyoube doctor` counts only questions that
+  were let through.
 - **Residual: agents are visible.** The core has no per-agent visibility, so people outside a group
   can still see its agents, their tasks and their runs. Groups restrict giving work and chat, not
   seeing.
