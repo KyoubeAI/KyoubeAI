@@ -1,7 +1,7 @@
 import type { GroupsApplyReport, GuardReport } from "./api.js";
 
 export interface Failure {
-  step: "list" | "governance" | "guard" | "rules" | "groups";
+  step: "list" | "governance" | "guard" | "rules" | "groups" | "asklevels";
   agent?: string;
   error: string;
 }
@@ -15,6 +15,8 @@ export interface CompanyReport {
   groups?: GroupsApplyReport | null;
   /** Agents whose AGENTS.md this pass wrote. */
   rulesUpdated: string[];
+  /** Agents whose metadata this pass gave a new ask level. Absent in reports saved before agent questions. */
+  askLevelsUpdated?: string[];
   skipped: Array<{ agent: string; reason: string }>;
   failures: Failure[];
   /** Writes this pass made to the core, for the summary and the smoke's idempotence check. */

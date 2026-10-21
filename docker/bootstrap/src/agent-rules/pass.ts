@@ -1,6 +1,7 @@
 import { CoreApiError, type CompanySummary } from "../core-api.js";
 import type { AgentRef, RulesApi } from "./api.js";
-import { applyRules, removeRules } from "./block.js";
+import { applyRules, removeRules, type RulesEdit } from "./block.js";
+import { askLevelOf, hasAskLevel, isBuiltInAgent, withAskLevel, type AskLevel } from "./ask-levels.js";
 import { planGovernance, revertGovernance } from "./governance.js";
 import type { CompanyReport, Failure, PassReport } from "./report.js";
 import type { AgentRulesState } from "./state.js";
@@ -38,13 +39,13 @@ function isCompanyAccessRefusal(error: unknown): boolean {
   return error instanceof CoreApiError && error.status === 403 && /does not have access to this company/i.test(error.message);
 }
 
-/** The guard and group routes of both plugins refuse 403 without the rules token or an owner or admin caller. */
+/** The guard, group and ask-level routes of the plugins refuse 403 without the rules token or an owner or admin caller. */
 function isRulesTokenRefusal(error: unknown): boolean {
-  return error instanceof CoreApiError && error.status === 403 && /\/api\/plugins\/kyoube\.(agent-rules|apps)\//.test(error.route);
+  return error instanceof CoreApiError && error.status === 403 && /\/api\/plugins\/kyoube\.(agent-rules|apps|studio)\//.test(error.route);
 }
 
 function companyReport(company: CompanySummary): CompanyReport {
-  return { companyId: company.id, name: company.name || company.id, governance: "already", guard: null, groups: null, rulesUpdated: [], skipped: [], failures: [], writes: 0 };
+  return { companyId: company.id, name: company.name || company.id, governance: "already", guard: null, groups: null, rulesUpdated: [], askLevelsUpdated: [], skipped: [], failures: [], writes: 0 };
 }
 
 async function listCompanies(deps: PassDeps, report: PassReport): Promise<CompanySummary[] | null> {
@@ -57,7 +58,7 @@ async function listCompanies(deps: PassDeps, report: PassReport): Promise<Compan
 }
 
 /** Edits one agent's entry file with `edit`, only when the core says KyoubeAI may. */
-async function editAgent(api: RulesApi, agent: AgentRef, entry: CompanyReport, edit: typeof applyRules): Promise<void> {
+async function editAgent(api: RulesApi, agent: AgentRef, entry: CompanyReport, edit: (content: string) => RulesEdit): Promise<void> {
   try {
     const bundle = await api.getInstructionsBundle(agent.id);
     if (bundle.mode !== "managed" || !bundle.editable) {
@@ -90,7 +91,7 @@ async function editAgent(api: RulesApi, agent: AgentRef, entry: CompanyReport, e
   }
 }
 
-async function editAgents(api: RulesApi, companyId: string, entry: CompanyReport, edit: typeof applyRules): Promise<void> {
+async function editAgents(api: RulesApi, companyId: string, entry: CompanyReport, editFor: (agent: AgentRef) => (content: string) => RulesEdit): Promise<void> {
   let agents: AgentRef[];
   try {
     agents = await api.listAgents(companyId);
@@ -102,7 +103,7 @@ async function editAgents(api: RulesApi, companyId: string, entry: CompanyReport
     // The core freezes the config of an agent waiting for approval, and an instructions write
     // updates its adapterConfig. No skipped entry: the plugin's report lists it as waiting.
     if (agent.status === "terminated" || agent.status === "pending_approval") continue;
-    await editAgent(api, agent, entry, edit);
+    await editAgent(api, agent, entry, editFor(agent));
   }
 }
 
@@ -115,10 +116,10 @@ export function syncReportError(error: string | null): string | null {
 }
 
 /**
- * Whether the core answered for kyoube.apps the way it does before that plugin is installed (404
+ * Whether the core answered for a KyoubeAI plugin the way it does before that plugin is installed (404
  * `Plugin not found`) or while its worker starts (503), as `pluginReady` in api.ts reads them.
  */
-function appsPluginMissing(error: unknown): boolean {
+function pluginNotStarted(error: unknown): boolean {
   return error instanceof CoreApiError && (error.status === 503 || (error.status === 404 && error.message === "Plugin not found"));
 }
 
@@ -138,7 +139,7 @@ async function groupsStep(deps: PassDeps, companyId: string, entry: CompanyRepor
     } catch (caught) {
       // kyoube.apps not installed yet, or its worker not started: no groups to read, so nothing to
       // apply, nothing to report and no failure. The next pass reads them.
-      if (appsPluginMissing(caught)) return;
+      if (pluginNotStarted(caught)) return;
       throw caught;
     }
     const groups = await deps.api.applyGroups(companyId, access);
@@ -161,6 +162,68 @@ async function groupsStep(deps: PassDeps, companyId: string, entry: CompanyRepor
 }
 
 /**
+ * Ask levels (docs/agent-rules.md, "Agent questions"): read each agent's level from kyoube.studio
+ * and copy it into the agent's metadata, where the core patch reads it. Returns the level each
+ * agent now has, for its rules block. A failed read skips the copy and is never applied as "no
+ * levels": every agent keeps the level its metadata already holds. While Studio is not installed
+ * or not started, the step is skipped quietly. Built-in agents, terminated agents and agents
+ * waiting for approval are left alone.
+ */
+async function askLevelsStep(deps: PassDeps, companyId: string, entry: CompanyReport): Promise<Map<string, AskLevel>> {
+  const now = new Map<string, AskLevel>();
+  let agents: AgentRef[];
+  try {
+    agents = await deps.api.listAgents(companyId);
+  } catch (error) {
+    entry.failures.push({ step: "asklevels", error: describeError(error, entry.name) });
+    return now;
+  }
+  let levels: Record<string, "none" | "any"> | null = null;
+  try {
+    levels = await deps.api.getAskLevels(companyId);
+  } catch (error) {
+    if (!pluginNotStarted(error)) entry.failures.push({ step: "asklevels", error: describeError(error, entry.name) });
+  }
+  for (const agent of agents) {
+    if (agent.status === "terminated" || agent.status === "pending_approval" || isBuiltInAgent(agent.metadata)) continue;
+    const current = askLevelOf(agent.metadata);
+    now.set(agent.id, current);
+    if (!levels) continue;
+    const desired: AskLevel = levels[agent.id] ?? "line";
+    if (desired === current) continue;
+    try {
+      await deps.api.updateAgentMetadata(agent.id, withAskLevel(agent.metadata, desired));
+      now.set(agent.id, desired);
+      entry.askLevelsUpdated = [...(entry.askLevelsUpdated ?? []), agent.name];
+      entry.writes += 1;
+    } catch (error) {
+      entry.failures.push({ step: "asklevels", agent: agent.name, error: describeError(error, entry.name) });
+    }
+  }
+  return now;
+}
+
+/** `kyoube agent-rules off`: the ask-level key comes out of every agent's metadata that has it; every other key stays. */
+async function clearAskLevels(api: RulesApi, companyId: string, entry: CompanyReport): Promise<void> {
+  let agents: AgentRef[];
+  try {
+    agents = await api.listAgents(companyId);
+  } catch (error) {
+    entry.failures.push({ step: "asklevels", error: describeError(error, entry.name) });
+    return;
+  }
+  for (const agent of agents) {
+    if (agent.status === "terminated" || agent.status === "pending_approval" || isBuiltInAgent(agent.metadata) || !hasAskLevel(agent.metadata)) continue;
+    try {
+      await api.updateAgentMetadata(agent.id, withAskLevel(agent.metadata, "line"));
+      entry.writes += 1;
+    } catch (error) {
+      entry.failures.push({ step: "asklevels", agent: agent.name, error: describeError(error, entry.name) });
+    }
+  }
+}
+
+/**
  * A pass while KYOUBE_AGENT_RULES=off (ruling R15): the group step alone, in every company. Groups
  * are their own feature, so deleting a group still lifts its restrictions with the rules off. No
  * governance, guard or rules block; recorded as `lastGroupsPass`, leaving `lastPass` as it was.
@@ -175,7 +238,7 @@ export async function groupsPass(deps: PassDeps, state: AgentRulesState): Promis
   return { report, state: { ...state, lastGroupsPass: report } };
 }
 
-/** One pass: in every company, G1, then G2 through the plugin, then the rules block. Each step and each agent fails on its own. */
+/** One pass: in every company, G1, then G2 through the plugin, then groups, ask levels and the rules block. Each step and each agent fails on its own. */
 export async function applyPass(deps: PassDeps, state: AgentRulesState): Promise<{ report: PassReport; state: AgentRulesState }> {
   const report: PassReport = { at: deps.now().toISOString(), mode: "apply", companies: [], failures: [] };
   const governancePrevious = { ...state.governancePrevious };
@@ -211,14 +274,15 @@ export async function applyPass(deps: PassDeps, state: AgentRulesState): Promise
     }
 
     await groupsStep(deps, company.id, entry);
-    await editAgents(deps.api, company.id, entry, applyRules);
+    const levels = await askLevelsStep(deps, company.id, entry);
+    await editAgents(deps.api, company.id, entry, (agent) => (content) => applyRules(content, levels.get(agent.id) ?? askLevelOf(agent.metadata)));
     report.companies.push(entry);
   }
 
   return { report, state: { ...state, governancePrevious, lastPass: report } };
 }
 
-/** `kyoube agent-rules off`: G1 back as it was, G2 undone by the plugin, the blocks removed. */
+/** `kyoube agent-rules off`: G1 back as it was, G2 undone by the plugin, the ask levels and the blocks removed. */
 export async function revertPass(deps: PassDeps, state: AgentRulesState): Promise<{ report: PassReport; state: AgentRulesState }> {
   const report: PassReport = { at: deps.now().toISOString(), mode: "revert", companies: [], failures: [] };
   const governancePrevious = { ...state.governancePrevious };
@@ -247,7 +311,8 @@ export async function revertPass(deps: PassDeps, state: AgentRulesState): Promis
       entry.failures.push({ step: "guard", error: describeError(error, entry.name) });
     }
 
-    await editAgents(deps.api, company.id, entry, removeRules);
+    await clearAskLevels(deps.api, company.id, entry);
+    await editAgents(deps.api, company.id, entry, () => removeRules);
     report.companies.push(entry);
   }
 

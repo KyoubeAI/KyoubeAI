@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRef, GuardReport, GuardRevertReport, InstructionsBundle, RulesApi } from "../src/agent-rules/api.js";
-import { GROUP_ROUTES, GUARD_PLUGIN_ROUTES } from "../src/agent-rules/api.js";
-import { RULES_BLOCK } from "../src/agent-rules/block.js";
+import { GROUP_ROUTES, GUARD_PLUGIN_ROUTES, STUDIO_ROUTES } from "../src/agent-rules/api.js";
+import { RULES_BLOCK, rulesBlock } from "../src/agent-rules/block.js";
 import type { Governance } from "../src/agent-rules/governance.js";
 import { applyPass, describeError, groupsPass, revertPass, syncReportError } from "../src/agent-rules/pass.js";
 import { failureLines } from "../src/agent-rules/report.js";
@@ -59,6 +59,20 @@ class FakeApi implements RulesApi {
     return structuredClone(this.access[companyId] ?? []); }
   async applyGroups(companyId: string, agents: Array<{ agentId: string; allowedUserIds: string[] }>) { this.check(`applyGroups:${companyId}`); this.calls.push(`groups ${companyId} ${agents.length}`); return structuredClone(this.groupsReport); }
   async reportGroupSync(companyId: string, report: { syncedAt: string; error: string | null }) { this.syncReports.push({ companyId, ...report }); }
+  levels: Record<string, Record<string, "none" | "any">> = { c1: {} };
+  metadataWrites: Array<{ agentId: string; metadata: Record<string, unknown> }> = [];
+  async getAskLevels(companyId: string) {
+    if (this.failing.has("studio503")) throw new CoreApiError(503, { error: "Plugin worker not running" }, "Plugin worker not running", `POST ${STUDIO_ROUTES.askLevels}`);
+    if (this.failing.has("studio403")) throw new CoreApiError(403, { error: FORBIDDEN }, FORBIDDEN, `POST ${STUDIO_ROUTES.askLevels}`);
+    this.check(`levels:${companyId}`);
+    return structuredClone(this.levels[companyId] ?? {});
+  }
+  async updateAgentMetadata(agentId: string, metadata: Record<string, unknown>) {
+    this.check(`meta:${agentId}`);
+    this.calls.push(`meta ${agentId}`);
+    this.metadataWrites.push({ agentId, metadata: structuredClone(metadata) });
+    for (const list of Object.values(this.agents)) for (const row of list) if (row.id === agentId) row.metadata = structuredClone(metadata);
+  }
 }
 
 const deps = (api: RulesApi) => ({ api, now: () => NOW });
@@ -375,5 +389,102 @@ describe("groupsPass (KYOUBE_AGENT_RULES=off, ruling R15)", () => {
     expect(api.syncReports).toEqual([{ companyId: "c1", syncedAt: NOW.toISOString(), error: null }]);
     expect(state.lastPass).toEqual(before.lastPass);
     expect(state.lastGroupsPass).toBe(report);
+  });
+});
+
+describe("ask levels", () => {
+  it("copies a level into the agent's metadata, then writes the block for that level", async () => {
+    const api = new FakeApi();
+    api.agents.c1 = [{ id: "a1", name: "Writer", status: "idle", metadata: { note: "kept" } }];
+    api.levels.c1 = { a1: "none" };
+    const { report } = await applyPass(deps(api), EMPTY_STATE);
+    expect(api.calls).toEqual(["governance c1", "guard c1", "groups c1 0", "meta a1", "write a1"]);
+    expect(api.metadataWrites).toEqual([{ agentId: "a1", metadata: { note: "kept", kyoubeAskLevel: "none" } }]);
+    expect(api.files.a1?.startsWith(rulesBlock("none"))).toBe(true);
+    expect(report.companies[0]).toMatchObject({ askLevelsUpdated: ["Writer"], failures: [] });
+  });
+
+  it("puts back a level an agent changed itself, and keeps the agent's other metadata keys", async () => {
+    const api = new FakeApi();
+    api.agents.c1 = [{ id: "a1", name: "Writer", status: "idle", metadata: { kyoubeAskLevel: "any", paperclipNote: 1 } }];
+    await applyPass(deps(api), EMPTY_STATE);
+    expect(api.metadataWrites).toEqual([{ agentId: "a1", metadata: { paperclipNote: 1 } }]);
+    expect(api.files.a1?.startsWith(RULES_BLOCK)).toBe(true);
+  });
+
+  it("makes no writes once metadata and blocks agree", async () => {
+    const api = new FakeApi();
+    api.levels.c1 = { a1: "any" };
+    const first = await applyPass(deps(api), EMPTY_STATE);
+    api.calls = [];
+    const second = await applyPass(deps(api), first.state);
+    expect(api.calls).toEqual(["guard c1", "groups c1 0"]);
+    expect(second.report.companies[0]?.writes).toBe(0);
+  });
+
+  it("leaves built-in, terminated and waiting agents alone", async () => {
+    const api = new FakeApi();
+    api.agents.c1 = [
+      { id: "b1", name: "Coach", status: "idle", metadata: { paperclipBuiltInAgent: { key: "reflection-coach" } } },
+      { id: "t1", name: "Gone", status: "terminated", metadata: null },
+      { id: "w1", name: "New", status: "pending_approval", metadata: null },
+    ];
+    api.levels.c1 = { b1: "none", t1: "none", w1: "none" };
+    await applyPass(deps(api), EMPTY_STATE);
+    expect(api.metadataWrites).toEqual([]);
+  });
+
+  it("ignores a level for an agent that is not in the company", async () => {
+    const api = new FakeApi();
+    api.levels.c1 = { elsewhere: "any" };
+    await applyPass(deps(api), EMPTY_STATE);
+    expect(api.metadataWrites).toEqual([]);
+  });
+
+  it("skips the copy and reports it when the levels cannot be read, and the block follows the metadata", async () => {
+    const api = new FakeApi();
+    api.agents.c1 = [{ id: "a1", name: "Writer", status: "idle", metadata: { kyoubeAskLevel: "any" } }];
+    api.failing.add("levels:c1");
+    const { report } = await applyPass(deps(api), EMPTY_STATE);
+    expect(api.metadataWrites).toEqual([]);
+    expect(report.companies[0]?.failures).toEqual([{ step: "asklevels", error: "refused levels:c1" }]);
+    expect(api.files.a1?.startsWith(rulesBlock("any"))).toBe(true);
+  });
+
+  it("names the rules token file when Studio refuses the CLI", async () => {
+    const api = new FakeApi();
+    api.failing.add("studio403");
+    const { report } = await applyPass(deps(api), EMPTY_STATE);
+    expect(report.companies[0]?.failures[0]?.error).toMatch(/kyoube\/rules-token/);
+  });
+
+  it("skips quietly while Studio's worker is not running", async () => {
+    const api = new FakeApi();
+    api.failing.add("studio503");
+    const { report } = await applyPass(deps(api), EMPTY_STATE);
+    expect(report.companies[0]?.failures).toEqual([]);
+    expect(api.metadataWrites).toEqual([]);
+  });
+
+  it("records a failed metadata write, and the block keeps the level the agent still has", async () => {
+    const api = new FakeApi();
+    api.agents.c1 = [{ id: "a1", name: "Writer", status: "idle", metadata: null }];
+    api.levels.c1 = { a1: "none" };
+    api.failing.add("meta:a1");
+    const { report } = await applyPass(deps(api), EMPTY_STATE);
+    expect(report.companies[0]?.failures).toEqual([{ step: "asklevels", agent: "Writer", error: "refused meta:a1" }]);
+    expect(api.files.a1?.startsWith(RULES_BLOCK)).toBe(true);
+  });
+
+  it("off removes the key from every agent that has it, keeping the rest of its metadata", async () => {
+    const api = new FakeApi();
+    api.agents.c1 = [
+      { id: "a1", name: "Writer", status: "idle", metadata: { kyoubeAskLevel: "none", note: "kept" } },
+      { id: "a3", name: "Plain", status: "idle", metadata: { note: "untouched" } },
+    ];
+    api.files = { a1: `${rulesBlock("none")}\n\nYou are an agent.\n`, a3: "You are an agent.\n" };
+    await revertPass(deps(api), EMPTY_STATE);
+    expect(api.metadataWrites).toEqual([{ agentId: "a1", metadata: { note: "kept" } }]);
+    expect(api.files.a1).toBe("You are an agent.\n");
   });
 });

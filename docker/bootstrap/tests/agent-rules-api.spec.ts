@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createRulesApi, GROUP_ROUTES, GUARD_PLUGIN_ROUTES } from "../src/agent-rules/api.js";
+import { createRulesApi, GROUP_ROUTES, GUARD_PLUGIN_ROUTES, STUDIO_ROUTES } from "../src/agent-rules/api.js";
 import { CoreApiError } from "../src/core-api.js";
 
 interface Seen { url: string; method: string; body: unknown }
@@ -96,20 +96,52 @@ describe("createRulesApi", () => {
     expect(await api(impl).pluginReady()).toBe(false);
   });
 
-  it("sends the rules token in the body of all five plugin route calls, and never in a URL", async () => {
-    const { impl, seen } = fakeFetch((req) => ({ status: 200, body: req.url.includes("agent-access") ? { agents: [] } : {} }));
+  it("lists a company's agents with their metadata", async () => {
+    const { impl, seen } = fakeFetch(() => ({ status: 200, body: [
+      { id: "a1", name: "Writer", status: "idle", metadata: { kyoubeAskLevel: "none" }, adapterConfig: {} },
+      { id: "a2", name: "Old", status: "terminated", metadata: null },
+      { id: "a3", name: "Odd", status: "idle", metadata: ["x"] },
+    ] }));
+    expect(await api(impl).listAgents("c 1")).toEqual([
+      { id: "a1", name: "Writer", status: "idle", metadata: { kyoubeAskLevel: "none" } },
+      { id: "a2", name: "Old", status: "terminated", metadata: null },
+      { id: "a3", name: "Odd", status: "idle", metadata: null },
+    ]);
+    expect(seen[0]).toMatchObject({ url: "http://app:3100/api/companies/c%201/agents", method: "GET" });
+  });
+
+  it("reads Studio's ask levels with the rules token, strictly", async () => {
+    const { impl, seen } = fakeFetch(() => ({ status: 200, body: { levels: { a1: "none", a2: "any" } } }));
+    expect(await api(impl).getAskLevels("c1")).toEqual({ a1: "none", a2: "any" });
+    expect(seen[0]).toEqual({ url: `http://app:3100${STUDIO_ROUTES.askLevels}`, method: "POST", body: { companyId: "c1", rulesToken: TOKEN } });
+    for (const body of [{}, { levels: null }, { levels: ["a1"] }, { levels: { a1: "line" } }, { levels: { a1: "everyone" } }]) {
+      const bad = fakeFetch(() => ({ status: 200, body }));
+      await expect(api(bad.impl).getAskLevels("c1")).rejects.toThrow(/unreadable ask-level map/);
+    }
+  });
+
+  it("writes an agent's whole metadata with PATCH", async () => {
+    const { impl, seen } = fakeFetch(() => ({ status: 200, body: {} }));
+    await api(impl).updateAgentMetadata("a 1", { kyoubeAskLevel: "any", note: "kept" });
+    expect(seen[0]).toEqual({ url: "http://app:3100/api/agents/a%201", method: "PATCH", body: { metadata: { kyoubeAskLevel: "any", note: "kept" } } });
+  });
+
+  it("sends the rules token in the body of all six plugin route calls, and never in a URL", async () => {
+    const { impl, seen } = fakeFetch((req) => ({ status: 200, body: req.url.includes("agent-access") ? { agents: [] } : req.url.includes("ask-levels") ? { levels: {} } : {} }));
     const client = api(impl);
     await client.reconcileGuard("c1");
     await client.revertGuard("c1");
     await client.getAgentAccess("c1");
     await client.applyGroups("c1", []);
     await client.reportGroupSync("c1", { syncedAt: "t", error: null });
+    await client.getAskLevels("c1");
     expect(seen.map((req) => [req.method, req.url.replace("http://app:3100", ""), (req.body as { rulesToken?: string }).rulesToken])).toEqual([
       ["POST", GUARD_PLUGIN_ROUTES.reconcile, TOKEN],
       ["POST", GUARD_PLUGIN_ROUTES.revert, TOKEN],
       ["POST", GROUP_ROUTES.access, TOKEN],
       ["POST", GROUP_ROUTES.apply, TOKEN],
       ["POST", GROUP_ROUTES.report, TOKEN],
+      ["POST", STUDIO_ROUTES.askLevels, TOKEN],
     ]);
     expect(seen.some((req) => req.url.includes(TOKEN))).toBe(false);
   });

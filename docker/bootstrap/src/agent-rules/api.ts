@@ -5,6 +5,8 @@ export interface AgentRef {
   id: string;
   name: string;
   status: string;
+  /** The agent's metadata, where the ask level is copied (ask-levels.ts). Null when it has none. */
+  metadata?: Record<string, unknown> | null;
 }
 
 /** `GET /api/agents/:id/instructions-bundle`, reduced to what decides whether KyoubeAI may edit the entry file. */
@@ -61,6 +63,11 @@ export const GROUP_ROUTES = {
   apply: "/api/plugins/kyoube.agent-rules/api/groups/apply",
 } as const;
 
+/** kyoube.studio keeps the ask levels people set on agent profiles (docs/agent-rules.md, "Agent questions"). */
+export const STUDIO_ROUTES = {
+  askLevels: "/api/plugins/kyoube.studio/api/ask-levels",
+} as const;
+
 /** Everything `kyoube agent-rules` asks of the core, all through its REST API with the board key. */
 export interface RulesApi {
   listCompanies(): Promise<CompanySummary[]>;
@@ -75,6 +82,10 @@ export interface RulesApi {
   getAgentAccess(companyId: string): Promise<Array<{ agentId: string; allowedUserIds: string[] }>>;
   applyGroups(companyId: string, agents: Array<{ agentId: string; allowedUserIds: string[] }>): Promise<GroupsApplyReport>;
   reportGroupSync(companyId: string, report: { syncedAt: string; error: string | null }): Promise<void>;
+  /** kyoube.studio's map of agent id to "none" or "any"; an agent not in it is at "its line". Strict: an unreadable map throws. */
+  getAskLevels(companyId: string): Promise<Record<string, "none" | "any">>;
+  /** `PATCH /api/agents/:id` with the whole metadata object, which the core stores as given. */
+  updateAgentMetadata(agentId: string, metadata: Record<string, unknown>): Promise<void>;
   /**
    * False while the core answers the plugin's routes 503, right after a start before its worker
    * runs, or 404 `Plugin not found`, before `ensure-plugins` has installed it (the first start after an update).
@@ -140,7 +151,16 @@ export function createRulesApi(opts: CoreClientOptions, rulesToken: string): Rul
   return {
     listCompanies: () => core.listCompanies(),
     async listAgents(companyId) {
-      return (await core.listAgents(companyId)).map(({ id: agentId, name, status }) => ({ id: agentId, name, status }));
+      const raw = await request<unknown>(`/api/companies/${id(companyId)}/agents`);
+      return records(Array.isArray(raw) ? raw : record(raw).agents).map((row) => {
+        const metadata = row.metadata;
+        return {
+          id: text(row.id),
+          name: text(row.name),
+          status: text(row.status),
+          metadata: typeof metadata === "object" && metadata !== null && !Array.isArray(metadata) ? (metadata as Record<string, unknown>) : null,
+        };
+      });
     },
     async getGovernance(companyId) {
       const company = record(await request<unknown>(`/api/companies/${id(companyId)}`));
@@ -204,6 +224,23 @@ export function createRulesApi(opts: CoreClientOptions, rulesToken: string): Rul
     },
     async reportGroupSync(companyId, report) {
       await request<unknown>(GROUP_ROUTES.report, { method: "POST", body: { companyId, ...report, rulesToken } });
+    },
+    async getAskLevels(companyId) {
+      // Strict, like the agent-access read: an unreadable map applied as "no levels" would put
+      // every agent back at its line.
+      const raw: unknown = await request<unknown>(STUDIO_ROUTES.askLevels, { method: "POST", body: { companyId, rulesToken } });
+      const unreadable = (why: string) => new Error(`kyoube.studio returned an unreadable ask-level map: ${why}`);
+      const levels = record(raw).levels;
+      if (typeof levels !== "object" || levels === null || Array.isArray(levels)) throw unreadable("no levels object");
+      const out: Record<string, "none" | "any"> = {};
+      for (const [agentId, level] of Object.entries(levels as Record<string, unknown>)) {
+        if (level !== "none" && level !== "any") throw unreadable(`${agentId} has level ${JSON.stringify(level)}`);
+        out[agentId] = level;
+      }
+      return out;
+    },
+    async updateAgentMetadata(agentId, metadata) {
+      await request<unknown>(`/api/agents/${id(agentId)}`, { method: "PATCH", body: { metadata } });
     },
     async pluginReady() {
       // The route takes POST only. The core checks the plugin's status and

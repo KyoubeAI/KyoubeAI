@@ -26,6 +26,8 @@ function api(overrides: Partial<RulesApi> = {}): RulesApi & { calls: string[] } 
     getAgentAccess: async () => [],
     applyGroups: async () => ({ protected: [], unprotected: [], people: [], skipped: [], failures: [] }),
     reportGroupSync: async () => {},
+    getAskLevels: async () => ({}),
+    updateAgentMetadata: async () => {},
     pluginReady: async () => true,
     ...overrides,
   };
