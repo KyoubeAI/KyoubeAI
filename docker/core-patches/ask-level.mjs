@@ -111,6 +111,9 @@ export function decideAskLevel({ askerId, addresseeId, agents, questions, idempo
     const line = lineOf(agents, askerId);
     if (!line.has(addresseeId)) return { allow: false, code: "kyoube_ask_outside_line", message: outsideLineMessage(agents, addresseeId, line) };
   }
+  // The limits are read just before the core creates the card, not under a lock, so
+  // questions sent at the same moment can each pass and go past them. The core still
+  // replaces the asker's older open question with the newer one (SECURITY.md, Groups).
   if (questions.some((question) => question.status === "pending")) return { allow: false, code: "kyoube_ask_open_question", message: MESSAGES.open };
   if (questions.length >= QUESTION_LIMIT) return { allow: false, code: "kyoube_ask_limit", message: MESSAGES.limit };
   return { allow: true };

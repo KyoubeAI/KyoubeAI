@@ -45,7 +45,9 @@ KyoubeAI's design rests on three zones of trust, each with a different guarantee
    route fix that 1.1 also carried, `adapter-test-unsaved-harness-switch`, is upstream since core
    2026.1001, upstream commit 9335b7d, and was deleted.) Each patch has to match the core's code exactly once, or
    the image build fails and names the patch, so a core bump cannot carry one over silently. A flaw in
-   one of these patches is in scope here.
+   one of these patches is in scope here. The standing patches for licensing, user groups and agent
+   questions are described in their own sections ([Groups](#groups), and `docs/licensing.md` for the
+   user limit), and a flaw in any of them is in scope too.
 2. **Kyoube plugins — trusted code.** `kyoube.terminal`, `kyoube.apps` and `kyoube.files` are first-party
    code, reviewed and shipped with the image, running as core plugin workers. The apps plugin holds its
    **own** database credential — the `kyoube` Postgres login role (`LOGIN NOSUPERUSER NOCREATEDB CREATEROLE NOINHERIT`,
@@ -295,12 +297,18 @@ and what data level they hold. Group tables are in `kyoube_meta` (`groups`, `gro
   per-task limits (one open, three in all). A question it lets through is answerable by the addressed
   agent or a person; every other card stays people-only. The check reads the level from the agent's
   metadata, which the loop copies from Studio once a minute. If the check cannot run, the question is
-  refused. **Residuals:** an agent with `agents:configure` (every new agent on core 2026.1012.0) can
-  edit its own or another agent's metadata or `reportsTo`. A changed ask level is put back within a
-  minute, so it widens what that agent may ask for at most that long. A changed `reportsTo` stays
-  until someone changes it back, because the loop only reads it: it changes who is in an agent's line,
-  and the task's history shows it. Refused questions are not recorded, so `kyoube doctor` counts only
-  questions that were let through.
+  refused. **Residuals:** any agent the core does not run at low trust can edit its own metadata, and
+  so its own ask level, and its own `reportsTo`: the core lets an agent update its own record
+  (`allow_self` on `agent_config:update`), even with **Can change agents** off. `agents:configure`
+  (every new agent on core 2026.1012.0) extends that to other agents' records. A changed ask level is
+  put back within a minute, built-in agents included, so it widens what that agent may ask for at
+  most that long. A changed `reportsTo` stays until someone changes it back, because the loop only
+  reads it: it changes who is in an agent's line, and it shows in the activity log (`agent.updated`),
+  not in the task's history. The per-task limits are checked just before the core creates the card,
+  not under a lock, so an agent that sends questions at the same moment can go past them; each newer
+  question still replaces the agent's older open one, but the agent the older one asked may already
+  have been woken. Refused questions are not recorded, so `kyoube doctor` counts only questions that
+  were let through.
 - **Residual: agents are visible.** The core has no per-agent visibility, so people outside a group
   can still see its agents, their tasks and their runs. Groups restrict giving work and chat, not
   seeing.

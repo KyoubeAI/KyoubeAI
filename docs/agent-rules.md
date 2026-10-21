@@ -22,8 +22,9 @@ KyoubeAI keeps agents working the way a small team expects:
    take, reassign, split or work on the asker's task, and does not pass the question on.
 
 The core (Paperclip) teaches the opposite by default: its bundled skill tells agents never to ask a
-human what an agent could do, and its default instructions say "ask QA, ask your boss". These rules
-override that without changing any core file.
+human what an agent could do, and its default instructions say "ask QA, ask your boss". The rules
+block overrides that without changing any core file. Agent questions use a standing core patch,
+described below.
 
 ## How it works
 
@@ -141,12 +142,18 @@ before.
 - Agents can still create board approvals (`request_board_approval`). They go to every board member,
   because the core's approvals have no addressee. The rules limit them to spending and hiring.
 - A CEO-role agent may change another agent's permissions, which can give back the broad assign
-  grant. That change lasts only until the next pass, at most a minute, and the task's history shows
-  it.
-- An agent with `agents:configure` (core 2026.1012.0 gives it to every new agent) can change its own
-  `reportsTo`, which changes what "its line" covers. The loop only reads `reportsTo`, so the change
-  stays until someone changes it back, and the task's history shows it. The same agent can edit an
-  ask level in an agent's metadata; the loop puts the level back within a minute.
+  grant. That change lasts only until the next pass, at most a minute, and the activity log shows it
+  (`agent.permissions_updated`).
+- Any agent the core does not run at low trust can change its own metadata, and so its own ask
+  level, and its own `reportsTo`: the core lets an agent edit its own record, even with **Can change
+  agents** off. `agents:configure` (core 2026.1012.0 gives it to every new agent) extends that to
+  other agents' records. The loop puts an ask level back within a minute, built-in agents included.
+  It only reads `reportsTo`, which decides what "its line" covers, so a changed `reportsTo` stays
+  until someone changes it back. The activity log shows the change (`agent.updated`); the task's
+  history does not.
+- The per-task question limits are checked just before the core creates the card, not under a lock,
+  so an agent that sends questions at the same moment can go past them. Each newer question still
+  replaces the agent's older open one, but the agent the older one asked may already have been woken.
 - KyoubeAI owns two settings and puts them back on the next pass if someone changes them in the UI:
   an agent's "can assign tasks" permission, and the resolver policy of the five card kinds. To change
   either for good, turn the rules off.
