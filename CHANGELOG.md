@@ -4,7 +4,7 @@ All notable changes to KyoubeAI are recorded here, in terms of what changed for 
 building on it. The format is loosely [Keep a Changelog](https://keepachangelog.com/); versioning is
 [SemVer](https://semver.org/).
 
-## Unreleased
+## 1.12.0 - 2026-10-21
 
 ### Added
 
@@ -25,9 +25,10 @@ building on it. The format is loosely [Keep a Changelog](https://keepachangelog.
   install whose `update.sh` predates the move can update too
   ([docs/upgrading.md](docs/upgrading.md#the-move-to-the-kyoubeai-organization)).
 - The licensor and copyright holder in `LICENSE` and `NOTICE.md` is Hub360+ Technologies Pte. Ltd.
-- Kyoube Agent Rules (`kyoube.agent-rules`) is 0.3.2. It reads the core's built-in agent marker by the
-  core's own rule, so an agent that writes a marker the core would not read into its own metadata
-  still counts as a top agent. The bootstrap reinstalls it on update.
+- Kyoube Studio (`kyoube.studio`) is 0.5.0, for the ask level on the agent profile, and Kyoube Agent
+  Rules (`kyoube.agent-rules`) is 0.3.2, so the bootstrap reinstalls both on update. No migration.
+- Kyoube Agent Rules 0.3.2 reads the core's built-in agent marker by the core's own rule, so an agent
+  that writes a marker the core would not read into its own metadata still counts as a top agent.
 
 ## 1.11.0 - 2026-10-16
 
