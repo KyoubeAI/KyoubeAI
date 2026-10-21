@@ -224,7 +224,7 @@ export function createStudioPlugin(deps: StudioPluginDeps = {}): PaperclipPlugin
       // Declared `auth: "board"`, which the host enforces before the request reaches this worker;
       // checked again so a mis-declared route could never hand an agent the levels.
       if (input.actor.actorType === "agent") return { status: 403, body: { error: "forbidden: board access required", code: "forbidden" } };
-      if (input.routeKey !== "askLevels.list") return { status: 404, body: { error: `unknown route ${input.routeKey}` } };
+      if (input.routeKey !== "ask-levels.list") return { status: 404, body: { error: `unknown route ${input.routeKey}` } };
       try {
         // "board" admits every signed-in person: the caller must be the kyoube CLI, proven by the
         // rules token in the body, or a company owner or admin, read fresh from the core.

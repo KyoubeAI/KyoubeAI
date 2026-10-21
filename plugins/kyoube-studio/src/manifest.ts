@@ -23,7 +23,7 @@ export const SIDEBAR_ORDER = { build: 10, data: 20, apps: 30, routines: 40, team
  * like the other plugins' routes the loop calls.
  */
 export const API_ROUTES: PluginApiRouteDeclaration[] = [
-  { routeKey: "askLevels.list", method: "POST", path: "/ask-levels", auth: "board", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+  { routeKey: "ask-levels.list", method: "POST", path: "/ask-levels", auth: "board", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
 ];
 
 // `minimumHostVersion` is deliberately absent, for the reason recorded in the

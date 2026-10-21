@@ -157,7 +157,7 @@ describe("an agent's ask level", () => {
   const asUser = (userId: string) => ({ actor: { type: "user" as const, userId }, companyId: COMPANY });
   const stored = (harness: Awaited<ReturnType<typeof setup>>["harness"]) => harness.getState({ scopeKind: "company", scopeId: COMPANY, stateKey: "ask-levels" });
   const request = (body: Record<string, unknown>, actor: Record<string, unknown> = { actorType: "user", actorId: "owner-1", userId: "owner-1" }) => ({
-    routeKey: "askLevels.list", method: "POST", path: "/ask-levels", params: {}, query: {}, headers: {},
+    routeKey: "ask-levels.list", method: "POST", path: "/ask-levels", params: {}, query: {}, headers: {},
     body: { companyId: COMPANY, ...body }, actor, companyId: COMPANY,
   }) as never;
 
@@ -223,7 +223,10 @@ describe("an agent's ask level", () => {
   it("declares the route and the capabilities it uses", () => {
     expect(manifest.capabilities).toEqual(expect.arrayContaining(["api.routes.register", "plugin.state.read", "plugin.state.write"]));
     expect(manifest.apiRoutes?.map((route) => [route.routeKey, route.method, route.path, route.auth, route.companyResolution])).toEqual([
-      ["askLevels.list", "POST", "/ask-levels", "board", { from: "body", key: "companyId" }],
+      ["ask-levels.list", "POST", "/ask-levels", "board", { from: "body", key: "companyId" }],
     ]);
+    // The host refuses to install a plugin whose routeKey breaks its manifest schema
+    // (pluginApiRouteDeclarationSchema in @paperclipai/shared): no capitals.
+    for (const route of manifest.apiRoutes ?? []) expect(route.routeKey).toMatch(/^[a-z0-9][a-z0-9._:-]*$/);
   });
 });
