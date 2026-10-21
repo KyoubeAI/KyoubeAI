@@ -247,6 +247,27 @@ describe("agent profile", () => {
     expect(locked).toContain("Only company owners and admins can change this");
   });
 
+  it("has a Can ask other agents control with three levels, locked for anyone but an owner or admin", () => {
+    installBridge({ agent: { ...profile, access: { canChangeAgents: false, canManage: true, askLevel: "line" } } }, "/BAP/team/ambassador-content-agent");
+    const html = render(AgentProfilePage);
+    expect(html).toContain('role="radiogroup" aria-label="Can ask other agents"');
+    expect(html).toMatch(/role="radio" aria-checked="false"[^>]*>No agents</);
+    expect(html).toMatch(/role="radio" aria-checked="true"[^>]*>Its line</);
+    expect(html).toMatch(/role="radio" aria-checked="false"[^>]*>Any agent</);
+    expect(html).toContain("The task stays with it. Takes effect within a minute.");
+    installBridge({ agent: { ...profile, access: { canChangeAgents: false, canManage: false, askLevel: "none" } } }, "/BAP/team/ambassador-content-agent");
+    const locked = render(AgentProfilePage);
+    expect(locked).toMatch(/role="radio" aria-checked="true"[^>]*disabled=""[^>]*>No agents</);
+    expect(locked).toContain("Only company owners and admins can change this");
+  });
+
+  it("leaves the ask control out for a built-in agent or an older worker", () => {
+    installBridge({ agent: { ...profile, access: { canChangeAgents: false, canManage: true, askLevel: null } } }, "/BAP/team/ambassador-content-agent");
+    expect(render(AgentProfilePage)).not.toContain("Can ask other agents");
+    installBridge({ agent: { ...profile, access: { canChangeAgents: false, canManage: true } } }, "/BAP/team/ambassador-content-agent");
+    expect(render(AgentProfilePage)).not.toContain("Can ask other agents");
+  });
+
   it("shows the task lists on the Tasks tab", () => {
     installBridge({ agent: { ...profile, tasks: { ...profile.tasks, waiting: profile.recent } } }, "/BAP/team/ambassador-content-agent/tasks");
     const html = render(AgentProfilePage);

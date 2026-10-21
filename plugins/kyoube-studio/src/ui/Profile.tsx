@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type { PluginPageProps } from "@paperclipai/plugin-sdk/ui";
 import { useHostContext, useHostLocation, useHostNavigation, usePluginAction, usePluginToast } from "@paperclipai/plugin-sdk/ui";
+import type { AskLevel } from "../ask-levels.js";
 import type { TeamSnapshot } from "../model.js";
 import type { AgentProfile, ProfileResult, ProfileTask } from "../profile.js";
 import { BoardApiError, assignTask, setAgentOnDuty } from "./board-api.js";
@@ -172,6 +173,66 @@ function DutySwitch({ profile, onChanged }: { profile: AgentProfile; onChanged: 
   );
 }
 
+const ASK_OPTIONS: Array<{ level: AskLevel; label: string }> = [
+  { level: "none", label: "No agents" },
+  { level: "line", label: "Its line" },
+  { level: "any", label: "Any agent" },
+];
+
+const ASK_TOASTS: Record<AskLevel, (name: string) => string> = {
+  none: (name) => `${name} can no longer ask other agents`,
+  line: (name) => `${name} can now ask its line`,
+  any: (name) => `${name} can now ask any agent`,
+};
+
+/**
+ * Which agents this agent may send a question card to when it is stuck
+ * (docs/agent-rules.md, "Agent questions"). The task stays with it; the core
+ * refuses a question to anyone else. "Its line" is the managers above it and
+ * the agents below it.
+ */
+function AskLevelControl({ profile, access, onChanged }: { profile: AgentProfile; access: NonNullable<AgentProfile["access"]>; onChanged: () => void }) {
+  const toast = usePluginToast();
+  const change = usePluginAction("agent.change-ask-level");
+  const [busy, setBusy] = useState(false);
+  // As on the duty switch: what the server just confirmed, until the next read agrees.
+  const [confirmed, setConfirmed] = useState<AskLevel | null>(null);
+  const actual = access.askLevel ?? "line";
+  const current = confirmed ?? actual;
+  const locked = profile.agent.status === "pending_approval" || profile.agent.status === "terminated";
+  useEffect(() => {
+    if (confirmed === null) return;
+    if (confirmed === actual) { setConfirmed(null); return; }
+    const timer = setTimeout(() => setConfirmed(null), 20_000);
+    return () => clearTimeout(timer);
+  }, [confirmed, actual]);
+  const choose = async (level: AskLevel) => {
+    if (level === current) return;
+    setBusy(true);
+    try {
+      await change({ agentId: profile.agent.id, level });
+      setConfirmed(level);
+      toast({ title: ASK_TOASTS[level](profile.agent.name), tone: "success" });
+      onChanged();
+    } catch (caught) {
+      toast({ title: "Could not change which agents it may ask", body: caught instanceof Error ? caught.message : undefined, tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const why = !access.canManage ? "Only company owners and admins can change this" : locked ? "Available once the agent is approved" : undefined;
+  return (
+    <div className="ks-perm ks-perm-wide">
+      <span className="ks-text"><b>Can ask other agents</b><span>Lets this agent send another agent a question when it is stuck. The task stays with it. Takes effect within a minute.</span></span>
+      <div className="ks-seg" role="radiogroup" aria-label="Can ask other agents" title={why}>
+        {ASK_OPTIONS.map((option) => (
+          <button key={option.level} type="button" role="radio" aria-checked={current === option.level} disabled={busy || locked || !access.canManage} onClick={() => void choose(option.level)}>{option.label}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /**
  * agents:configure, which lets an agent change its own and other agents'
  * instructions, skills and settings. The core UI has no control for it.
@@ -212,6 +273,7 @@ function ChangeAccess({ profile, access, onChanged }: { profile: AgentProfile; a
         <span className="ks-text"><b>Can change agents</b><span>Edit its own and other agents’ instructions, skills and settings.</span></span>
         <button type="button" role="switch" aria-checked={on} aria-label="Can change agents" className="ks-switch" disabled={busy || locked || !access.canManage} onClick={flip} title={why}><i aria-hidden="true" /></button>
       </div>
+      {access.askLevel != null ? <AskLevelControl profile={profile} access={access} onChanged={onChanged} /> : null}
     </section>
   );
 }
