@@ -123,7 +123,7 @@ ENV PATH=/kyoubeai/.local/bin:${PATH} \
 # earlier release), a failure says so before naming the patch.
 # ---------------------------------------------------------------------------
 ARG KYOUBE_CORE_VERSION
-COPY docker/core-patches/apply.mjs docker/core-patches/lib.mjs docker/core-patches/patches.mjs /opt/kyoube/core-patches/
+COPY docker/core-patches/apply.mjs docker/core-patches/lib.mjs docker/core-patches/patches.mjs docker/core-patches/ask-level.mjs /opt/kyoube/core-patches/
 RUN gosu node node /opt/kyoube/core-patches/apply.mjs --root /app --report --core-version "${KYOUBE_CORE_VERSION}"
 # The licensing hook (a standing core patch above) imports Better Auth's APIError.
 # Check the hook marker is in the served auth module, that the module has exactly
@@ -134,6 +134,15 @@ RUN grep -q 'kyoube-license-seat-limit' /app/server/dist/auth/better-auth.js \
  && test "$(grep -c 'databaseHooks' /app/server/dist/auth/better-auth.js)" -eq 1 \
  && cd /app/server && node --check dist/auth/better-auth.js \
  && cd /app/server && gosu node node --input-type=module -e 'const { APIError } = await import("better-auth/api"); if (new APIError("BAD_REQUEST", { code: "X", message: "x" }).statusCode !== 400) process.exit(1)'
+
+# The agent-questions check (a standing core patch above) imports
+# /opt/kyoube/core-patches/ask-level.mjs. Check the marker is in the served
+# interactions service, that the service still parses, and that the module
+# loads for the runtime user and exports applyAskLevel. Without it every
+# question from an agent to an agent is refused (kyoube_ask_check_failed).
+RUN grep -q 'kyoube-ask-level' /app/server/dist/services/issue-thread-interactions.js \
+ && cd /app/server && node --check dist/services/issue-thread-interactions.js \
+ && gosu node node --input-type=module -e 'const m = await import("/opt/kyoube/core-patches/ask-level.mjs"); if (typeof m.applyAskLevel !== "function") process.exit(1); console.log("ask-level ok")'
 
 # ---------------------------------------------------------------------------
 # KyoubeAI theme ("Studio"): brand tokens, a skin aimed only at stable hooks

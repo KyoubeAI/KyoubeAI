@@ -103,7 +103,7 @@ The workspace is the private root and these build-time or deployable members:
 | `docker/bootstrap/` | `@kyoube/bootstrap` | The `kyoube` CLI (`setup`, `ensure-plugins`, `agent-rules`, `license`, `users`, `doctor`, `harness`, `connect`). |
 | `docker/system/` | *(not a package)* | What the image adds for the Terminal: passwordless `sudo`, the apt hook that keeps installed system packages (`apt-record`, `apt-restore`), `/etc/profile.d` and npm's prefix. |
 | `docker/rebrand/` | `@kyoube/rebrand` | The build-time brand transform: names, logo and artwork (see `docs/branding.md`). |
-| `docker/core-patches/` | `@kyoube/core-patches` | Build-time fixes to upstream bugs, held only until the upstream fix ships, plus the standing licensing and user-groups entries (see "Never patch the core"). |
+| `docker/core-patches/` | `@kyoube/core-patches` | Build-time fixes to upstream bugs, held only until the upstream fix ships, plus the standing licensing, user-groups and agent-questions entries (see "Never patch the core"). |
 | `docker/theme/` | `@kyoube/theme` | The build-time Studio theme: brand tokens, a gated skin and display-text renames (see `docs/theme.md`). |
 | `plugins/kyoube-terminal/` | `@kyoube/plugin-terminal` | The browser terminal plugin. |
 | `plugins/kyoube-apps/` | `@kyoube/plugin-apps` | The organisation database and Apps plugin (one worker, two modules). |
@@ -137,7 +137,7 @@ doesn't expose), the answer is never to vendor or patch upstream code — propos
 plugin. `docs/architecture.md`'s "Isolation from upstream" material and `docs/upgrading.md` explain why
 this matters: it is what makes a core version bump a one-line change instead of a rebase. There are
 two standing exceptions that change presentation only, one standing exception that changes behaviour
-(licensing and user groups, below), and one temporary list that changes behaviour; all four are build-time transforms re-applied to the
+(licensing, user groups and agent questions, below), and one temporary list that changes behaviour; all four are build-time transforms re-applied to the
 pristine core on every build, and all four fail the build when upstream moves what they rely on.
 The two presentation exceptions:
 
@@ -151,7 +151,7 @@ The two presentation exceptions:
   the stock layout. It may not change behaviour: anything that needs data or logic goes in
   `plugins/kyoube-studio`, on the public SDK. `docs/theme.md` has the details.
 
-The standing behaviour exception has two parts. The first is licensing. Two entries in `docker/core-patches/patches.mjs`
+The standing behaviour exception has three parts. The first is licensing. Two entries in `docker/core-patches/patches.mjs`
 marked `standing` register a Better Auth `user.create.before` hook in `server/dist/auth/better-auth.js`.
 The hook only calls KyoubeAI code (`packages/license`, shipped as `/opt/kyoube/license/enforce.mjs`),
 which enforces the user limit in `LICENSE` (`docs/licensing.md`). When a core release moves the code
@@ -168,8 +168,17 @@ patch because the core offers no hook there. It calls only the core's own functi
 KyoubeAI logic. The same rule applies: when a core release moves an anchor, the build fails naming
 the entry, and the fix is to redo it for that core, never to delete it.
 
+The third is agent questions (`docs/agent-rules.md`). One `standing` entry, `agent-questions-ask-level`,
+adds one line to the core's card creation in `server/dist/services/issue-thread-interactions.js`. For
+an agent's question addressed to another agent, the line calls KyoubeAI code (`docker/core-patches/ask-level.mjs`,
+shipped as `/opt/kyoube/core-patches/ask-level.mjs`), which refuses the question or makes it answerable
+by that agent, depending on the asker's ask level. It runs after the core applies the company's
+people-only cap, so without the patch every such card stays people-only. The same rule applies: when a
+core release moves the anchor, the build fails naming the entry, and the fix is to redo it for that
+core, never to delete it.
+
 The one narrow, temporary way to change behaviour is `docker/core-patches/patches.mjs`, a list whose
-temporary entries are meant to go away; only the standing licensing and user-groups entries stay. The temporary
+temporary entries are meant to go away; only the standing licensing, user-groups and agent-questions entries stay. The temporary
 entries are fixes in the served UI and in the compiled server (`server/dist`), for example the command
 the Claude subscription sign-in presents and the agent Test route on an unsaved harness switch. A
 temporary entry is a fix to an upstream bug that had to ship here first, applied to the

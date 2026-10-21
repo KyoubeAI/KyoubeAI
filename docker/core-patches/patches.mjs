@@ -44,6 +44,8 @@ export const CORE_VERSION = "2026.1012.0";
  */
 export const SKIP_HARNESS_LABEL = "Skip for now and connect the harness later from the Terminal page";
 
+import { MESSAGES as ASK_MESSAGES } from "./ask-level.mjs";
+
 export const PATCHES = [
   {
     id: "pi-transcript-non-assistant-messages",
@@ -301,6 +303,38 @@ export const PATCHES = [
     pattern: /(\n( *)throw forbidden\("Only the conversation owner can send messages or start a new session"\);)(?!\n *\/\* kyoube-groups-chat)/g,
     replacement:
       '$1\n$2/* kyoube-groups-chat (docs/groups.md) */ { const kyoubeChatAgent = await agentsSvc.getById(issue.conversationAgentId); if (kyoubeChatAgent?.permissions?.authorizationPolicy?.assignmentPolicy?.mode === "protected") await assertCanAssignTasks(req, issue.companyId, { assigneeAgentId: issue.conversationAgentId }); }',
+    expect: 1,
+  },
+  // ── Agent questions: who an agent may ask (standing: never deleted) ──
+  // docs/agent-rules.md, "Agent questions". The core lets an agent address an
+  // ask_user_questions card to any agent in its company, and the working rules'
+  // people-only cap makes every such card unanswerable by agents. This entry
+  // calls KyoubeAI code (ask-level.mjs, shipped as
+  // /opt/kyoube/core-patches/ask-level.mjs) for that one case, after the core
+  // applies the company cap and before it builds the card: the module refuses
+  // the card (422 with a code) or makes it answerable by the addressed agent.
+  // A missing patch therefore leaves every card people-only. A module that
+  // can't load refuses the question (fail closed). With KYOUBE_AGENT_RULES=off
+  // the module is never loaded. When the anchor stops matching, redo the entry
+  // for the new core.
+  {
+    id: "agent-questions-ask-level",
+    title: "agent questions: an agent may ask only the agents its ask level allows",
+    standing: "KyoubeAI agent working rules: agent questions",
+    files: ["server/dist/services/issue-thread-interactions.js"],
+    // `const normalizedData = {` followed by `...data,` and `resolverPolicy: policy.requestedResolverPolicy,`
+    // occurs once in issue-thread-interactions.js (2026.1012.0), in create(), right after
+    // `const policy = resolveInteractionPolicy({...});`. Once patched, `});` is no longer followed by
+    // `const normalizedData`, so a second apply matches nothing.
+    pattern: /(\n( *)\}\);)(\n *const normalizedData = \{\n *\.\.\.data,\n *resolverPolicy: policy\.requestedResolverPolicy,)/g,
+    replacement:
+      "$1\n$2/* kyoube-ask-level (docs/agent-rules.md) */ " +
+      'if (actor?.agentId && data.kind === "ask_user_questions" && data.addresseeAgentId && String(process.env.KYOUBE_AGENT_RULES ?? "on").trim().toLowerCase() !== "off") ' +
+      'await import("/opt/kyoube/core-patches/ask-level.mjs").then(' +
+      "(kyoubeAskLevel) => kyoubeAskLevel.applyAskLevel({ db, tables: { agents, issueThreadInteractions }, ops: { and, eq, isNotNull }, issue, actor, data, policy, unprocessable }), " +
+      '(error) => { console.error("[kyoube] ask-level check unavailable", error); ' +
+      `throw unprocessable(${JSON.stringify(ASK_MESSAGES.checkFailed)}, { code: "kyoube_ask_check_failed" }); });` +
+      "$3",
     expect: 1,
   },
 ];

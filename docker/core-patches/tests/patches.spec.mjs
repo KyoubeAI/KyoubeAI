@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MESSAGES as ASK_MESSAGES } from "../ask-level.mjs";
 import { applyPatches, applyToText, countMatches, coreVersionHint, expandGlob } from "../lib.mjs";
 import { CORE_VERSION, PATCHES, SKIP_HARNESS_LABEL } from "../patches.mjs";
 
@@ -615,6 +616,7 @@ async function writeFullCore(root) {
   await writeFile(path.join(root, "ui/dist/assets/index-5zyW-AFc.js"), FULL_BUNDLE_2026_916_1);
   await writeFile(path.join(root, "server/dist/services/local-ai-login.js"), SIGNIN_COMMAND_2026_916_1);
   await writeFile(path.join(root, "server/dist/services/local-ai-credentials.js"), CLAUDE_VERIFY_2026_916_1);
+  await writeFile(path.join(root, "server/dist/services/issue-thread-interactions.js"), INTERACTION_CREATE_2026_1012_0);
   await mkdir(path.join(root, "server", "dist", "auth"), { recursive: true });
   await writeFile(path.join(root, "server/dist/auth/better-auth.js"), BETTER_AUTH_2026_916_1);
   await mkdir(path.join(root, "server", "dist", "routes"), { recursive: true });
@@ -983,3 +985,134 @@ const CHAT_MESSAGE_2026_1005_0 =
   "            if (req.actor.userId !== issue.conversationUserId)\n" +
   "                throw forbidden(\"Only the conversation owner can send messages or start a new session\");\n" +
   "            if (!req.body.clientRequestId)\n";
+
+// Excerpt of core 2026.1012.0's server/dist/services/issue-thread-interactions.js,
+// copied verbatim: create() applies the company cap, then builds the card.
+const INTERACTION_CREATE_2026_1012_0 =
+  "            const policy = resolveInteractionPolicy({\n" +
+  "                kind: data.kind,\n" +
+  "                requested: data.resolverPolicy,\n" +
+  "                governance,\n" +
+  "                hasToolAction: data.kind === \"request_confirmation\" &&\n" +
+  "                    data.payload.toolAction !== undefined,\n" +
+  "                hasSecretProposal: data.kind === \"request_confirmation\" &&\n" +
+  "                    data.payload.secretProposal !== undefined,\n" +
+  "            });\n" +
+  "            const normalizedData = {\n" +
+  "                ...data,\n" +
+  "                resolverPolicy: policy.requestedResolverPolicy,\n" +
+  "            };\n";
+
+const askLevelPatch = patch("agent-questions-ask-level");
+const ASK_LEVEL_MODULE = path.join(HERE, "..", "ask-level.mjs");
+
+/**
+ * Runs the patched excerpt as the core would: the core's db, tables, drizzle
+ * operators and unprocessable stood in for, the cap already applied
+ * (human_only), and the module path pointed at the real ask-level.mjs (or at
+ * `modulePath`). Returns the policy and normalizedData the core would store.
+ */
+async function runPatchedCreate({ actor = { agentId: "r" }, data = { kind: "ask_user_questions", addresseeAgentId: "m", payload: {} }, env, modulePath = ASK_LEVEL_MODULE } = {}) {
+  const patched = applyToText(INTERACTION_CREATE_2026_1012_0, askLevelPatch).text.replace("/opt/kyoube/core-patches/ask-level.mjs", pathToFileURL(modulePath).href);
+  const agents = { name: "agents" };
+  const issueThreadInteractions = { name: "cards" };
+  const rows = { agents: [
+    { id: "m", name: "Manager", reportsTo: null, status: "idle", metadata: null },
+    { id: "r", name: "Report", reportsTo: "m", status: "idle", metadata: null },
+    { id: "p", name: "Peer", reportsTo: null, status: "idle", metadata: null },
+  ], cards: [] };
+  const db = { select: () => ({ from: (table) => ({ where: async () => rows[table.name] }) }) };
+  const unprocessable = (message, details) => Object.assign(new Error(message), { status: 422, details });
+  const resolveInteractionPolicy = () => ({ requestedResolverPolicy: "human_only", effectiveResolverPolicy: "human_only", resolverPolicyProvenance: "inherited", effectiveResolverPolicySource: "company_cap" });
+  const previous = process.env.KYOUBE_AGENT_RULES;
+  if (env === undefined) delete process.env.KYOUBE_AGENT_RULES;
+  else process.env.KYOUBE_AGENT_RULES = env;
+  try {
+    // As runPatchedHook does: vitest's runner rejects a dynamic import() inside
+    // `new Function`/AsyncFunction (ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING), so
+    // the patched excerpt goes through a real module.
+    const file = path.join(HERE, `.hook-under-test-${process.pid}-${Math.random().toString(36).slice(2)}.mjs`);
+    await writeFile(file, `export default async (db, agents, issueThreadInteractions, and, eq, isNotNull, unprocessable, resolveInteractionPolicy, governance, issue, actor, data) => {\n${patched}\nreturn { policy, normalizedData };\n};\n`);
+    try {
+      const { default: run } = await import(pathToFileURL(file).href);
+      return await run(db, agents, issueThreadInteractions, () => ({}), () => ({}), () => ({}), unprocessable, resolveInteractionPolicy, {}, { id: "i1", companyId: "c1" }, actor, data);
+    } finally {
+      await rm(file, { force: true });
+    }
+  } finally {
+    if (previous === undefined) delete process.env.KYOUBE_AGENT_RULES;
+    else process.env.KYOUBE_AGENT_RULES = previous;
+  }
+}
+
+describe("agent-questions-ask-level", () => {
+  it("is declared as a standing agent-rules patch on the interactions service", () => {
+    expect(askLevelPatch).toBeDefined();
+    expect(askLevelPatch.standing).toMatch(/agent working rules/i);
+    expect(askLevelPatch.upstream).toBeUndefined();
+    expect(askLevelPatch.upstreamFix).toBeUndefined();
+    expect(askLevelPatch.expect).toBe(1);
+    expect(askLevelPatch.pattern.flags).toContain("g");
+    expect(askLevelPatch.files).toEqual(["server/dist/services/issue-thread-interactions.js"]);
+  });
+
+  it("inserts the check once, after the cap is applied and before the card is built", () => {
+    const { count, text } = applyToText(INTERACTION_CREATE_2026_1012_0, askLevelPatch);
+    expect(count).toBe(1);
+    expect(text.indexOf("const policy = resolveInteractionPolicy({")).toBeLessThan(text.indexOf("kyoube-ask-level"));
+    expect(text.indexOf("kyoube-ask-level")).toBeLessThan(text.indexOf("const normalizedData = {"));
+    expect(text).toContain('import("/opt/kyoube/core-patches/ask-level.mjs")');
+    expect(applyToText(text, askLevelPatch).count).toBe(0);
+  });
+
+  it("carries the module's own check-failed message in its fallback", () => {
+    expect(askLevelPatch.replacement).toContain(JSON.stringify(ASK_MESSAGES.checkFailed));
+  });
+
+  it("lets a question to an agent in the asker's line through, answerable by that agent", async () => {
+    const { policy, normalizedData } = await runPatchedCreate();
+    expect(policy.effectiveResolverPolicy).toBe("not_creator");
+    expect(normalizedData.resolverPolicy).toBe("not_creator");
+  });
+
+  it("refuses a question to an agent outside the asker's line with the module's code", async () => {
+    await expect(runPatchedCreate({ data: { kind: "ask_user_questions", addresseeAgentId: "p", payload: {} } })).rejects.toMatchObject({ status: 422, details: { code: "kyoube_ask_outside_line" } });
+  });
+
+  it("never loads the module for anything else, so those cards stay people-only", async () => {
+    const missing = path.join(HERE, "no-such-module.mjs");
+    for (const input of [
+      { actor: { agentId: null, userId: "u1" } },
+      { data: { kind: "ask_user_questions", addresseeAgentId: null, payload: {} } },
+      { data: { kind: "ask_user_questions", addresseeUserId: "u1", payload: {} } },
+      { data: { kind: "request_confirmation", addresseeAgentId: "m", payload: {} } },
+    ]) {
+      const { policy } = await runPatchedCreate({ ...input, modulePath: missing });
+      expect(policy.effectiveResolverPolicy).toBe("human_only");
+    }
+  });
+
+  it("skips the module when KYOUBE_AGENT_RULES is OFF, in any case or spacing", async () => {
+    const missing = path.join(HERE, "no-such-module.mjs");
+    for (const env of ["off", "OFF", " Off ", "off\n"]) {
+      const { policy } = await runPatchedCreate({ env, modulePath: missing });
+      expect(policy.effectiveResolverPolicy).toBe("human_only");
+    }
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(runPatchedCreate({ env: "on", modulePath: missing })).rejects.toMatchObject({ details: { code: "kyoube_ask_check_failed" } });
+    error.mockRestore();
+  });
+
+  it("refuses an agent-to-agent question when the module cannot be loaded (fail closed)", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(runPatchedCreate({ modulePath: path.join(HERE, "no-such-module.mjs") })).rejects.toMatchObject({ message: ASK_MESSAGES.checkFailed, status: 422, details: { code: "kyoube_ask_check_failed" } });
+    error.mockRestore();
+  });
+
+  it("is shipped and checked by the Dockerfile", async () => {
+    const dockerfile = await readFile(DOCKERFILE, "utf8");
+    expect(dockerfile).toMatch(/^COPY docker\/core-patches\/apply\.mjs docker\/core-patches\/lib\.mjs docker\/core-patches\/patches\.mjs docker\/core-patches\/ask-level\.mjs \/opt\/kyoube\/core-patches\/$/m);
+    expect(dockerfile).toContain("grep -q 'kyoube-ask-level' /app/server/dist/services/issue-thread-interactions.js");
+    expect(dockerfile).toContain('import("/opt/kyoube/core-patches/ask-level.mjs")');
+  });
+});
