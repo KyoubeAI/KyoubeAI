@@ -935,7 +935,8 @@ for ID in "$M_ID" "$P_ID" "$R_ID"; do [[ -n "$ID" && "$ID" != "null" ]] || { ech
 compose exec -T app kyoube agent-rules --once | tee "$TMP/rules-once.log"
 grep -q 'self-test pass' "$TMP/rules-once.log" || { echo "the guard self-test did not pass on this core:" >&2; cat "$TMP/rules-once.log" >&2; exit 1; }
 curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/agents/$M_ID/instructions-bundle/file?path=AGENTS.md" | jq -r '.content' >"$TMP/agents-md.txt"
-head -1 "$TMP/agents-md.txt" | grep -q '^<!-- kyoube:working-rules v1' || { echo "the manager's AGENTS.md does not start with the rules block:" >&2; head -5 "$TMP/agents-md.txt" >&2; exit 1; }
+head -1 "$TMP/agents-md.txt" | grep -q '^<!-- kyoube:working-rules v2' || { echo "the manager's AGENTS.md does not start with the rules block:" >&2; head -5 "$TMP/agents-md.txt" >&2; exit 1; }
+grep -q 'Your ask level: \*\*your line\*\*' "$TMP/agents-md.txt" || { echo "the manager's rules block has no ask-level line for its line" >&2; exit 1; }
 [[ "$(grep -c '^## Handoffs' "$TMP/agents-md.txt")" == 1 ]] || { echo "expected exactly one Handoffs section" >&2; exit 1; }
 if grep -q 'If you need QA to review it, ask them' "$TMP/agents-md.txt"; then echo "the core's handoff sentences are still there" >&2; exit 1; fi
 echo "    rules block in place, self-test passed"
@@ -1060,6 +1061,165 @@ done
 as_agent "$M_KEY" POST "/api/companies/$COMPANY_ID/issues" "{\"title\":\"smoke: down to the report\",\"assigneeAgentId\":\"$R_ID\"}"
 [[ "$HTTP_STATUS" =~ ^2 ]] || { echo "a manager could not assign to its own report: $HTTP_STATUS $(cat "$TMP/resp.json")" >&2; exit 1; }
 echo "    only a person answers the card; the person's decision moves the task up; the manager still assigns down"
+
+echo "==> agent questions: a report asks its manager; refusals outside its line, at no agents, and past the limits"
+# A asks questions from inside its own run, as an agent would: the core checks
+# a card against the run that creates it. A runs the core's `process` adapter
+# with ask.mjs, which reads its plan from ask-plan.json, so no model is needed.
+# A reports to M, so M is in A's line and P (no manager, no reports) is not.
+A_ID="$(make_agent smoke-asker process "$M_ID" '{"cwd":"/kyoubeai/workspaces/smoke","command":"node","args":["/kyoubeai/workspaces/smoke/ask.mjs"]}')"
+[[ -n "$A_ID" && "$A_ID" != "null" ]] || { echo "agent create failed (smoke-asker)" >&2; exit 1; }
+compose exec -T -u node app sh -c 'mkdir -p /kyoubeai/workspaces/smoke && cat > /kyoubeai/workspaces/smoke/ask.mjs' <<'JS'
+import { readFile, writeFile } from "node:fs/promises";
+const base = String(process.env.PAPERCLIP_API_URL || "").replace(/\/+$/, "").replace(/\/api$/, "");
+const headers = { authorization: "Bearer " + process.env.PAPERCLIP_API_KEY, "content-type": "application/json", "x-paperclip-run-id": String(process.env.PAPERCLIP_RUN_ID || "") };
+const me = process.env.PAPERCLIP_AGENT_ID;
+const plan = JSON.parse(await readFile("/kyoubeai/workspaces/smoke/ask-plan.json", "utf8"));
+async function attempt(method, path, body) {
+  const response = await fetch(base + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  const text = await response.text();
+  console.log(method + " " + path + " -> " + response.status + " " + text.slice(0, 300));
+  let parsed = null;
+  try { parsed = text ? JSON.parse(text) : null; } catch {}
+  return { status: response.status, body: parsed };
+}
+const brief = (r) => ({ status: r.status, code: r.body?.code ?? null, id: r.body?.id ?? null, effectiveResolverPolicy: r.body?.effectiveResolverPolicy ?? null });
+const current = await attempt("GET", "/api/issues/" + plan.task);
+if (current.body?.assigneeAgentId !== me) { console.log("not the planned task; nothing to do"); process.exit(0); }
+await attempt("POST", "/api/issues/" + plan.task + "/checkout", { agentId: me, expectedStatuses: ["todo", "backlog", "in_progress"] });
+const ask = async (key, addresseeAgentId) => brief(await attempt("POST", "/api/issues/" + plan.task + "/interactions", {
+  kind: "ask_user_questions",
+  idempotencyKey: "smoke:" + plan.task + ":" + key,
+  title: "Smoke question " + key,
+  continuationPolicy: "none",
+  ...(addresseeAgentId ? { addresseeAgentId } : {}),
+  payload: { version: 1, questions: [{ id: "q", prompt: "Smoke: which one?", selectionMode: "single", options: [{ id: "a", label: "A" }, { id: "b", label: "B" }] }] },
+}));
+const results = {};
+if (plan.mode === "single") {
+  results.ask = await ask("single", plan.manager);
+} else {
+  results.q1 = await ask("q1", plan.manager);
+  results.again = await ask("again", plan.manager);
+  results.outside = await ask("outside", plan.outsider);
+  // The smoke answers q1 as the manager; wait for that before going on.
+  for (let i = 0; i < 90 && results.q1.id; i += 1) {
+    const list = await attempt("GET", "/api/issues/" + plan.task + "/interactions");
+    const cards = Array.isArray(list.body) ? list.body : (list.body?.interactions ?? []);
+    const q1 = cards.find((card) => card.id === results.q1.id);
+    if (q1 && q1.status !== "pending") { results.q1After = q1.status; break; }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  // A question to the person supersedes the agent's pending question (the core's own rule),
+  // so each one closes the open question to M and lets the next count toward the limit.
+  results.q2 = await ask("q2", plan.manager);
+  results.person1 = await ask("person1", null);
+  results.q3 = await ask("q3", plan.manager);
+  results.person2 = await ask("person2", null);
+  results.q4 = await ask("q4", plan.manager);
+}
+await writeFile("/kyoubeai/workspaces/smoke/ask-results-" + plan.mode + ".json", JSON.stringify(results));
+// A run that leaves its task assigned and in progress makes the core wake the agent again to finish it,
+// so hand the task back to the person, as rule 4 says.
+await attempt("PATCH", "/api/issues/" + plan.task, { assigneeAgentId: null, assigneeUserId: plan.owner, status: "in_review", comment: "The smoke's questions are done; handing the task back to the person." });
+JS
+
+wait_file() { # path seconds -> the file's content on stdout
+  for _ in $(seq 1 "$2"); do
+    if compose exec -T app test -s "$1"; then compose exec -T app cat "$1"; return 0; fi
+    sleep 1
+  done
+  echo "no $1 within $2 s" >&2; compose logs --no-color --tail 80 app >&2; return 1
+}
+check_result() { # jq-filter description
+  jq -e "$1" "$TMP/ask-results.json" >/dev/null || { echo "$2: $(cat "$TMP/ask-results.json")" >&2; exit 1; }
+}
+studio_bridge() { curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X POST "$BASE_URL/api/plugins/kyoube.studio/actions/$1" --data "$2"; }
+set_ask_level() { # agent-id level — Studio's action, as the signed-in owner
+  studio_bridge agent.change-ask-level "{\"companyId\":\"$COMPANY_ID\",\"params\":{\"agentId\":\"$1\",\"level\":\"$2\"}}" | jq -e --arg l "$2" '.data.askLevel == $l' >/dev/null \
+    || { echo "Studio did not take the ask level $2 for agent $1" >&2; exit 1; }
+}
+
+# smoke-asker is a `process` agent, which the core gives no instructions bundle, so its AGENTS.md
+# (the rules block, and the level in it) is checked on smoke-claude_local, which has one like M.
+NA_ID="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/companies/$COMPANY_ID/agents" | jq -r '.[] | select(.name == "smoke-claude_local") | .id')"
+[[ -n "$NA_ID" && "$NA_ID" != "null" ]] || { echo "the smoke-claude_local agent is gone" >&2; exit 1; }
+
+# M answers from a run of its own. The core counts an agent's answer on another task against its
+# run, so the run must belong to some task: a task assigned to M gives it one (it fails at once, with
+# no model signed in, but the run is there). M's wake for the question itself waits behind A's run,
+# which waits for the answer.
+MTASK_ID="$(curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X POST "$BASE_URL/api/companies/$COMPANY_ID/issues" \
+  --data "$(jq -cn --arg m "$M_ID" '{title:"smoke: a run to answer a question from", assigneeAgentId:$m, status:"todo"}')" | jq -r '.id')"
+[[ -n "$MTASK_ID" && "$MTASK_ID" != "null" ]] || { echo "could not create the task that gives smoke-manager a run" >&2; exit 1; }
+for i in $(seq 1 60); do
+  M_ASK_RUN_ID="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/companies/$COMPANY_ID/heartbeat-runs?agentId=$M_ID" \
+    | jq -r --arg t "$MTASK_ID" '[.[] | select(.contextSnapshot.issueId == $t)][0].id // empty')"
+  [[ -n "$M_ASK_RUN_ID" ]] && break
+  sleep 1
+  [[ $i -eq 60 ]] && { echo "smoke-manager has no run on its task" >&2; compose logs --no-color --tail 80 app >&2; exit 1; }
+done
+
+QTASK_ID="$(curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X POST "$BASE_URL/api/companies/$COMPANY_ID/issues" \
+  --data '{"title":"smoke: questions","status":"todo"}' | jq -r '.id')"
+[[ -n "$QTASK_ID" && "$QTASK_ID" != "null" ]] || { echo "could not create the questions task" >&2; exit 1; }
+jq -nc --arg t "$QTASK_ID" --arg m "$M_ID" --arg p "$P_ID" --arg o "$OWNER_ID" '{task: $t, mode: "sequence", manager: $m, outsider: $p, owner: $o}' \
+  | compose exec -T -u node app sh -c 'cat > /kyoubeai/workspaces/smoke/ask-plan.json'
+curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X PATCH "$BASE_URL/api/issues/$QTASK_ID" --data "{\"assigneeAgentId\":\"$A_ID\"}" >/dev/null
+
+# Answer q1 as M (an agent's answer counts only inside one of its runs).
+for i in $(seq 1 60); do
+  Q1_ID="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/issues/$QTASK_ID/interactions" \
+    | jq -r --arg m "$M_ID" '[(.interactions? // .)[] | select(.kind == "ask_user_questions" and .addresseeAgentId == $m and .status == "pending")][0].id // empty')"
+  [[ -n "$Q1_ID" ]] && break
+  sleep 1
+  [[ $i -eq 60 ]] && { echo "smoke-asker never asked smoke-manager a question" >&2; compose logs --no-color --tail 80 app >&2; exit 1; }
+done
+as_agent "$M_KEY" POST "/api/issues/$QTASK_ID/interactions/$Q1_ID/respond" '{"answers":[{"questionId":"q","optionIds":["a"]}]}' "$M_ASK_RUN_ID"
+[[ "$HTTP_STATUS" =~ ^2 ]] || { echo "the manager could not answer the question addressed to it: $HTTP_STATUS $(cat "$TMP/resp.json")" >&2; exit 1; }
+
+wait_file /kyoubeai/workspaces/smoke/ask-results-sequence.json 120 >"$TMP/ask-results.json"
+check_result '(.q1.status | tostring | test("^2")) and .q1.effectiveResolverPolicy == "not_creator"' "a question to the manager was not let through, answerable by the manager"
+check_result '.again.status == 422 and .again.code == "kyoube_ask_open_question"' "a second open question to an agent was not refused"
+check_result '.outside.status == 422 and .outside.code == "kyoube_ask_outside_line"' "a question outside the asker's line was not refused"
+check_result '.q1After != null and .q1After != "pending" and .q1After != "expired"' "the manager's answer did not close the question"
+check_result '(.q2.status | tostring | test("^2")) and (.q3.status | tostring | test("^2"))' "the second and third questions were refused"
+check_result '(.person1.status | tostring | test("^2")) and .person1.effectiveResolverPolicy == "human_only"' "a question to the person was not people-only"
+check_result '.q4.status == 422 and .q4.code == "kyoube_ask_limit"' "a fourth question to an agent was not refused"
+echo "    the manager answers its report's question; outside the line, a second open one and a fourth are refused; a question to the person stays people-only"
+
+# No agents: set through Studio as the owner, copied by the loop, refused by the core.
+set_ask_level "$A_ID" none
+set_ask_level "$NA_ID" none
+compose exec -T app kyoube agent-rules --once >/dev/null
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/agents/$A_ID" | jq -e '.metadata.kyoubeAskLevel == "none"' >/dev/null \
+  || { echo "the loop did not copy the ask level into the agent's metadata" >&2; exit 1; }
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/agents/$NA_ID/instructions-bundle/file?path=AGENTS.md" | jq -r '.content' >"$TMP/agents-md-none.txt"
+grep -q 'Your ask level: \*\*no agents\*\*' "$TMP/agents-md-none.txt" \
+  || { echo "the rules block of an agent set to no agents does not say so" >&2; head -12 "$TMP/agents-md-none.txt" >&2; exit 1; }
+Q2TASK_ID="$(curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X POST "$BASE_URL/api/companies/$COMPANY_ID/issues" \
+  --data '{"title":"smoke: no agents","status":"todo"}' | jq -r '.id')"
+[[ -n "$Q2TASK_ID" && "$Q2TASK_ID" != "null" ]] || { echo "could not create the no-agents task" >&2; exit 1; }
+jq -nc --arg t "$Q2TASK_ID" --arg m "$M_ID" --arg o "$OWNER_ID" '{task: $t, mode: "single", manager: $m, owner: $o}' \
+  | compose exec -T -u node app sh -c 'cat > /kyoubeai/workspaces/smoke/ask-plan.json'
+curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X PATCH "$BASE_URL/api/issues/$Q2TASK_ID" --data "{\"assigneeAgentId\":\"$A_ID\"}" >/dev/null
+wait_file /kyoubeai/workspaces/smoke/ask-results-single.json 90 >"$TMP/ask-results.json"
+check_result '.ask.status == 422 and .ask.code == "kyoube_ask_level_none"' "an agent at no agents could ask its manager"
+
+# Back to its line, and the key leaves the metadata.
+set_ask_level "$A_ID" line
+set_ask_level "$NA_ID" line
+compose exec -T app kyoube agent-rules --once >/dev/null
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/agents/$A_ID" | jq -e '.metadata | (. == null or (has("kyoubeAskLevel") | not))' >/dev/null \
+  || { echo "setting the level back to its line left the key in the agent's metadata" >&2; exit 1; }
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/agents/$NA_ID/instructions-bundle/file?path=AGENTS.md" | jq -r '.content' >"$TMP/agents-md-line.txt"
+grep -q 'Your ask level: \*\*your line\*\*' "$TMP/agents-md-line.txt" \
+  || { echo "the rules block did not go back to the agent's line" >&2; head -12 "$TMP/agents-md-line.txt" >&2; exit 1; }
+
+compose exec -T app kyoube doctor >"$TMP/doctor-questions.log" || true
+grep -Eq '^ok +agent questions +active; last 7 days: .*[0-9]+ questions? by [0-9]+ agents?' "$TMP/doctor-questions.log" \
+  || { echo "doctor does not report agent questions active with a count:" >&2; grep 'agent questions' "$TMP/doctor-questions.log" >&2; exit 1; }
+echo "    no agents is set in Studio, copied by the loop and refused by the core; doctor counts the questions"
 
 compose exec -T app kyoube agent-rules --once | tee "$TMP/rules-again.log"
 grep -q ' 0 changes,' "$TMP/rules-again.log" || { echo "a second pass made changes:" >&2; cat "$TMP/rules-again.log" >&2; exit 1; }
