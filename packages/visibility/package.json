@@ -1,0 +1,19 @@
+{
+  "name": "@kyoube/visibility",
+  "version": "0.1.0",
+  "private": true,
+  "description": "KyoubeAI work-object visibility: the policy files, how they compile, and the need-to-know decision the core and the plugins share",
+  "license": "BUSL-1.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node build.mjs && vitest run",
+    "typecheck": "node build.mjs && tsc --noEmit"
+  },
+  "devDependencies": { "@types/node": "^24.0.0", "esbuild": "^0.28.2", "typescript": "^7.0.2", "vitest": "^5.0.0" },
+  "engines": { "node": ">=24.11.0" }
+}
