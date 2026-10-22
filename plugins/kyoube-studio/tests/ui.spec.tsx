@@ -11,7 +11,6 @@ import { memberDetail } from "../src/ui/nav.js";
 import { isActivePath } from "../src/ui/shared.js";
 import { ensureStyles, STUDIO_CSS } from "../src/ui/styles.js";
 import { greeting, timeAgo } from "../src/ui/time.js";
-import { openTasks } from "../src/ui/Workspace.js";
 
 type BridgeGlobal = typeof globalThis & { __paperclipPluginBridge__?: { sdkUi?: Record<string, unknown> } };
 const context = { companyId: "c1", companyPrefix: "BAP", projectId: null, entityId: null, entityType: null, userId: "u1" };
@@ -255,11 +254,6 @@ describe("Workspace", () => {
     const admin = render(WorkspacePage);
     expect(admin).toContain('href="/BAP/terminal"');
     expect(admin).toContain("1 agent<");
-  });
-
-  it("counts open tasks from the browser-loaded tasks, leaving out done, cancelled and hidden ones", () => {
-    const rows: IssueLike[] = [...ISSUES, { ...ISSUES[0]!, id: "i9", status: "cancelled" }, { ...ISSUES[0]!, id: "i8", hiddenAt: minutesAgo(1) }];
-    expect(openTasks(rows)).toBe(3);
   });
 });
 

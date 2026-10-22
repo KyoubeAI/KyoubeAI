@@ -12,7 +12,7 @@ export interface WorkspaceCard {
   /** Shown only to company owners and admins. */
   adminOnly?: boolean;
   /** Which figure from the "workspace" data call to show under the card, if any. */
-  meta?: "agents" | "people" | "projects" | "openTasks";
+  meta?: "agents" | "people" | "projects";
 }
 
 export interface WorkspaceGroup {

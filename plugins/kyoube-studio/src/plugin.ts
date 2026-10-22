@@ -191,7 +191,6 @@ export function createStudioPlugin(deps: StudioPluginDeps = {}): PaperclipPlugin
         ]);
         const userId = typeof params.userId === "string" ? params.userId : null;
         const people = (members as Array<{ principalType: string; status: string }>).filter((member) => member.principalType === "user" && member.status === "active").length;
-        // The open-task count is the page's own, from the tasks it reads as the signed-in person.
         return {
           agents: agents.filter((agent) => agent.status !== "terminated").length,
           people,
