@@ -48,6 +48,34 @@ describe("projectVisible and involved", () => {
   });
 });
 
+describe("a person without a user id", () => {
+  // A null id must not equal a task's null columns; the core's plain-JS patch is not held to the types.
+  const nobody = [
+    ["null", null as unknown as string],
+    ["undefined", undefined as unknown as string],
+    ["an empty string", ""],
+  ] as const;
+  const noConversation = task("t", { projectId: "p2", createdByUserId: "bob" });
+  const ownlessPolicy: CompanyPolicy = { ...policy, projects: { p1: [""] } };
+  for (const [label, userId] of nobody) {
+    it(`sees nothing when the id is ${label}`, () => {
+      const person = { userId, role: "operator" };
+      expect(involved(policy, person, noConversation)).toBe(false);
+      expect(taskVisible(policy, person, [noConversation])).toBe(false);
+      expect(taskVisible(policy, person, [noConversation, task("r", { projectId: "p2" })])).toBe(false);
+      expect(projectVisible(policy, person, "p1")).toBe(false);
+      expect(involved(policy, person, task("t", { projectId: "p1" }))).toBe(false);
+      expect(projectVisible(ownlessPolicy, person, "p1")).toBe(false);
+    });
+  }
+  it("also sees nothing when the facts lack a column altogether", () => {
+    const person = { userId: undefined as unknown as string, role: "operator" };
+    const sparse = { id: "t", projectId: "p2", parentId: null, createdByUserId: "bob" } as unknown as TaskFacts;
+    expect(involved(policy, person, sparse)).toBe(false);
+    expect(taskVisible(policy, person, [sparse])).toBe(false);
+  });
+});
+
 describe("taskVisible", () => {
   const ann = { userId: "ann", role: "operator" };
   it("shows a task the person is involved in, and every task beneath it", () => {

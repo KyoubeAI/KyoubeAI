@@ -47,14 +47,23 @@ export interface TaskFacts {
 /** How many parents above a task count towards its visibility. */
 export const MAX_ANCESTORS = 20;
 
+/**
+ * A person without a user id (null, undefined, empty) matches nothing. The type says `string`, but the
+ * core's plain-JS patch calls this bundle, and a null id would otherwise equal every null column.
+ */
+function hasUserId(person: Person): boolean {
+  return typeof person.userId === "string" && person.userId !== "";
+}
+
 /** True iff a group the person is in includes the project. */
 export function projectVisible(policy: CompanyPolicy, person: Person, projectId: string | null): boolean {
-  if (projectId === null || !Object.hasOwn(policy.projects, projectId)) return false;
+  if (!hasUserId(person) || projectId === null || !Object.hasOwn(policy.projects, projectId)) return false;
   return policy.projects[projectId]?.includes(person.userId) ?? false;
 }
 
 /** True when the person made, holds, answers for or talks in the task, or can see its project. */
 export function involved(policy: CompanyPolicy, person: Person, facts: TaskFacts): boolean {
+  if (!hasUserId(person)) return false;
   return (
     facts.createdByUserId === person.userId ||
     facts.assigneeUserId === person.userId ||
