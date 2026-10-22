@@ -36,6 +36,9 @@ importers:
       '@kyoube/license':
         specifier: workspace:*
         version: link:../../packages/license
+      '@kyoube/visibility':
+        specifier: workspace:*
+        version: link:../../packages/visibility
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3

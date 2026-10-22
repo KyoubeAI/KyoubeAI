@@ -67,6 +67,7 @@ function harness(options: {
       return options.companySkills?.(companyId, poll) ?? [];
     },
     listAgents: async () => [],
+    listMembers: async () => [],
     installLocalPlugin: async () => { throw new Error("not used"); },
     upgradePlugin: async () => { throw new Error("not used"); },
     uninstallPlugin: async () => { throw new Error("not used"); },

@@ -14,6 +14,7 @@ import { agentRulesEnabled } from "./agent-rules.js";
 import { AUTH_MODULE_PATH, ENFORCE_MODULE_PATH, HOOK_MARKER, licensePaths, licenseStatus, readTrimmed, readUserSnapshot, TRUSTED_KEYS, type LicenseStatus } from "@kyoube/license";
 import { pathToFileURL } from "node:url";
 import { coreDatabaseUrl, openCoreUsersDb } from "../license/core-db.js";
+import { visibilityDoctorChecks } from "../visibility/doctor.js";
 
 export interface Check { name: string; ok: boolean; detail: string; /** Printed as WARN; doesn't fail doctor. */ warn?: boolean }
 
@@ -459,8 +460,10 @@ export async function runDoctor(env: NodeJS.ProcessEnv): Promise<number> {
   checks.push(legacyEnvCheck(env));
 
   const client = createCoreClient({ apiBase: config.paperclipApiUrl });
+  let deploymentMode: string | null = null;
   try {
     const health = await client.getHealth();
+    deploymentMode = health.deploymentMode ?? null;
     // `/api/health` redacts `version` for an anonymous caller on an
     // `authenticated` instance (which is what this probe is) but always
     // reports `commit`, so lead with the commit and only add `version` when
@@ -531,6 +534,7 @@ export async function runDoctor(env: NodeJS.ProcessEnv): Promise<number> {
   ));
   checks.push(...await agentRulesDoctorChecks(env, resolveStatePath(config.home), Date.now()));
   checks.push(await agentQuestionsDoctorCheck(env));
+  checks.push(...await visibilityDoctorChecks(env, config, deploymentMode, apiKey));
   checks.push(...await licenceDoctorChecks(env, config.home));
 
   const claudeFile = path.posix.join(config.home, ".claude", ".credentials.json");

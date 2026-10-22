@@ -68,6 +68,25 @@ describe("createCoreClient", () => {
     expect(requests[0]).toMatchObject({ url: "http://app:3100/api/companies/c1/skills", method: "GET" });
   });
 
+  it("listMembers reads a company's members", async () => {
+    const rows = [
+      { id: "m1", principalType: "user", principalId: "u1", status: "active", membershipRole: "Owner" },
+      { id: "m2", principalType: "agent", principalId: "a1", status: "active", membershipRole: "member" },
+      { id: "m3", principalType: "user", principalId: "u2", status: "archived", membershipRole: "member" },
+      { id: "m4", principalType: "user", principalId: "u3", status: "active", membershipRole: null },
+      { id: "m5", principalType: "user", principalId: "u4", status: "active", membershipRole: "viewer" },
+    ];
+    const expected = [{ userId: "u1", role: "owner" }, { userId: "u3", role: null }, { userId: "u4", role: "viewer" }];
+    const wrapped = fakeFetch(() => ({ status: 200, body: { members: rows, access: {} } }));
+    const client = createCoreClient({ apiBase: "http://app:3100", apiKey: "k", fetchImpl: wrapped.impl });
+    expect(await client.listMembers("c 1")).toEqual(expected);
+    expect(wrapped.requests[0]).toMatchObject({ url: "http://app:3100/api/companies/c%201/members", method: "GET" });
+    expect(wrapped.requests[0]?.headers.authorization).toBe("Bearer k");
+    // A bare array is read the same way (scripts/smoke.sh reads `(.members // .)`).
+    const bare = fakeFetch(() => ({ status: 200, body: rows }));
+    expect(await createCoreClient({ apiBase: "http://app:3100", apiKey: "k", fetchImpl: bare.impl }).listMembers("c1")).toEqual(expected);
+  });
+
   it("asks the kyoube.apps worker to install its skills into one company", async () => {
     const { impl, requests } = fakeFetch(() => ({ status: 200, body: { data: { status: "created" }, apps: { status: "resolved" } } }));
     const client = createCoreClient({ apiBase: "http://app:3100", apiKey: "k", fetchImpl: impl });

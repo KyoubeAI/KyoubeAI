@@ -55,6 +55,12 @@ export interface AgentSummary {
   status: string;
 }
 
+/** One active person in a company (`GET /api/companies/:companyId/members`), the role lower-cased. */
+export interface CompanyMember {
+  userId: string;
+  role: string | null;
+}
+
 /** What the `skills.install` route answers: the host's resolution status for each managed skill. */
 export interface SkillInstallResult {
   data: { status: string };
@@ -72,6 +78,8 @@ export interface CoreClient {
   listCompanySkills(companyId: string): Promise<CompanySkill[]>;
   /** `GET /api/companies/:companyId/agents` — the company's agents (an instance-admin board key sees them all). */
   listAgents(companyId: string): Promise<AgentSummary[]>;
+  /** `GET /api/companies/:companyId/members` — the company's active people; agents and inactive memberships are left out. */
+  listMembers(companyId: string): Promise<CompanyMember[]>;
   /**
    * `POST /api/plugins/kyoube.apps/api/skills/install` — asks the `kyoube.apps`
    * worker to import its two managed skills into one company's library. A
@@ -222,6 +230,16 @@ export function createCoreClient(opts: CoreClientOptions): CoreClient {
           adapterType: String(record.adapterType ?? ""),
           status: String(record.status ?? ""),
         };
+      });
+    },
+    async listMembers(companyId) {
+      const raw = await request<unknown>(`/api/companies/${encodeURIComponent(companyId)}/members`);
+      // Upstream answers `{ members: [...] }`; take a bare array too, as scripts/smoke.sh does (`.members // .`).
+      const rows = Array.isArray(raw) ? raw : ((raw as { members?: unknown[] } | null)?.members ?? []);
+      return rows.flatMap((row) => {
+        const record = (row ?? {}) as Record<string, unknown>;
+        if (record.principalType !== "user" || record.status !== "active" || typeof record.principalId !== "string") return [];
+        return [{ userId: record.principalId, role: typeof record.membershipRole === "string" ? record.membershipRole.toLowerCase() : null }];
       });
     },
     async installPluginSkills(companyId) {
