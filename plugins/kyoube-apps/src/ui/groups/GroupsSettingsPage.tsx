@@ -6,12 +6,25 @@ import { button, input } from "../forms.js";
 import { ensurePhoneStyles } from "../phone.js";
 import { openedBy } from "./opened.js";
 
-interface Group { id: string; name: string; dataLevel: string | null; members: string[]; agents: string[]; apps: string[] }
-interface ListData { unlocked: boolean; groups: Group[]; sync: { syncedAt: string; error: string | null } | null }
-interface Options { members: Array<{ id: string; role: string | null; name?: string }>; agents: Array<{ id: string; name: string }>; apps: Array<{ id: string; name: string; icon: string | null }> }
-interface Draft { id?: string; name: string; level: string; members: string[]; agents: string[]; apps: string[] }
+interface Group { id: string; name: string; dataLevel: string | null; members: string[]; agents: string[]; apps: string[]; seesAll: boolean; projects: string[] }
+type Restricted = Array<{ userId: string; role: string | null }>;
+interface Visibility { mode: "open" | "need_to_know"; seesAll: string[]; restricted: Restricted }
+interface ListData { unlocked: boolean; groups: Group[]; sync: { syncedAt: string; error: string | null } | null; visibility: Visibility }
+interface Options { members: Array<{ id: string; role: string | null; name?: string }>; agents: Array<{ id: string; name: string }>; apps: Array<{ id: string; name: string; icon: string | null }>; projects: Array<{ id: string; name: string }> }
+interface Draft { id?: string; name: string; level: string; members: string[]; agents: string[]; apps: string[]; seesAll: boolean; projects: string[] }
 
-const EMPTY: Draft = { name: "", level: "", members: [], agents: [], apps: [] };
+const EMPTY: Draft = { name: "", level: "", members: [], agents: [], apps: [], seesAll: false, projects: [] };
+const LISTED_PEOPLE = 20;
+const people = (count: number) => `${count} ${count === 1 ? "person" : "people"}`;
+
+/** What the switch to need-to-know asks first: who would be restricted, by id and role (at most 20 named). */
+export function restrictionConfirmText(restricted: Restricted): string {
+  if (restricted.length === 0) return "Nobody is restricted yet: every operator and viewer is in a group that sees everything. Continue?";
+  const named = restricted.slice(0, LISTED_PEOPLE).map((person) => (person.role ? `${person.userId} (${person.role})` : person.userId));
+  const more = restricted.length - named.length;
+  const list = more > 0 ? `${named.join(", ")}, and ${more} more` : named.join(", ");
+  return `This restricts ${people(restricted.length)} to the projects of their groups and the tasks they are involved in: ${list}. Owners and admins are not affected. Continue?`;
+}
 
 function minutesAgo(iso: string): number {
   return Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
@@ -37,8 +50,9 @@ export function GroupsSettingsPage({ context }: PluginCompanySettingsPageProps) 
   const loadOptions = usePluginAction("groups.options");
   const save = usePluginAction("groups.save");
   const remove = usePluginAction("groups.delete");
+  const setVisibility = usePluginAction("groups.set_visibility");
   const [data, setData] = useState<ListData | null>(null);
-  const [options, setOptions] = useState<Options>({ members: [], agents: [], apps: [] });
+  const [options, setOptions] = useState<Options>({ members: [], agents: [], apps: [], projects: [] });
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
 
@@ -65,10 +79,15 @@ export function GroupsSettingsPage({ context }: PluginCompanySettingsPageProps) 
       (err) => { toast({ title: errorText(err), tone: "error" }); return false; },
     );
 
+  const onSwitch = (visibility: Visibility) => {
+    const toNeedToKnow = visibility.mode === "open";
+    if (toNeedToKnow && !window.confirm(restrictionConfirmText(visibility.restricted))) return;
+    void act(setVisibility({ mode: toNeedToKnow ? "need_to_know" : "open" }), toNeedToKnow ? "Visibility set to need-to-know" : "Visibility set to open");
+  };
   const onSave = () => {
     if (!draft) return;
     if (draft.id && !confirmOpened(openedBy(groups, { groupId: draft.id, nextAgents: draft.agents, nextApps: draft.apps }))) return;
-    const body = { id: draft.id, name: draft.name.trim(), dataLevel: draft.level || null, members: draft.members, agents: draft.agents, apps: draft.apps };
+    const body = { id: draft.id, name: draft.name.trim(), dataLevel: draft.level || null, members: draft.members, agents: draft.agents, apps: draft.apps, seesAll: draft.seesAll, projects: draft.projects };
     // A refused save keeps the editor open with the person's edits, so nothing they typed is lost.
     void act(save({ group: body }), "Group saved").then((saved) => { if (saved) setDraft(null); });
   };
@@ -89,23 +108,39 @@ export function GroupsSettingsPage({ context }: PluginCompanySettingsPageProps) 
             {data.sync?.error && <span className="ml-2 text-red-600">{data.sync.error}</span>}
           </p>
           {!unlocked && <div role="alert" className="rounded border border-amber-500 p-3">Managing groups needs a KyoubeAI licence (Settings → Plugins → KyoubeAI Licence). Existing groups are still enforced, and you can delete them.</div>}
+          <section className="flex flex-col gap-2 rounded border p-3">
+            <h2 className="font-medium">Visibility</h2>
+            <p>
+              {data.visibility.mode === "open"
+                ? "Visibility: open — everyone in the company sees every project and task."
+                : "Visibility: need-to-know — operators and viewers see the projects of their groups and the tasks they are involved in, unless their group sees everything."}
+            </p>
+            {data.visibility.mode === "need_to_know" && <p className="text-foreground/70">{people(data.visibility.restricted.length)} restricted</p>}
+            <div>
+              <button type="button" className={button} disabled={data.visibility.mode === "open" && !unlocked} onClick={() => onSwitch(data.visibility)}>
+                {data.visibility.mode === "open" ? "Switch to need-to-know" : "Switch to open"}
+              </button>
+            </div>
+          </section>
           <div><button type="button" className={button} onClick={() => setDraft({ ...EMPTY })}>New group</button></div>
           {/* A phone is narrower than the table: it scrolls inside its own box, never the page (R21). */}
           <div className="w-full max-w-3xl overflow-x-auto" data-kyoube-scroll="">
             <table className="w-full text-sm">
-              <thead><tr className="bg-accent/40 text-left"><th className="px-2 py-1">Group</th><th className="px-2 py-1">Data level</th><th className="px-2 py-1">Members</th><th className="px-2 py-1">Agents</th><th className="px-2 py-1">Apps</th><th className="px-2 py-1" /></tr></thead>
+              <thead><tr className="bg-accent/40 text-left"><th className="px-2 py-1">Group</th><th className="px-2 py-1">Data level</th><th className="px-2 py-1">Members</th><th className="px-2 py-1">Agents</th><th className="px-2 py-1">Apps</th><th className="px-2 py-1">Sees all</th><th className="px-2 py-1">Projects</th><th className="px-2 py-1" /></tr></thead>
               <tbody>
                 {groups.map((group) => (
                   <tr key={group.id} className="border-t">
-                    <td className="px-2 py-1"><button type="button" className="break-words text-left underline" data-kyoube-break="" onClick={() => setDraft({ id: group.id, name: group.name, level: group.dataLevel ?? "", members: group.members, agents: group.agents, apps: group.apps })}>{group.name}</button></td>
+                    <td className="px-2 py-1"><button type="button" className="break-words text-left underline" data-kyoube-break="" onClick={() => setDraft({ id: group.id, name: group.name, level: group.dataLevel ?? "", members: group.members, agents: group.agents, apps: group.apps, seesAll: group.seesAll, projects: group.projects })}>{group.name}</button></td>
                     <td className="px-2 py-1">{group.dataLevel ?? "from role"}</td>
                     <td className="px-2 py-1">{group.members.length}</td>
                     <td className="px-2 py-1">{group.agents.length}</td>
                     <td className="px-2 py-1">{group.apps.length}</td>
+                    <td className="px-2 py-1">{group.seesAll ? "yes" : "no"}</td>
+                    <td className="px-2 py-1">{group.projects.length}</td>
                     <td className="px-2 py-1"><button type="button" className={button} onClick={() => onDelete(group)}>Delete</button></td>
                   </tr>
                 ))}
-                {groups.length === 0 && <tr><td className="px-2 py-2 text-foreground/60" colSpan={6}>No groups yet.</td></tr>}
+                {groups.length === 0 && <tr><td className="px-2 py-2 text-foreground/60" colSpan={8}>No groups yet.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -120,10 +155,12 @@ export function GroupsSettingsPage({ context }: PluginCompanySettingsPageProps) 
                   <option value="schema">schema</option>
                 </select>
               </label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={draft.seesAll} disabled={!unlocked} onChange={(event) => setDraft({ ...draft, seesAll: event.target.checked })} /> Sees everything in the company</label>
               <div className="flex flex-wrap gap-3">
                 <CheckList title="Members" items={options.members.map((member) => ({ id: member.id, label: `${member.name ?? member.id}${member.role ? ` (${member.role})` : ""}` }))} selected={draft.members} onChange={(members) => setDraft({ ...draft, members })} />
                 <CheckList title="Agents" items={options.agents.map((agent) => ({ id: agent.id, label: agent.name }))} selected={draft.agents} onChange={(agents) => setDraft({ ...draft, agents })} />
                 <CheckList title="Apps" items={options.apps.map((app) => ({ id: app.id, label: `${app.icon ?? ""} ${app.name}`.trim() }))} selected={draft.apps} onChange={(apps) => setDraft({ ...draft, apps })} />
+                <CheckList title="Projects" items={options.projects.map((project) => ({ id: project.id, label: project.name }))} selected={draft.projects} onChange={(projects) => setDraft({ ...draft, projects })} />
               </div>
               <div className="flex flex-wrap gap-2">
                 <button type="button" className={button} disabled={!unlocked || !draft.name.trim()} onClick={onSave}>Save</button>
