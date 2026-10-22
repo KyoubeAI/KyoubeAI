@@ -5,6 +5,7 @@ import {
   type ActiveMember, type InteractionLike, type IssueLike, type MemberRow,
 } from "./routing.js";
 import type { DeviceRecord, NotifyStore, Prefs } from "./store.js";
+import type { VisibilityGate } from "./visibility.js";
 import type { PushTarget } from "./webpush/endpoints.js";
 import type { PushMessage, SendOutcome } from "./webpush/send.js";
 
@@ -26,6 +27,8 @@ export interface NotifierDeps {
   agents: { get(agentId: string, companyId: string): Promise<{ name: string } | null> };
   companies: { get(companyId: string): Promise<{ issuePrefix: string } | null> };
   members: { list(input: { companyId: string }): Promise<MemberRow[]> };
+  /** Which of the company's people the need-to-know policy lets be told about a task or an approval. */
+  visibility: VisibilityGate;
   store: NotifyStore;
   send: (target: PushTarget, message: PushMessage) => Promise<SendOutcome>;
   logger: { warn(message: string): void };
@@ -129,6 +132,17 @@ export class Notifier {
     return activeMembers(await this.deps.members.list({ companyId }));
   }
 
+  /** The ids among `userIds` who may read the task: need-to-know hides it from a restricted person who is not involved in it. */
+  private async readers(companyId: string, issueId: string, userIds: string[], members: ActiveMember[]): Promise<string[]> {
+    const byId = new Map(members.map((member) => [member.userId, member]));
+    const out: string[] = [];
+    for (const userId of userIds) {
+      const person = byId.get(userId);
+      if (person && (await this.deps.visibility.canReadTask(companyId, person, issueId))) out.push(userId);
+    }
+    return out;
+  }
+
   private async prefix(companyId: string): Promise<string | null> {
     return (await this.deps.companies.get(companyId))?.issuePrefix ?? null;
   }
@@ -148,7 +162,8 @@ export class Notifier {
     if (!approvalId) return;
     const approval = await this.deps.approvals.get(approvalId, event.companyId);
     if (!approval || approval.status !== "pending") return;
-    const userIds = approvalRecipients(await this.members(event.companyId), userActor(event));
+    const members = await this.members(event.companyId);
+    const userIds = approvalRecipients(members, userActor(event), await this.deps.visibility.restricted(event.companyId, members));
     const prefix = await this.prefix(event.companyId);
     if (userIds.length === 0 || !prefix) return;
     const agentName = approval.requestedByAgentId ? await this.agentName(approval.requestedByAgentId, event.companyId) : null;
@@ -168,7 +183,8 @@ export class Notifier {
     const previous = stored === issue.status ? issue.status : (reported ?? stored);
     const kind = statusTransition(issue.status, previous);
     if (!kind) return;
-    const userIds = taskOwners(issue, await this.members(event.companyId), userActor(event));
+    const members = await this.members(event.companyId);
+    const userIds = await this.readers(event.companyId, issue.id, taskOwners(issue, members, userActor(event)), members);
     const prefix = await this.prefix(event.companyId);
     if (userIds.length === 0 || !prefix) return;
     await this.deliver({ userIds, message: statusMessage({ prefix, issue, kind }) });
@@ -180,7 +196,8 @@ export class Notifier {
     await this.safeCheckQuestions(event.companyId, issueId);
     const issue = await this.deps.issues.get(issueId, event.companyId);
     if (!issue) return;
-    const candidates = taskOwners(issue, await this.members(event.companyId), userActor(event));
+    const members = await this.members(event.companyId);
+    const candidates = await this.readers(event.companyId, issue.id, taskOwners(issue, members, userActor(event)), members);
     const prefs = await this.prefsFor(candidates);
     const userIds = candidates.filter((userId) => prefs.get(userId)?.comments === true);
     const prefix = await this.prefix(event.companyId);
@@ -223,7 +240,7 @@ export class Notifier {
     if (!prefix) return;
     for (const interaction of open) {
       if (!(await this.deps.store.claimInteraction(interaction.id))) continue;
-      const userIds = askRecipients(interaction, issue, members);
+      const userIds = await this.readers(companyId, issue.id, askRecipients(interaction, issue, members), members);
       if (userIds.length === 0) continue;
       const agentName = await this.agentName(interaction.createdByAgentId!, companyId);
       await this.deliver({ userIds, message: askMessage({ prefix, agentName, interaction, issue }) });

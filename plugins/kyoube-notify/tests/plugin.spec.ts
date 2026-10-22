@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestHarness } from "@paperclipai/plugin-sdk/testing";
 import type { PluginEvent } from "@paperclipai/plugin-sdk";
+import { compileCompanyPolicy, compileIndex, createPolicyReader, writePolicyFiles } from "@kyoube/visibility";
 import manifest from "../src/manifest.js";
 import { createNotifyPlugin } from "../src/plugin.js";
 import { decryptBody, fakeTransport, makeDevice, type TestDevice } from "./helpers.js";
@@ -17,24 +18,29 @@ const AGENT = "33333333-3333-4333-8333-333333333333";
 const member = (principalId: string, membershipRole: string, status = "active") => ({ id: `m-${principalId}`, companyId: COMPANY, principalType: "user" as const, principalId, status, membershipRole, grants: [], createdAt: "2026-01-01", updatedAt: "2026-01-01" });
 
 let dir: string;
-beforeEach(async () => { dir = await mkdtemp(path.join(tmpdir(), "kyoube-notify-")); });
+// Never created until a test restricts the company: no policy files means an open company.
+let policyDir: string;
+beforeEach(async () => {
+  dir = await mkdtemp(path.join(tmpdir(), "kyoube-notify-"));
+  policyDir = path.join(dir, "visibility");
+});
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
-interface SetupOptions { interactions?: Array<Record<string, unknown>>; issue?: Record<string, unknown>; statuses?: Array<number | Error>; members?: ReturnType<typeof member>[]; realTransport?: boolean; pushTimeoutMs?: number; beforeSetup?: (harness: ReturnType<typeof createTestHarness>) => void }
+interface SetupOptions { interactions?: Array<Record<string, unknown>>; issue?: Record<string, unknown>; moreIssues?: Array<Record<string, unknown>>; statuses?: Array<number | Error>; members?: ReturnType<typeof member>[]; realTransport?: boolean; pushTimeoutMs?: number; beforeSetup?: (harness: ReturnType<typeof createTestHarness>) => void }
 
 async function setup(options: SetupOptions = {}) {
   const harness = createTestHarness({ manifest });
   harness.seed({
     companies: [{ id: COMPANY, name: "Acme", issuePrefix: "ACM" } as never],
     agents: [{ id: AGENT, companyId: COMPANY, name: "Ada" } as never],
-    issues: [{ id: ISSUE, companyId: COMPANY, identifier: "ACM-1", title: "Launch post", status: "in_progress", createdByUserId: "owner", assigneeUserId: "operator", ...options.issue } as never],
+    issues: [{ id: ISSUE, companyId: COMPANY, identifier: "ACM-1", title: "Launch post", status: "in_progress", createdByUserId: "owner", assigneeUserId: "operator", ...options.issue } as never, ...(options.moreIssues ?? []) as never[]],
     issueInteractions: (options.interactions ?? []) as never,
     approvals: [{ id: "ap1", companyId: COMPANY, type: "hire_agent", status: "pending", requestedByAgentId: AGENT, payload: { name: "Mo" } } as never],
     accessMembers: (options.members ?? [member("owner", "owner"), member("admin", "admin"), member("operator", "operator"), member("viewer", "viewer"), member("left", "admin", "archived")]) as never,
   });
   options.beforeSetup?.(harness);
   const { sent, transport } = fakeTransport(options.statuses ?? []);
-  const plugin = createNotifyPlugin({ pushTimeoutMs: options.pushTimeoutMs, ...(options.realTransport ? {} : { transport }), sleep: async () => {}, configPath: path.join(dir, "config.json"), testEndpointPath: path.join(dir, "push-test-endpoint") });
+  const plugin = createNotifyPlugin({ policyReader: createPolicyReader({ dir: policyDir, checkMs: 0 }), pushTimeoutMs: options.pushTimeoutMs, ...(options.realTransport ? {} : { transport }), sleep: async () => {}, configPath: path.join(dir, "config.json"), testEndpointPath: path.join(dir, "push-test-endpoint") });
   await plugin.definition.setup(harness.ctx);
   const devices = new Map<string, TestDevice>();
   const subscribe = async (userId: string) => {
@@ -48,6 +54,25 @@ async function setup(options: SetupOptions = {}) {
   // A fresh eventId per emit: the worker drops an event id it has already handled.
   const emit = (eventType: string, base: Partial<PluginEvent>, payload: unknown = {}) => harness.emit(eventType as never, payload, { companyId: COMPANY, eventId: randomUUID(), ...base });
   return { harness, sent, subscribe, pushes, emit };
+}
+
+/**
+ * Turns the company need-to-know, with real policy files. `seesAll` is a group that sees every
+ * work object; `projects` says who is in a group that includes each project.
+ */
+async function restrict(seesAll: string[] = [], projects: Record<string, string[]> = {}) {
+  const writtenAt = "2026-10-23T00:00:00.000Z";
+  const policy = compileCompanyPolicy({
+    companyId: COMPANY,
+    mode: "need_to_know",
+    writtenAt,
+    groups: [
+      ...Object.entries(projects).map(([projectId, members]) => ({ seesAll: false, members, projects: [projectId] })),
+      { seesAll: true, members: seesAll, projects: [] },
+    ],
+  });
+  if (!policy) throw new Error("expected a need-to-know policy");
+  await writePolicyFiles({ dir: policyDir, index: compileIndex([{ companyId: COMPANY, mode: "need_to_know" }], writtenAt), companies: [policy] });
 }
 
 const openQuestion = (over: Record<string, unknown> = {}) => ({ id: "q1", companyId: COMPANY, issueId: ISSUE, kind: "request_confirmation", status: "pending", title: "Ship it?", createdByAgentId: AGENT, ...over });
@@ -121,6 +146,117 @@ describe("opt-ins", () => {
     await harness.performAction("notify.prefs", { comments: true }, { actor: { type: "user", userId: "operator" }, companyId: COMPANY });
     await emit("issue.comment.created", { entityType: "issue", entityId: ISSUE, actorType: "agent", actorId: AGENT });
     expect(pushes().map((p) => [p.endpoint, p.payload.title])).toEqual([[operator.subscription.endpoint, "Ada commented on ACM-1"]]);
+  });
+});
+
+describe("need-to-know visibility", () => {
+  const HIDDEN_PROJECT = "55555555-5555-4555-8555-555555555555";
+  const PARENT = "66666666-6666-4666-8666-666666666666";
+  const people = [member("owner", "owner"), member("admin", "admin"), member("operator", "operator"), member("scout", "operator"), member("viewer", "viewer")];
+  const byAgent = { entityType: "issue", entityId: ISSUE, actorType: "agent" as const, actorId: AGENT };
+  const sorted = (endpoints: string[]) => [...endpoints].sort();
+  const problems = (logs: Array<{ level: string }>) => logs.filter((entry) => entry.level === "warn" || entry.level === "error");
+  const unreadable = () => rm(path.join(policyDir, `${COMPANY}.json`));
+
+  it("sends an approval notification to the owner, an admin and a sees-all operator, not to a restricted operator or viewer", async () => {
+    const { subscribe, pushes, emit } = await setup({ members: people });
+    await restrict(["scout"]);
+    const reached = [await subscribe("owner"), await subscribe("admin"), await subscribe("scout")];
+    await subscribe("operator"); await subscribe("viewer");
+    await emit("approval.created", { entityType: "approval", entityId: "ap1", actorType: "agent", actorId: AGENT });
+    expect(sorted(pushes().map((p) => p.endpoint))).toEqual(sorted(reached.map((device) => device.subscription.endpoint)));
+  });
+
+  it("still sends an approval notification to owners and admins when the policy cannot be read", async () => {
+    const { harness, subscribe, pushes, emit } = await setup({ members: people });
+    await restrict(["scout"]);
+    await unreadable();
+    const reached = [await subscribe("owner"), await subscribe("admin")];
+    await subscribe("operator"); await subscribe("scout");
+    await emit("approval.created", { entityType: "approval", entityId: "ap1", actorType: "agent", actorId: AGENT });
+    expect(sorted(pushes().map((p) => p.endpoint))).toEqual(sorted(reached.map((device) => device.subscription.endpoint)));
+    expect(problems(harness.logs)).toEqual([]);
+  });
+
+  it("does not send a question to a person who cannot see the task, and does send the other one", async () => {
+    const { harness, subscribe, pushes, emit } = await setup({
+      members: people,
+      issue: { projectId: HIDDEN_PROJECT },
+      interactions: [openQuestion({ addresseeUserId: "viewer" }), openQuestion({ id: "q2", addresseeUserId: "operator" })],
+    });
+    await restrict();
+    await subscribe("viewer");
+    const operator = await subscribe("operator");
+    await emit("issue.comment.created", byAgent);
+    expect(pushes().map((p) => p.endpoint)).toEqual([operator.subscription.endpoint]);
+    expect(problems(harness.logs)).toEqual([]);
+  });
+
+  it("sends a question nowhere, quietly, when nobody addressed can see the task", async () => {
+    const { harness, subscribe, sent, emit } = await setup({ members: people, issue: { projectId: HIDDEN_PROJECT }, interactions: [openQuestion({ addresseeUserId: "viewer" })] });
+    await restrict();
+    await subscribe("viewer");
+    await emit("issue.comment.created", byAgent);
+    expect(sent).toHaveLength(0);
+    expect(problems(harness.logs)).toEqual([]);
+  });
+
+  it("sends a question to a restricted person who sees the task through their group's project", async () => {
+    const { subscribe, pushes, emit } = await setup({ members: people, issue: { projectId: HIDDEN_PROJECT }, interactions: [openQuestion({ addresseeUserId: "viewer" })] });
+    await restrict([], { [HIDDEN_PROJECT]: ["viewer"] });
+    const viewer = await subscribe("viewer");
+    await emit("issue.comment.created", byAgent);
+    expect(pushes().map((p) => p.endpoint)).toEqual([viewer.subscription.endpoint]);
+  });
+
+  it("sends a question to a restricted person who sees the task through its parent", async () => {
+    const parent = { id: PARENT, companyId: COMPANY, identifier: "ACM-0", title: "Campaign", status: "in_progress", createdByUserId: "viewer" };
+    const { subscribe, pushes, emit } = await setup({ members: people, moreIssues: [parent], issue: { parentId: PARENT }, interactions: [openQuestion({ addresseeUserId: "viewer" })] });
+    await restrict();
+    const viewer = await subscribe("viewer");
+    await emit("issue.comment.created", byAgent);
+    expect(pushes().map((p) => p.endpoint)).toEqual([viewer.subscription.endpoint]);
+  });
+
+  it("keeps telling a restricted creator and assignee about their own task", async () => {
+    const { subscribe, pushes, emit } = await setup({ members: people, issue: { status: "done", projectId: HIDDEN_PROJECT, createdByUserId: "scout" } });
+    await restrict();
+    const reached = [await subscribe("scout"), await subscribe("operator")];
+    await emit("issue.updated", byAgent, { status: "done", _previous: { status: "in_progress" } });
+    expect(sorted(pushes().map((p) => p.endpoint))).toEqual(sorted(reached.map((device) => device.subscription.endpoint)));
+  });
+
+  it("tells only people who can read the task that it is done when the policy cannot be read", async () => {
+    const { harness, subscribe, pushes, emit } = await setup({ members: people, issue: { status: "done" } });
+    await restrict();
+    await unreadable();
+    const owner = await subscribe("owner");
+    await subscribe("operator");
+    await emit("issue.updated", byAgent, { status: "done", _previous: { status: "in_progress" } });
+    expect(pushes().map((p) => p.endpoint)).toEqual([owner.subscription.endpoint]);
+    expect(problems(harness.logs)).toEqual([]);
+  });
+
+  it("sends a comment notification only to people who can read the task when the policy cannot be read", async () => {
+    const { harness, subscribe, pushes, emit } = await setup({ members: people });
+    await restrict();
+    await unreadable();
+    const owner = await subscribe("owner");
+    await subscribe("operator");
+    for (const userId of ["owner", "operator"]) await harness.performAction("notify.prefs", { comments: true }, { actor: { type: "user", userId }, companyId: COMPANY });
+    await emit("issue.comment.created", byAgent);
+    expect(pushes().map((p) => p.endpoint)).toEqual([owner.subscription.endpoint]);
+    expect(problems(harness.logs)).toEqual([]);
+  });
+
+  it("picks up a policy change at the next event", async () => {
+    const { subscribe, pushes, emit } = await setup({ members: people });
+    const operator = await subscribe("operator");
+    await emit("approval.created", { entityType: "approval", entityId: "ap1", actorType: "agent", actorId: AGENT });
+    expect(pushes().map((p) => p.endpoint)).toEqual([operator.subscription.endpoint]);
+    await restrict();
+    await emit("approval.created", { entityType: "approval", entityId: "ap1", actorType: "agent", actorId: AGENT });
+    expect(pushes()).toHaveLength(1);
   });
 });
 

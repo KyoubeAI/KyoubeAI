@@ -70,9 +70,12 @@ export function askRecipients(interaction: InteractionLike, issue: IssueLike, me
   return [];
 }
 
-/** The core lets any member with write access decide an approval, so: every active member except viewers. */
-export function approvalRecipients(members: ActiveMember[], actorUserId: string | null): string[] {
-  return only(members, members.filter((member) => member.role !== "viewer").map((member) => member.userId), actorUserId);
+/**
+ * The core lets any member with write access decide an approval, so: every active member except viewers.
+ * Need-to-know hides approvals entirely from `restricted` people, so they are left out too.
+ */
+export function approvalRecipients(members: ActiveMember[], actorUserId: string | null, restricted: Set<string>): string[] {
+  return only(members, members.filter((member) => member.role !== "viewer" && !restricted.has(member.userId)).map((member) => member.userId), actorUserId);
 }
 
 /** A task's human creator and assignee, minus whoever caused the event. */

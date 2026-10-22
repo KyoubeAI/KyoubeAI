@@ -1,5 +1,6 @@
 import { definePlugin, type PaperclipPlugin, type PluginContext } from "@paperclipai/plugin-sdk";
 import type { PluginPerformActionContext } from "@paperclipai/plugin-sdk/protocol";
+import type { PolicyReader } from "@kyoube/visibility";
 import { NotifyError } from "./errors.js";
 import { PLUGIN_ID, SUBSCRIBED_EVENTS } from "./manifest.js";
 import { testMessage } from "./messages.js";
@@ -7,6 +8,7 @@ import { Notifier, type NotifierDeps } from "./notifier.js";
 import { readPublicUrl, readTestEndpoint } from "./runtime-config.js";
 import { activeMembers } from "./routing.js";
 import { NotifyStore, type DeviceRecord } from "./store.js";
+import { createVisibilityGate } from "./visibility.js";
 import { parseSubscription } from "./webpush/endpoints.js";
 import { sendPush, type PushTransport } from "./webpush/send.js";
 import { vapidSubject } from "./webpush/vapid.js";
@@ -19,6 +21,8 @@ export interface NotifyPluginDeps {
   testEndpointPath?: string;
   /** How long one push request may take before it counts as a network error. Default 10 s. */
   pushTimeoutMs?: number;
+  /** Test seam: where the visibility policy is read from (default: the app's policy files, re-checked every two seconds). */
+  policyReader?: PolicyReader;
 }
 
 /** What the UI sees of a device: everything but the browser's keys. */
@@ -61,6 +65,7 @@ export function createNotifyPlugin(deps: NotifyPluginDeps = {}): PaperclipPlugin
         agents: ctx.agents as unknown as NotifierDeps["agents"],
         companies: ctx.companies as unknown as NotifierDeps["companies"],
         members: ctx.access.members,
+        visibility: createVisibilityGate({ reader: deps.policyReader, issues: ctx.issues as unknown as Parameters<typeof createVisibilityGate>[0]["issues"] }),
         store,
         send: (target, message) => sendPush(target, message, { vapid, subject, transport, nowSeconds: () => Math.floor(now() / 1000), sleep }),
         logger: ctx.logger,

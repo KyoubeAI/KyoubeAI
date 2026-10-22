@@ -1,6 +1,6 @@
 {
   "name": "@kyoube/plugin-notify",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Web Push notifications for KyoubeAI: tells people on their phone or desktop when an agent asks them something, an approval is waiting, or their task is done or blocked (Paperclip plugin)",
   "license": "BUSL-1.1",
   "type": "module",
@@ -25,6 +25,7 @@
     "react": ">=18"
   },
   "devDependencies": {
+    "@kyoube/visibility": "workspace:*",
     "@types/node": "^24.0.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",

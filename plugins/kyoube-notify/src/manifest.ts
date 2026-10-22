@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 export const PLUGIN_ID = "kyoube.notify";
-export const PLUGIN_VERSION = "0.1.0";
+export const PLUGIN_VERSION = "0.2.0";
 /** The Notifications page: `/<prefix>/notifications` (not a reserved company route segment). */
 export const NOTIFICATIONS_ROUTE = "notifications";
 

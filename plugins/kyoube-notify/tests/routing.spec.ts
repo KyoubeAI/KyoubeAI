@@ -48,8 +48,14 @@ describe("agent questions", () => {
 
 describe("approvals", () => {
   it("go to every active member except viewers, never to whoever asked", () => {
-    expect(approvalRecipients(members, null)).toEqual(["owner", "admin", "operator"]);
-    expect(approvalRecipients(members, "admin")).toEqual(["owner", "operator"]);
+    expect(approvalRecipients(members, null, new Set())).toEqual(["owner", "admin", "operator"]);
+    expect(approvalRecipients(members, "admin", new Set())).toEqual(["owner", "operator"]);
+  });
+
+  it("leaves out restricted people", () => {
+    expect(approvalRecipients(members, null, new Set(["operator"]))).toEqual(["owner", "admin"]);
+    expect(approvalRecipients(members, "admin", new Set(["operator", "viewer"]))).toEqual(["owner"]);
+    expect(approvalRecipients(members, null, new Set(["owner", "admin", "operator"]))).toEqual([]);
   });
 });
 
