@@ -1,6 +1,6 @@
 import esbuild from "esbuild";
 import { execSync } from "node:child_process";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 
 await rm("dist", { recursive: true, force: true });
 
@@ -15,3 +15,5 @@ await esbuild.build({ entryPoints: ["src/core-entry.ts"], outfile: "dist/decide.
 // Declarations for the workspace packages' typecheck. TypeScript 7's tsc rejects file
 // arguments next to a tsconfig.json (TS5112), so they come from a project file.
 execSync("pnpm exec tsc -p tsconfig.build.json", { stdio: "inherit" });
+// The tests import the bundled decide.mjs; its types are core-entry's.
+await writeFile("dist/decide.d.mts", 'export * from "./core-entry.js";\n');

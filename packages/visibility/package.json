@@ -11,7 +11,7 @@
   "files": ["dist"],
   "scripts": {
     "build": "node build.mjs",
-    "test": "node build.mjs && vitest run",
+    "test": "node build.mjs && vitest run && ! grep -q node_modules dist/decide.mjs",
     "typecheck": "node build.mjs && tsc --noEmit"
   },
   "devDependencies": { "@types/node": "^24.0.0", "esbuild": "^0.28.2", "typescript": "^7.0.2", "vitest": "^5.0.0" },
