@@ -17,6 +17,11 @@ export async function boardPost<T = unknown>(path: string, body: unknown = {}, f
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  return readBoardResponse<T>(response);
+}
+
+/** A board API answer's JSON, or a `BoardApiError` with the core's own message for a non-2xx. */
+export async function readBoardResponse<T>(response: Response): Promise<T> {
   const text = await response.text();
   let json: unknown = null;
   try { json = text ? JSON.parse(text) : null; } catch { json = null; }

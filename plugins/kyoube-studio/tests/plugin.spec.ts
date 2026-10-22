@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import { createTestHarness } from "@paperclipai/plugin-sdk/testing";
 import manifest from "../src/manifest.js";
 import { createStudioPlugin } from "../src/plugin.js";
-import type { HomeSnapshot, TeamSnapshot } from "../src/model.js";
 
 const COMPANY = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
@@ -19,7 +18,7 @@ function issue(id: string, companyId: string, identifier: string, status: string
   return { id, companyId, identifier, title: `Task ${identifier}`, status, assigneeAgentId, hiddenAt: null, createdAt: at(minutesAgo + 10), updatedAt: at(minutesAgo), completedAt: status === "done" ? at(minutesAgo) : null } as never;
 }
 
-async function setup(clock = { now: NOW }, rulesTokenPath?: string) {
+async function setup(rulesTokenPath?: string) {
   const harness = createTestHarness({ manifest });
   harness.seed({
     agents: [agent("a1", COMPANY, "Ambassador Content Agent", "running", "sparkles"), agent("a2", COMPANY, "AI Manager", "idle"), agent("x1", OTHER, "Someone Else", "running")],
@@ -30,71 +29,62 @@ async function setup(clock = { now: NOW }, rulesTokenPath?: string) {
       { id: "m2", companyId: COMPANY, principalType: "user", principalId: "member-1", status: "active", membershipRole: "member", grants: [], createdAt: "2026-01-01", updatedAt: "2026-01-01" },
     ] as never,
   });
-  const plugin = createStudioPlugin({ now: () => clock.now, rulesTokenPath });
+  const plugin = createStudioPlugin({ rulesTokenPath });
   await plugin.definition.setup(harness.ctx);
-  return { harness, clock, plugin };
+  return { harness, plugin };
 }
 
 describe("kyoube.studio worker", () => {
-  it("serves the team roster for the caller's company only", async () => {
+  it("serves the company's agents only", async () => {
     const { harness } = await setup();
-    const team = await harness.getData<TeamSnapshot>("team", { companyId: COMPANY });
-    expect(team.members.map((m) => m.name)).toEqual(["Ambassador Content Agent", "AI Manager"]);
-    expect(team.members[0]).toMatchObject({ state: "working", detail: "Task BAP-1", icon: "sparkles" });
+    harness.seed({ agents: [agent("t1", COMPANY, "Retired", "terminated")] });
+    const { agents } = await harness.getData<{ agents: Array<Record<string, unknown>> }>("agents", { companyId: COMPANY });
+    expect(agents.map((row) => row.id)).toEqual(["a1", "a2"]);
+    expect(agents[0]).toMatchObject({ name: "Ambassador Content Agent", urlKey: "ambassador-content-agent", icon: "sparkles", status: "running" });
   });
 
-  it("serves Home: what needs you, the team, the week and the latest updates", async () => {
+  it("serves the agent profile without tasks", async () => {
     const { harness } = await setup();
-    const home = await harness.getData<HomeSnapshot>("home", { companyId: COMPANY });
-    expect(home.needs.map((n) => n.kind)).toEqual(["approval", "review"]);
-    expect(home.needs[0]!.title).toBe("Approval requested: New pricing page");
-    expect(home.needsTotal).toBe(2);
-    expect(home.doneThisWeek).toBe(1);
-    expect(home.updates[0]!.identifier).toBe("BAP-1");
-    expect(home.steps).toEqual({ hireAgent: true, giveTask: true, seenThrough: false });
+    const read = await harness.getData<Record<string, unknown>>("agent", { companyId: COMPANY, agentRef: "ambassador-content-agent", userId: "owner-1" });
+    expect(read).toMatchObject({ found: true, agent: { id: "a1", name: "Ambassador Content Agent", status: "running" }, access: { canChangeAgents: false, canManage: true, askLevel: "line" } });
+    // Its tasks, its current task and its notes are read in the browser, as the signed-in person.
+    expect(Object.keys(read).sort()).toEqual(["access", "agent", "found"]);
+    expect(await harness.getData("agent", { companyId: COMPANY, agentRef: "someone-else" })).toEqual({ found: false, agent: null, access: null });
+    await expect(harness.getData("agent", { companyId: COMPANY })).rejects.toThrow(/agentRef is required/);
+  });
+
+  it("sends an agent's skills to the browser but nothing else from its adapter configuration", async () => {
+    const { harness } = await setup();
+    const config = { env: { OPENAI_API_KEY: "sk-secret" }, paperclipSkillSync: { desiredSkills: ["plugin/kyoube-apps/kyoube-data"] } };
+    harness.seed({ agents: [{ ...(agent("w1", COMPANY, "Writer", "idle") as object), adapterType: "pi_local", adapterConfig: config } as never] });
+    const read = await harness.getData<{ agent: Record<string, unknown> }>("agent", { companyId: COMPANY, agentRef: "writer" });
+    expect(read.agent).toMatchObject({ adapterType: "pi_local", adapterConfig: { paperclipSkillSync: { desiredSkills: ["plugin/kyoube-apps/kyoube-data"] } } });
+    expect(JSON.stringify(read)).not.toContain("sk-secret");
+    expect(JSON.stringify(await harness.getData("agents", { companyId: COMPANY }))).not.toContain("sk-secret");
   });
 
   it("serves the Workspace figures and marks owners and admins", async () => {
     const { harness } = await setup();
-    expect(await harness.getData("workspace", { companyId: COMPANY, userId: "owner-1" })).toMatchObject({ agents: 2, people: 2, openTasks: 2, isAdmin: true });
+    expect(await harness.getData("workspace", { companyId: COMPANY, userId: "owner-1" })).toMatchObject({ agents: 2, people: 2, isAdmin: true });
     expect(await harness.getData("workspace", { companyId: COMPANY, userId: "member-1" })).toMatchObject({ isAdmin: false });
   });
 
-  it("serves an agent's profile, with its own notes on the task it is working on", async () => {
+  it("workspace figures have no open-task count", async () => {
     const { harness } = await setup();
-    harness.seed({ issueComments: [
-      { id: "c1", companyId: COMPANY, issueId: "i1", authorAgentId: "a1", authorUserId: null, body: "Drafted post 1 of 3", createdAt: at(5), updatedAt: at(5) },
-      { id: "c2", companyId: COMPANY, issueId: "i1", authorAgentId: null, authorUserId: "owner-1", body: "Looks good", createdAt: at(4), updatedAt: at(4) },
-    ] as never });
-    const profile = await harness.getData<{ found: boolean; state: string; current: { task: { identifier: string }; notes: Array<{ text: string }> } }>("agent", { companyId: COMPANY, agentRef: "ambassador-content-agent" });
-    expect(profile.found).toBe(true);
-    expect(profile.state).toBe("working");
-    expect(profile.current.task.identifier).toBe("BAP-1");
-    expect(profile.current.notes.map((n) => n.text)).toEqual(["Drafted post 1 of 3"]);
-    expect(await harness.getData("agent", { companyId: COMPANY, agentRef: "someone-else" })).toEqual({ found: false });
-    await expect(harness.getData("agent", { companyId: COMPANY })).rejects.toThrow(/agentRef is required/);
+    expect(await harness.getData("workspace", { companyId: COMPANY, userId: "owner-1" })).toEqual({ agents: 2, people: 2, projects: 0, isAdmin: true });
   });
 
-  it("reads an agent's profile fresh, not from the roster's short cache", async () => {
+  it("reads the agents fresh on every call", async () => {
     const { harness } = await setup();
-    await harness.getData("team", { companyId: COMPANY });
+    await harness.getData("agents", { companyId: COMPANY });
     harness.seed({ agents: [agent("a3", COMPANY, "New Hire", "idle")] });
-    const profile = await harness.getData<{ found: boolean }>("agent", { companyId: COMPANY, agentRef: "new-hire" });
-    expect(profile.found).toBe(true);
+    expect((await harness.getData<{ agents: unknown[] }>("agents", { companyId: COMPANY })).agents).toHaveLength(3);
+    expect(await harness.getData("agent", { companyId: COMPANY, agentRef: "new-hire" })).toMatchObject({ found: true });
   });
 
   it("refuses a call without a company", async () => {
     const { harness } = await setup();
-    await expect(harness.getData("team", {})).rejects.toThrow(/companyId is required/);
-  });
-
-  it("reuses one snapshot for a few seconds, then reads again", async () => {
-    const { harness, clock } = await setup();
-    await harness.getData("team", { companyId: COMPANY });
-    harness.seed({ agents: [agent("a3", COMPANY, "New Hire", "idle")] });
-    expect((await harness.getData<TeamSnapshot>("team", { companyId: COMPANY })).total).toBe(2);
-    clock.now += 10_000;
-    expect((await harness.getData<TeamSnapshot>("team", { companyId: COMPANY })).total).toBe(3);
+    for (const key of ["agents", "agent", "workspace"]) await expect(harness.getData(key, {})).rejects.toThrow(/companyId is required/);
   });
 });
 
@@ -146,6 +136,8 @@ describe("an agent's permission to change agents", () => {
 
   it("declares the capabilities it uses", () => {
     expect(manifest.capabilities).toEqual(expect.arrayContaining(["authorization.grants.read", "authorization.grants.write"]));
+    // Tasks, approvals and comments are read in the browser as the signed-in person, so the core scopes them.
+    for (const gone of ["issues.read", "approvals.read", "issue.comments.read"]) expect(manifest.capabilities).not.toContain(gone);
   });
 });
 
@@ -202,21 +194,21 @@ describe("an agent's ask level", () => {
   });
 
   it("gives the loop the map through its route, with the rules token or an owner", async () => {
-    const { harness, plugin } = await setup(undefined, TOKEN_PATH);
+    const { harness, plugin } = await setup(TOKEN_PATH);
     await harness.performAction("agent.change-ask-level", { agentId: "a1", level: "any" }, asUser("owner-1"));
     expect(await plugin.definition.onApiRequest!(request({ rulesToken: TOKEN }, { actorType: "user", actorId: "member-1", userId: "member-1" }))).toEqual({ status: 200, body: { levels: { a1: "any" } } });
     expect(await plugin.definition.onApiRequest!(request({}))).toEqual({ status: 200, body: { levels: { a1: "any" } } });
   });
 
   it("refuses the route to agents, to other members, and to a wrong token", async () => {
-    const { plugin } = await setup(undefined, TOKEN_PATH);
+    const { plugin } = await setup(TOKEN_PATH);
     expect(await plugin.definition.onApiRequest!(request({}, { actorType: "agent", actorId: "a1" }))).toMatchObject({ status: 403 });
     expect(await plugin.definition.onApiRequest!(request({}, { actorType: "user", actorId: "member-1", userId: "member-1" }))).toMatchObject({ status: 403 });
     expect(await plugin.definition.onApiRequest!(request({ rulesToken: "ef".repeat(32) }, { actorType: "user", actorId: "member-1", userId: "member-1" }))).toMatchObject({ status: 403 });
   });
 
   it("drops entries for agents that are gone or terminated", async () => {
-    const { harness, plugin } = await setup(undefined, TOKEN_PATH);
+    const { harness, plugin } = await setup(TOKEN_PATH);
     harness.seed({ agents: [agent("t1", COMPANY, "Retired", "terminated")] });
     await harness.ctx.state.set({ scopeKind: "company", scopeId: COMPANY, stateKey: "ask-levels" }, { a1: "none", gone: "any", t1: "any" });
     expect(await plugin.definition.onApiRequest!(request({ rulesToken: TOKEN }))).toEqual({ status: 200, body: { levels: { a1: "none" } } });
@@ -224,7 +216,7 @@ describe("an agent's ask level", () => {
   });
 
   it("answers 404 for a route it does not own", async () => {
-    const { plugin } = await setup(undefined, TOKEN_PATH);
+    const { plugin } = await setup(TOKEN_PATH);
     expect(await plugin.definition.onApiRequest!({ ...(request({ rulesToken: TOKEN }) as object), routeKey: "other" } as never)).toMatchObject({ status: 404 });
   });
 

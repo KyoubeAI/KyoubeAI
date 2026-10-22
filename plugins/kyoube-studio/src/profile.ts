@@ -1,7 +1,7 @@
 /**
  * The agent profile (Concept C): everything the Studio agent page shows about
  * one agent, shaped from the same snapshot as the roster and Home. Pure: the
- * worker passes in the agent's comments on its current task.
+ * page passes in the agent's comments on its current task.
  */
 import type { AskLevel } from "./ask-levels.js";
 import { summarizeTeam, toMs, type AgentLike, type AgentState, type IssueLike } from "./model.js";
@@ -74,7 +74,7 @@ export interface AgentProfile {
   /** The core pages the profile's tab row links to. */
   links: { instructions: string; skills: string; runs: string; settings: string; classic: string };
   /**
-   * Added by the worker: whether it may change agents, which agents it may ask (null for a
+   * From the worker's `agent` read: whether it may change agents, which agents it may ask (null for a
    * built-in agent, which keeps the default), and whether the viewer may change either.
    * Null when the host would not say.
    */

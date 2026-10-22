@@ -1,11 +1,12 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import type { PluginSidebarProps } from "@paperclipai/plugin-sdk/ui";
 import { useHostLocation, useHostNavigation } from "@paperclipai/plugin-sdk/ui";
-import type { TeamMember, TeamSnapshot } from "../model.js";
+import { summarizeTeam, type TeamMember, type TeamSnapshot } from "../model.js";
 import { WORKSPACE_ROUTE } from "../manifest.js";
 import { agentRedirectTarget, coreAgentPage, coreAvatarCss } from "./agent-route.js";
+import { useTeamData } from "./board-data.js";
 import { Icon } from "./icons.js";
-import { Avatar, SidebarLink, isActivePath, useCompanyParams, usePolledData } from "./shared.js";
+import { Avatar, SidebarLink, isActivePath } from "./shared.js";
 import { ensureStyles } from "./styles.js";
 import { timeAgo } from "./time.js";
 
@@ -99,20 +100,22 @@ export function StudioTeam(_props: PluginSidebarProps) {
   }, []);
   const navigation = useHostNavigation();
   const location = useHostLocation();
-  const team = usePolledData<TeamSnapshot>("team", useCompanyParams(), TEAM_POLL_MS);
-  useCoreAgentPages(team.data);
-  const members = team.data?.members ?? [];
-  const total = team.data?.total ?? 0;
+  const source = useTeamData(TEAM_POLL_MS);
+  // Each agent's state comes from the tasks the signed-in person may see.
+  const team = useMemo(() => (source.agents && source.board ? summarizeTeam(source.agents, source.board.issues) : null), [source.agents, source.board]);
+  useCoreAgentPages(team);
+  const members = team?.members ?? [];
+  const total = team?.total ?? 0;
   return (
     <div data-kyoube-studio="team" className="ks-team">
       <SectionLabel text={total > 0 ? `Team · ${total}` : "Team"}>
         <a {...navigation.linkProps("/agents/all")} className="ks-icon-btn" title="All agents and the org chart" aria-label="All agents and the org chart"><Icon name="org" size={14} /></a>
         <a {...navigation.linkProps("/agents/new")} className="ks-icon-btn" title="Hire an agent" aria-label="Hire an agent"><Icon name="plus" size={14} /></a>
       </SectionLabel>
-      {team.loading ? (
+      {!team && !source.error ? (
         <><div className="ks-skeleton" /><div className="ks-skeleton" /></>
-      ) : !team.data ? (
-        // The first read failed (worker restarting, host busy). The poll retries; say so rather than "no agents".
+      ) : !team ? (
+        // The first reads failed (worker restarting, host busy). The poll retries; say so rather than "no agents".
         <p className="ks-empty" role="status">Couldn’t load the team. Retrying…</p>
       ) : members.length === 0 ? (
         <p className="ks-empty">No agents yet. <a {...navigation.linkProps("/agents/new")}>Hire your first</a></p>

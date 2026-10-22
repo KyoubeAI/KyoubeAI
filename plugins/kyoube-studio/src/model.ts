@@ -1,10 +1,11 @@
 /**
  * Pure functions from the host's agents, tasks and approvals to what Studio
- * shows. No I/O here: plugin.ts reads the snapshot, these shape it, and the
- * tests exercise them directly.
+ * shows. No I/O here: the pages read the agents from the worker and the tasks
+ * and approvals from the core's board API (ui/board-data.ts), these shape
+ * them, and the tests exercise them directly.
  *
- * Dates arrive over the plugin bridge as ISO strings even where the SDK types
- * say `Date`, so everything goes through `toMs`.
+ * Dates arrive over the plugin bridge and the board API as ISO strings even
+ * where the SDK types say `Date`, so everything goes through `toMs`.
  */
 
 export type AgentState = "working" | "waiting" | "attention" | "paused" | "idle";

@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEven
 import type { PluginPageProps } from "@paperclipai/plugin-sdk/ui";
 import { useHostContext, useHostLocation, useHostNavigation, usePluginAction, usePluginToast } from "@paperclipai/plugin-sdk/ui";
 import type { AskLevel } from "../ask-levels.js";
-import type { TeamSnapshot } from "../model.js";
-import type { AgentProfile, ProfileResult, ProfileTask } from "../profile.js";
+import { summarizeTeam } from "../model.js";
+import { buildProfile, type AgentProfile, type ProfileAgentLike, type ProfileTask } from "../profile.js";
 import { BoardApiError, assignTask, setAgentOnDuty } from "./board-api.js";
+import { useIssueComments, useTeamData } from "./board-data.js";
 import { Icon } from "./icons.js";
-import { Avatar, useCompanyParams, usePolledData } from "./shared.js";
+import { Avatar, usePolledData } from "./shared.js";
 import { ensureStyles } from "./styles.js";
 import { timeAgo } from "./time.js";
 
@@ -305,22 +306,42 @@ function ChangeAccess({ profile, access, onChanged }: { profile: AgentProfile; a
   );
 }
 
+/** The worker's `agent` read: the agent and what it may do (null when the host would not say). Its tasks are read here. */
+type AgentRead = { found: true; agent: ProfileAgentLike; access: AgentProfile["access"] } | { found: false; agent: null; access: null };
+
 function Profile({ agentRef, view }: { agentRef: string; view: "overview" | "tasks" }) {
   const host = useHostContext();
   const navigation = useHostNavigation();
   const params = useMemo(() => ({ companyId: host.companyId, agentRef, userId: host.userId }), [host.companyId, agentRef, host.userId]);
-  const result = usePolledData<ProfileResult>("agent", params, PROFILE_POLL_MS);
+  const result = usePolledData<AgentRead>("agent", params, PROFILE_POLL_MS);
+  const source = useTeamData(PROFILE_POLL_MS);
   const [assigning, setAssigning] = useState(false);
   const data = result.data;
   // Only ever render the agent that was asked for (a poll can still be answering for the previous one).
-  const profile = data && data.found && (data.agent.urlKey === agentRef || data.agent.id === agentRef) ? data : null;
+  const asked = data && data.found && (data.agent.urlKey === agentRef || data.agent.id === agentRef) ? data : null;
+  // The company's agents, with this one as its own read has it (a new hire may not be in the list yet).
+  const agents = useMemo(() => {
+    if (!asked || !source.agents) return null;
+    const listed = source.agents.some((row) => row.id === asked.agent.id);
+    return listed ? source.agents.map((row) => (row.id === asked.agent.id ? asked.agent : row)) : [...source.agents, asked.agent];
+  }, [asked, source.agents]);
+  const issues = source.board?.issues ?? null;
+  // The task it is working on, worked out from the tasks alone, says whose comments to read.
+  const currentTaskId = useMemo(() => {
+    if (!agents || !issues) return null;
+    const first = buildProfile(agentRef, agents, issues, [], Date.now());
+    return first.found ? first.current?.task.id ?? null : null;
+  }, [agentRef, agents, issues]);
+  const comments = useIssueComments(currentTaskId, PROFILE_POLL_MS);
+  const built = useMemo(() => (agents && issues ? buildProfile(agentRef, agents, issues, comments, Date.now()) : null), [agentRef, agents, issues, comments]);
+  const profile: AgentProfile | null = asked && built?.found ? { ...built, access: asked.access } : null;
 
   if (!profile) {
     return (
       <div className="ks-profile" data-kyoube-page="team">
         {data && !data.found ? (
           <div className="ks-panel ks-none">This agent does not exist or has been removed. <a {...navigation.linkProps("/team")}>See the team</a></div>
-        ) : result.error && !result.loading ? (
+        ) : (result.error && !result.loading) || source.error ? (
           <div className="ks-panel ks-none" role="status">Couldn’t load this agent. Retrying…</div>
         ) : (
           <div className="ks-prof"><span className="ks-skeleton ks-skeleton-avatar" /><div className="ks-prof-name"><span className="ks-skeleton" style={{ width: 280, height: 34 }} /><span className="ks-skeleton" style={{ width: 360 }} /></div></div>
@@ -341,7 +362,8 @@ function Profile({ agentRef, view }: { agentRef: string; view: "overview" | "tas
     { label: "Runs", to: profile.links.runs, current: false },
     { label: "Settings", to: profile.links.settings, current: false },
   ];
-  const refresh = () => { setAssigning(false); result.refresh(); };
+  // After a change, read the agent and its tasks again (the tasks fresh, past the short cache).
+  const refresh = () => { setAssigning(false); result.refresh(); source.refresh(); };
 
   return (
     <div className="ks-profile" data-kyoube-page="team" data-agent={agent.urlKey}>
@@ -438,8 +460,9 @@ const STATE_WORD = { working: "Working", waiting: "Waiting on you", attention: "
 
 function TeamIndex() {
   const navigation = useHostNavigation();
-  const team = usePolledData<TeamSnapshot>("team", useCompanyParams(), PROFILE_POLL_MS);
-  const members = team.data?.members ?? [];
+  const source = useTeamData(PROFILE_POLL_MS);
+  const team = useMemo(() => (source.agents && source.board ? summarizeTeam(source.agents, source.board.issues) : null), [source.agents, source.board]);
+  const members = team?.members ?? [];
   return (
     <div className="ks-ws" data-kyoube-page="team">
       <header className="ks-ws-head"><h1>Team</h1><p>Everyone who works here, and what they are doing now.</p></header>

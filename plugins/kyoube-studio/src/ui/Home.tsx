@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { PluginWidgetProps } from "@paperclipai/plugin-sdk/ui";
 import { useHostContext } from "@paperclipai/plugin-sdk/ui";
-import type { HomeSnapshot, NeedItem, NeedKind, UpdateItem } from "../model.js";
+import { buildHome, type NeedItem, type NeedKind, type UpdateItem } from "../model.js";
+import { useTeamData } from "./board-data.js";
 import { Icon, type IconName } from "./icons.js";
 import { memberDetail } from "./nav.js";
-import { Avatar, useCompanyNavigation, useCompanyParams, usePolledData } from "./shared.js";
+import { Avatar, useCompanyNavigation } from "./shared.js";
 import { ensureStyles } from "./styles.js";
 import { greeting, longDate, plural, timeAgo } from "./time.js";
 
@@ -37,15 +38,19 @@ export function StudioHome(_props: PluginWidgetProps) {
   ensureStyles();
   const host = useHostContext();
   const navigation = useCompanyNavigation();
-  const home = usePolledData<HomeSnapshot>("home", useCompanyParams(), HOME_POLL_MS);
+  const source = useTeamData(HOME_POLL_MS);
   const [dismissed, setDismissed] = useState(() => readDismissed(host.companyId));
-  const data = home.data;
+  // What needs you and the week, from the tasks and approvals the signed-in person may see.
+  const data = useMemo(
+    () => (source.agents && source.board ? buildHome(source.agents, source.board.issues, source.board.approvals, Date.now()) : null),
+    [source.agents, source.board],
+  );
   const now = new Date();
 
   if (!data) {
     return (
       <div className="ks-home" data-kyoube-studio="home">
-        <div className="ks-hello"><div><h2>{greeting(now)}.</h2><p>{longDate(now)}{home.error ? " · couldn’t load your team’s news yet, retrying…" : ""}</p></div></div>
+        <div className="ks-hello"><div><h2>{greeting(now)}.</h2><p>{longDate(now)}{source.error ? " · couldn’t load your team’s news yet, retrying…" : ""}</p></div></div>
       </div>
     );
   }
@@ -107,6 +112,7 @@ export function StudioHome(_props: PluginWidgetProps) {
               </a>
             ))
           )}
+          {source.board?.approvalsHidden ? <div className="ks-none">Approvals are not shown to you.</div> : null}
         </section>
 
         <section className="ks-panel" aria-label="Your team right now">

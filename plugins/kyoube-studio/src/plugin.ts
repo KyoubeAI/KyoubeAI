@@ -1,28 +1,50 @@
 import { definePlugin, type PaperclipPlugin, type PluginContext } from "@paperclipai/plugin-sdk";
-import { buildHome, summarizeTeam, type AgentLike, type ApprovalLike, type IssueLike } from "./model.js";
-import { buildProfile, type CommentLike, type ProfileAgentLike } from "./profile.js";
+import type { ProfileAgentLike } from "./profile.js";
 import { ASK_LEVELS_STATE_KEY, isBuiltInAgent, levelOf, parseAskLevel, parseAskLevels, pruneAskLevels, withAskLevel, type AskLevels } from "./ask-levels.js";
 import { rulesTokenMatches, RULES_TOKEN_PATH } from "./rules-token.js";
 
 type Params = Record<string, unknown>;
 type HostGrant = Parameters<PluginContext["authorization"]["grants"]["set"]>[0]["grants"][number];
+type HostAgent = Awaited<ReturnType<PluginContext["agents"]["list"]>>[number];
 
 export interface StudioPluginDeps {
-  now?: () => number;
-  /** How long one company's snapshot is reused, so a roster that polls and a Home that polls share one read. */
-  snapshotMs?: number;
   /** Where the kyoube CLI's rules token lives; tests point it at a temporary file. */
   rulesTokenPath?: string;
 }
 
-interface Snapshot {
-  agents: AgentLike[];
-  issues: IssueLike[];
-  approvals: ApprovalLike[];
+/**
+ * An agent as Studio's pages get it. Tasks, approvals and comments are not
+ * served here: the pages read them in the browser through the core's board
+ * API as the signed-in person, so the core's visibility rules apply. Of the
+ * adapter configuration only the skill keys go out: the rest (environment
+ * variables, keys) must never reach a browser.
+ */
+function studioAgent(agent: HostAgent): ProfileAgentLike {
+  const sync = agent.adapterConfig?.paperclipSkillSync as { desiredSkills?: unknown } | null | undefined;
+  const skills = (Array.isArray(sync?.desiredSkills) ? sync.desiredSkills : [])
+    .map((entry: unknown) => (typeof entry === "string" ? entry : (entry as { key?: unknown } | null)?.key))
+    .filter((key): key is string => typeof key === "string");
+  return {
+    id: agent.id,
+    name: agent.name,
+    urlKey: agent.urlKey,
+    title: agent.title,
+    icon: agent.icon,
+    status: agent.status,
+    errorReason: agent.errorReason ?? null,
+    lastHeartbeatAt: agent.lastHeartbeatAt,
+    updatedAt: agent.updatedAt,
+    role: agent.role,
+    reportsTo: agent.reportsTo,
+    adapterType: agent.adapterType,
+    adapterConfig: { paperclipSkillSync: { desiredSkills: skills } },
+    capabilities: agent.capabilities,
+    pausedAt: agent.pausedAt,
+    budgetMonthlyCents: agent.budgetMonthlyCents,
+    spentMonthlyCents: agent.spentMonthlyCents,
+  };
 }
 
-/** Tasks read per snapshot. The host lists newest activity first; older ones do not change what Studio shows. */
-const ISSUE_WINDOW = 500;
 /** Company roles that see the Terminal card on the Workspace page (the terminal plugin's default roles). */
 const ADMIN_ROLES = new Set(["owner", "admin"]);
 /**
@@ -61,32 +83,15 @@ interface AskLevelsRoute {
 }
 
 export function createStudioPlugin(deps: StudioPluginDeps = {}): PaperclipPlugin {
-  const now = deps.now ?? (() => Date.now());
-  const snapshotMs = deps.snapshotMs ?? 8_000;
-  const snapshots = new Map<string, { at: number; value: Promise<Snapshot> }>();
   const tokenPath = deps.rulesTokenPath ?? RULES_TOKEN_PATH;
   // `onApiRequest` runs outside `setup`, so its host adapter lives in this instance's closure.
   let askLevelsRoute: AskLevelsRoute | null = null;
 
   return definePlugin({
     async setup(ctx: PluginContext) {
-      /** One company's agents, tasks and pending approvals; `fresh` skips (and replaces) the short-lived cache. */
-      const load = (companyId: string, { fresh = false }: { fresh?: boolean } = {}): Promise<Snapshot> => {
-        const cached = snapshots.get(companyId);
-        if (!fresh && cached && now() - cached.at < snapshotMs) return cached.value;
-        const value = (async () => {
-          const [agents, issues, approvals] = await Promise.all([
-            ctx.agents.list({ companyId }),
-            ctx.issues.list({ companyId, limit: ISSUE_WINDOW }),
-            ctx.approvals.list({ companyId, status: "pending" }),
-          ]);
-          return { agents, issues, approvals } as unknown as Snapshot;
-        })();
-        snapshots.set(companyId, { at: now(), value });
-        // A failed read must not be served from the cache for the next 8 s.
-        value.catch(() => { if (snapshots.get(companyId)?.value === value) snapshots.delete(companyId); });
-        return value;
-      };
+      /** The company's agents that are not terminated, read fresh: pausing or hiring shows on the next refresh. */
+      const liveAgents = async (companyId: string): Promise<ProfileAgentLike[]> =>
+        (await ctx.agents.list({ companyId })).filter((agent) => agent.status !== "terminated").map(studioAgent);
 
       const levelsScope = (companyId: string) => ({ scopeKind: "company" as const, scopeId: companyId, stateKey: ASK_LEVELS_STATE_KEY });
       const readLevels = async (companyId: string): Promise<AskLevels> => parseAskLevels(await ctx.state.get(levelsScope(companyId)));
@@ -104,49 +109,29 @@ export function createStudioPlugin(deps: StudioPluginDeps = {}): PaperclipPlugin
         },
       };
 
-      ctx.data.register("team", async (params) => {
-        const { agents, issues } = await load(companyOf(params));
-        return summarizeTeam(agents, issues);
-      });
+      // The sidebar roster, Home and the team page: agents are visible to everyone in the company.
+      ctx.data.register("agents", async (params) => ({ agents: await liveAgents(companyOf(params)) }));
 
-      ctx.data.register("home", async (params) => {
-        const { agents, issues, approvals } = await load(companyOf(params));
-        return buildHome(agents, issues, approvals, now());
-      });
-
-      const readProfile = async (params: Params) => {
+      ctx.data.register("agent", async (params) => {
         const companyId = companyOf(params);
         const ref = typeof params.agentRef === "string" ? params.agentRef : "";
         if (!ref) throw new Error("agentRef is required");
-        // Always a fresh read: the profile is where people pause an agent or
-        // assign it a task, and must show the result on its next refresh.
-        const { agents, issues } = await load(companyId, { fresh: true });
-        const first = buildProfile(ref, agents as ProfileAgentLike[], issues, [], now());
-        if (!first.found || !first.current) return first;
-        // The agent's own latest notes on the task it is working on. Read per
-        // request (one task, one call) rather than cached with the snapshot.
-        const comments = await ctx.issues.listComments(first.current.task.id, companyId).catch(() => []);
-        return buildProfile(ref, agents as ProfileAgentLike[], issues, comments as unknown as CommentLike[], now());
-      };
-
-      ctx.data.register("agent", async (params) => {
-        const profile = await readProfile(params);
-        if (!profile.found) return profile;
-        const companyId = companyOf(params);
+        const agent = (await liveAgents(companyId)).find((row) => row.urlKey === ref || row.id === ref);
+        if (!agent) return { found: false, agent: null, access: null };
         const userId = typeof params.userId === "string" ? params.userId : null;
         // Without it the profile still shows; only the permission panel is left out.
         const access = await Promise.all([
-          ctx.authorization.grants.list({ companyId, principalType: "agent", principalId: profile.agent.id }),
+          ctx.authorization.grants.list({ companyId, principalType: "agent", principalId: agent.id }),
           ctx.access.members.list({ companyId }),
           readLevels(companyId),
-          ctx.agents.get(profile.agent.id, companyId),
+          ctx.agents.get(agent.id, companyId),
         ]).then(([grants, members, levels, row]) => ({
           canChangeAgents: (grants as GrantLike[]).some((grant) => grant.permissionKey === CHANGE_AGENTS && isUnscoped(grant)),
           // Cosmetic only: the action checks the signed-in person itself.
           canManage: isCompanyAdmin(members as MemberLike[], userId),
-          askLevel: isBuiltInAgent(row?.metadata) ? null : levelOf(levels, profile.agent.id),
+          askLevel: isBuiltInAgent(row?.metadata) ? null : levelOf(levels, agent.id),
         }), () => null);
-        return { ...profile, access };
+        return { found: true, agent, access };
       });
 
       ctx.actions.register("agent.change-access", async (params, context) => {
@@ -199,19 +184,18 @@ export function createStudioPlugin(deps: StudioPluginDeps = {}): PaperclipPlugin
 
       ctx.data.register("workspace", async (params) => {
         const companyId = companyOf(params);
-        const [{ agents, issues }, projects, members] = await Promise.all([
-          load(companyId),
+        const [agents, projects, members] = await Promise.all([
+          ctx.agents.list({ companyId }),
           ctx.projects.list({ companyId }),
           ctx.access.members.list({ companyId }).catch(() => []),
         ]);
         const userId = typeof params.userId === "string" ? params.userId : null;
-        const open = issues.filter((issue) => issue.hiddenAt == null && !["done", "cancelled"].includes(issue.status)).length;
         const people = (members as Array<{ principalType: string; status: string }>).filter((member) => member.principalType === "user" && member.status === "active").length;
+        // The open-task count is the page's own, from the tasks it reads as the signed-in person.
         return {
           agents: agents.filter((agent) => agent.status !== "terminated").length,
           people,
           projects: projects.filter((project) => (project as { archivedAt?: unknown }).archivedAt == null).length,
-          openTasks: open,
           // Cosmetic only: the Terminal page enforces its own access.
           isAdmin: isCompanyAdmin(members as MemberLike[], userId),
         };

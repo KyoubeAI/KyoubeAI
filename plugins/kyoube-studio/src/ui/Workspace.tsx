@@ -1,5 +1,7 @@
 import type { PluginPageProps } from "@paperclipai/plugin-sdk/ui";
-import { useHostNavigation, usePluginData } from "@paperclipai/plugin-sdk/ui";
+import { useHostContext, useHostNavigation, usePluginData } from "@paperclipai/plugin-sdk/ui";
+import type { IssueLike } from "../model.js";
+import { useBoardSnapshot } from "./board-data.js";
 import { Icon } from "./icons.js";
 import { WORKSPACE_GROUPS, type WorkspaceCard } from "./links.js";
 import { useCompanyParams } from "./shared.js";
@@ -10,8 +12,14 @@ export interface WorkspaceFigures {
   agents: number;
   people: number;
   projects: number;
-  openTasks: number;
+  /** Counted here from the tasks the signed-in person may see; null until they are in. */
+  openTasks: number | null;
   isAdmin: boolean;
+}
+
+/** Tasks still open: not hidden, not done and not cancelled. */
+export function openTasks(issues: IssueLike[]): number {
+  return issues.filter((issue) => issue.hiddenAt == null && !["done", "cancelled"].includes(issue.status)).length;
 }
 
 export function cardMeta(card: WorkspaceCard, figures: WorkspaceFigures | null): string | null {
@@ -20,7 +28,7 @@ export function cardMeta(card: WorkspaceCard, figures: WorkspaceFigures | null):
     case "agents": return plural(figures.agents, "agent");
     case "people": return plural(figures.people, "person", "people");
     case "projects": return plural(figures.projects, "project");
-    case "openTasks": return `${figures.openTasks} open`;
+    case "openTasks": return figures.openTasks == null ? null : `${figures.openTasks} open`;
   }
 }
 
@@ -28,8 +36,11 @@ export function cardMeta(card: WorkspaceCard, figures: WorkspaceFigures | null):
 export function WorkspacePage(_props: PluginPageProps) {
   ensureStyles();
   const navigation = useHostNavigation();
-  const figures = usePluginData<WorkspaceFigures>("workspace", useCompanyParams());
-  const data = figures.data;
+  const host = useHostContext();
+  const figures = usePluginData<Omit<WorkspaceFigures, "openTasks">>("workspace", useCompanyParams());
+  // Read once, without a poll; a read the roster made in the last few seconds is reused.
+  const board = useBoardSnapshot(host.companyId ?? "", 0);
+  const data: WorkspaceFigures | null = figures.data ? { ...figures.data, openTasks: board.data ? openTasks(board.data.issues) : null } : null;
   return (
     <div className="ks-ws" data-kyoube-studio="workspace" data-kyoube-page="workspace">
       <header className="ks-ws-head">

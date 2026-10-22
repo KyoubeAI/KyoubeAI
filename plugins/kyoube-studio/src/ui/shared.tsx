@@ -4,6 +4,20 @@ import { characterFor } from "../characters.js";
 import type { AgentState } from "../model.js";
 import { Icon, type IconName } from "./icons.js";
 
+/** Calls `tick` every `intervalMs` (never at 0 or less), skipping while the tab is hidden. */
+export function usePoll(tick: () => void, intervalMs: number): void {
+  const latest = useRef(tick);
+  latest.current = tick;
+  useEffect(() => {
+    if (intervalMs <= 0) return;
+    const id = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      latest.current();
+    }, intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+}
+
 /**
  * `usePluginData` with a poll, keeping the last good answer on screen while a
  * refresh is in flight (the hook reports `data: null` during it) and skipping
@@ -19,14 +33,7 @@ export function usePolledData<T>(key: string, params: Record<string, unknown>, i
   if (result.data) last.current.data = result.data;
   const refresh = useRef(result.refresh);
   refresh.current = result.refresh;
-  useEffect(() => {
-    if (intervalMs <= 0) return;
-    const id = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      refresh.current();
-    }, intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
+  usePoll(() => refresh.current(), intervalMs);
   const kept = last.current.data;
   return { data: result.data ?? kept, loading: result.loading && kept === null, error: result.error, refresh: () => refresh.current() };
 }
