@@ -41,10 +41,10 @@ function stubFetch(board: Board) {
   }) as typeof fetch;
 }
 
-function installBridge(data: Record<string, unknown>, pathname = "/BAP/dashboard", board: Board = EMPTY_BOARD) {
+function installBridge(data: Record<string, unknown>, pathname = "/BAP/dashboard", board: Board = EMPTY_BOARD, host: typeof context = context) {
   (globalThis as BridgeGlobal).__paperclipPluginBridge__ = {
     sdkUi: {
-      useHostContext: () => context,
+      useHostContext: () => host,
       useHostLocation: () => ({ pathname, search: "", hash: "" }),
       useHostNavigation: () => ({ resolveHref: (to: string) => `/BAP${to}`, navigate: () => {}, linkProps: (to: string) => ({ href: `/BAP${to}`, onClick: () => {} }) }),
       usePluginData: (key: string) => (key in data ? { data: data[key], loading: false, error: null, refresh: () => {} } : { data: null, loading: true, error: null, refresh: () => {} }),
@@ -60,8 +60,8 @@ afterEach(() => {
   _resetBoardData();
 });
 
-/** What the views' effects do in the browser: read the company's tasks and approvals (static rendering runs no effects). */
-const loadBoard = () => loadBoardSnapshot(context.companyId);
+/** What the views' effects do in the browser: read the company's tasks and approvals as the person (static rendering runs no effects). */
+const loadBoard = (userId = context.userId) => loadBoardSnapshot({ userId, companyId: context.companyId });
 
 const render = (component: unknown, props: Record<string, unknown> = { context }) => renderToStaticMarkup(createElement(component as never, props as never));
 /** The opening tag of the button with this label, so its attributes can be checked one at a time. */
@@ -196,6 +196,26 @@ describe("Home", () => {
     expect(fetchCalls.map((call) => call.url)).toEqual([ISSUES_URL, APPROVALS_URL]);
   });
 
+  it("never shows one person's tasks or approvals to the next person who signs in on the tab", async () => {
+    // The core's sign-out does not reload the page, so the next person meets this module's memory.
+    installBridge({ agents: agents([WRITER, MANAGER]) }, "/BAP/dashboard", BOARD);
+    await loadBoard("u1");
+    expect(render(StudioHome)).toContain("Three posts for the launch");
+    const restricted: Board = { issues: ISSUES.filter((row) => row.id === "i39"), approvals: "forbidden" };
+    installBridge({ agents: agents([WRITER, MANAGER]) }, "/BAP/dashboard", restricted, { ...context, userId: "u2" });
+    const unseen = ["Three posts for the launch", "Approve LinkedIn post", "Campaign brief", "New pricing page"];
+    // Not before their own read lands, and not after it.
+    for (const html of [render(StudioHome), render(StudioTeam)]) for (const text of unseen) expect(html).not.toContain(text);
+    await loadBoard("u2");
+    const home = render(StudioHome);
+    for (const text of unseen) expect(home).not.toContain(text);
+    expect(home).toContain("Approvals are not shown to you.");
+    expect(fetchCalls.map((call) => call.url)).toEqual([ISSUES_URL, APPROVALS_URL]);
+    // Their read dropped the first person's answers from memory too.
+    installBridge({ agents: agents([WRITER, MANAGER]) }, "/BAP/dashboard", BOARD);
+    expect(render(StudioHome)).not.toContain("Three posts for the launch");
+  });
+
   it("prefixes its links itself, because the core's Dashboard gives its widgets no company prefix", async () => {
     // What the host does on the Dashboard (core 2026.916): context `{ companyId }` only, and
     // `linkProps` adds a prefix only when the context has one.
@@ -297,7 +317,7 @@ describe("agent profile", () => {
     // Until its tasks are in, the page shows its placeholder rather than an agent with no work.
     expect(render(AgentProfilePage)).not.toContain("<h1>");
     await loadBoard();
-    await loadIssueComments("i45");
+    await loadIssueComments({ userId: context.userId, issueId: "i45" });
     const html = render(AgentProfilePage);
     expect(html).toContain("Working now");
     expect(html).toContain("Three posts for the launch");
@@ -307,6 +327,19 @@ describe("agent profile", () => {
     expect(html).not.toContain("Looks good");
     expect(fetchCalls.map((call) => call.url)).toEqual([ISSUES_URL, APPROVALS_URL, "/api/issues/i45/comments"]);
     expect(fetchCalls.every((call) => call.init?.credentials === "include")).toBe(true);
+  });
+
+  it("never shows one person's notes on a task to the next person who signs in on the tab", async () => {
+    installProfile();
+    await loadBoard("u1");
+    await loadIssueComments({ userId: "u1", issueId: "i45" });
+    expect(render(AgentProfilePage)).toContain("Writing post 2");
+    installBridge({ agents: agents([WRITER, MANAGER]), agent: read() }, PROFILE_PATH, BOARD, { ...context, userId: "u2" });
+    await loadBoard("u2");
+    const html = render(AgentProfilePage);
+    expect(html).toContain("Working now");
+    expect(html).not.toContain("Writing post 2");
+    expect(html).not.toContain("Drafted post 1 of 3");
   });
 
   it("renders Concept C: character, name, reports-to, harness, duty switch, tabs and overview", async () => {
