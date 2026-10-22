@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestHarness } from "@paperclipai/plugin-sdk/testing";
+import { compileCompanyPolicy, compileIndex, createPolicyReader, writePolicyFiles } from "@kyoube/visibility";
 import type { Project } from "@paperclipai/plugin-sdk";
 import type { PluginPerformActionContext } from "@paperclipai/plugin-sdk/protocol";
 import manifest from "../src/manifest.js";
@@ -12,6 +13,7 @@ const COMPANY = "11111111-1111-4111-8111-111111111111";
 const OTHER_COMPANY = "22222222-2222-4222-8222-222222222222";
 const PROJECT = "33333333-3333-4333-8333-333333333333";
 const OTHER_PROJECT = "44444444-4444-4444-8444-444444444444";
+const HIDDEN_PROJECT = "77777777-7777-4777-8777-777777777777";
 const ADMIN = { type: "user" as const, userId: "admin-1" };
 const MEMBER = { type: "user" as const, userId: "member-1" };
 const VIEWER = { type: "user" as const, userId: "viewer-1" };
@@ -31,13 +33,19 @@ function project(id: string, companyId: string, name: string): Project {
 let base: string;
 let root: string;
 let secondRoot: string;
+let hiddenRoot: string;
+let policyDir: string;
 
 beforeEach(async () => {
   base = await mkdtemp(path.join(tmpdir(), "kyoube-files-plugin-"));
   root = path.join(base, "projects", COMPANY, PROJECT, "_default");
   secondRoot = path.join(base, "second");
+  hiddenRoot = path.join(base, "projects", COMPANY, HIDDEN_PROJECT, "_default");
+  // Never created until a test restricts the company: no policy files means an open company.
+  policyDir = path.join(base, "visibility");
   await mkdir(root, { recursive: true });
   await mkdir(secondRoot, { recursive: true });
+  await mkdir(hiddenRoot, { recursive: true });
 });
 
 afterEach(async () => {
@@ -52,14 +60,36 @@ async function setup(config: Record<string, unknown> = {}, opts: { secondWorkspa
   if (opts.secondWorkspace) workspaces.push({ id: "ws-2", projectId: PROJECT, name: "Second", path: secondRoot, repoUrl: null, repoRef: null, defaultRef: null, isPrimary: false, createdAt: "2026-01-01", updatedAt: "2026-01-01" });
   harness.seed({
     accessMembers: MEMBERS,
-    projects: [project(PROJECT, COMPANY, "Smoke"), project(OTHER_PROJECT, OTHER_COMPANY, "Elsewhere")],
-    projectWorkspaces: workspaces,
+    projects: [project(PROJECT, COMPANY, "Smoke"), project(HIDDEN_PROJECT, COMPANY, "Vault"), project(OTHER_PROJECT, OTHER_COMPANY, "Elsewhere")],
+    projectWorkspaces: [
+      ...workspaces,
+      { id: `${HIDDEN_PROJECT}:managed`, projectId: HIDDEN_PROJECT, name: "Vault", path: hiddenRoot, repoUrl: null, repoRef: null, defaultRef: null, isPrimary: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" },
+    ],
   });
-  const plugin = createFilesPlugin({});
+  const plugin = createFilesPlugin({ policyReader: createPolicyReader({ dir: policyDir, checkMs: 0 }) });
   await plugin.definition.setup(harness.ctx);
   const act = <T,>(key: string, params: Record<string, unknown>, actor = ADMIN, companyId = COMPANY) =>
     harness.performAction<T>(key, { projectId: PROJECT, ...params }, { actor, companyId });
   return { harness, plugin, act };
+}
+
+/**
+ * Turns the company need-to-know, with real policy files. `projects` says who is in a group
+ * that includes each project; `seesAll` is a group that sees every project.
+ */
+async function restrict(projects: Record<string, string[]>, seesAll: string[] = []) {
+  const writtenAt = "2026-10-23T00:00:00.000Z";
+  const policy = compileCompanyPolicy({
+    companyId: COMPANY,
+    mode: "need_to_know",
+    writtenAt,
+    groups: [
+      ...Object.entries(projects).map(([projectId, members]) => ({ seesAll: false, members, projects: [projectId] })),
+      { seesAll: true, members: seesAll, projects: [] },
+    ],
+  });
+  if (!policy) throw new Error("expected a need-to-know policy");
+  await writePolicyFiles({ dir: policyDir, index: compileIndex([{ companyId: COMPANY, mode: "need_to_know" }], writtenAt), companies: [policy] });
 }
 
 describe("files.workspaces", () => {
@@ -228,6 +258,84 @@ describe("files authorization", () => {
     const context: PluginPerformActionContext = { actor: { type: "user", userId: "admin-1", agentId: null, runId: null, companyId: COMPANY }, companyId: COMPANY };
     await expect(handlers.get("files.list")!({ projectId: PROJECT, companyId: OTHER_COMPANY, path: "" }, context)).rejects.toThrow("invalid");
     await expect(handlers.get("files.list")!({ projectId: PROJECT, companyId: COMPANY, path: "" }, context)).resolves.toMatchObject({ exists: true });
+  });
+});
+
+describe("project visibility", () => {
+  const ISSUE_VISIBLE = "88888888-8888-4888-8888-888888888888";
+  const ISSUE_HIDDEN = "99999999-9999-4999-8999-999999999999";
+  const issue = (id: string, projectId: string) => ({ id, companyId: COMPANY, projectId, identifier: "SMK-1", title: "t", status: "todo", priority: "medium" }) as never;
+
+  it("refuses files.list for a restricted person on a hidden project with forbidden, and serves a listed one", async () => {
+    const { act } = await setup();
+    await restrict({ [PROJECT]: ["member-1"], [HIDDEN_PROJECT]: ["viewer-1"] });
+    await writeFile(path.join(root, "open.txt"), "o");
+    await writeFile(path.join(hiddenRoot, "secret.txt"), "s");
+    const listed = await act<{ entries: Array<{ name: string }> }>("files.list", { path: "" }, MEMBER);
+    expect(listed.entries.map((entry) => entry.name)).toEqual(["open.txt"]);
+    await expect(act("files.list", { path: "", projectId: HIDDEN_PROJECT }, MEMBER)).rejects.toThrow("forbidden: this project is outside what you can see");
+    await expect(act("files.read", { path: "secret.txt", projectId: HIDDEN_PROJECT }, MEMBER)).rejects.toThrow("forbidden: this project is outside what you can see");
+    await expect(act("files.stat", { path: "secret.txt", projectId: HIDDEN_PROJECT }, MEMBER)).rejects.toThrow("forbidden");
+    // The other restricted person has the opposite project.
+    await expect(act("files.list", { path: "" }, VIEWER)).rejects.toThrow("forbidden: this project is outside what you can see");
+    expect(await act("files.list", { path: "", projectId: HIDDEN_PROJECT }, VIEWER)).toMatchObject({ exists: true });
+  });
+
+  it("refuses every mutation on a hidden project and leaves the folder untouched", async () => {
+    const { act, harness } = await setup();
+    await restrict({ [PROJECT]: ["member-1"] });
+    await writeFile(path.join(hiddenRoot, "secret.txt"), "s");
+    const hidden = { projectId: HIDDEN_PROJECT };
+    await expect(act("files.write", { ...hidden, path: "secret.txt", content: "x" }, MEMBER)).rejects.toThrow("outside what you can see");
+    await expect(act("files.create", { ...hidden, dir: "", name: "n", kind: "file" }, MEMBER)).rejects.toThrow("outside what you can see");
+    await expect(act("files.upload", { ...hidden, dir: "", name: "u", contentBase64: "AA==" }, MEMBER)).rejects.toThrow("outside what you can see");
+    await expect(act("files.rename", { ...hidden, path: "secret.txt", newPath: "b.txt" }, MEMBER)).rejects.toThrow("outside what you can see");
+    await expect(act("files.delete", { ...hidden, path: "secret.txt" }, MEMBER)).rejects.toThrow("outside what you can see");
+    expect(await readFile(path.join(hiddenRoot, "secret.txt"), "utf8")).toBe("s");
+    expect(harness.activity).toEqual([]);
+  });
+
+  it("never restricts an owner or admin, and serves a person in a sees-all group", async () => {
+    const { act } = await setup();
+    await restrict({ [PROJECT]: ["member-1"] }, ["viewer-1"]);
+    expect(await act("files.list", { path: "", projectId: HIDDEN_PROJECT }, ADMIN)).toMatchObject({ exists: true });
+    expect(await act("files.list", { path: "", projectId: HIDDEN_PROJECT }, VIEWER)).toMatchObject({ exists: true });
+  });
+
+  it("refuses a restricted person, but not an admin, when the company policy cannot be read", async () => {
+    const { act } = await setup();
+    await restrict({ [PROJECT]: ["member-1"] });
+    await rm(path.join(policyDir, `${COMPANY}.json`));
+    await expect(act("files.list", { path: "" }, MEMBER)).rejects.toThrow("outside what you can see");
+    expect(await act("files.list", { path: "" }, ADMIN)).toMatchObject({ exists: true });
+  });
+
+  it("picks up a policy change at the next call", async () => {
+    const { act } = await setup();
+    expect(await act("files.list", { path: "", projectId: HIDDEN_PROJECT }, MEMBER)).toMatchObject({ exists: true });
+    await restrict({ [PROJECT]: ["member-1"] });
+    await expect(act("files.list", { path: "", projectId: HIDDEN_PROJECT }, MEMBER)).rejects.toThrow("outside what you can see");
+    await restrict({ [PROJECT]: ["member-1"], [HIDDEN_PROJECT]: ["member-1"] });
+    expect(await act("files.list", { path: "", projectId: HIDDEN_PROJECT }, MEMBER)).toMatchObject({ exists: true });
+  });
+
+  it("files.workspaces answers canRead false for a hidden project, and no path", async () => {
+    const { act } = await setup();
+    await restrict({ [PROJECT]: ["member-1"] });
+    expect(await act("files.workspaces", {}, MEMBER)).toMatchObject({ role: "member", canRead: true, workspaces: [{ path: root }] });
+    const hidden = await act<{ canRead: boolean; workspaces: unknown[] }>("files.workspaces", { projectId: HIDDEN_PROJECT }, MEMBER);
+    expect(hidden).toMatchObject({ role: "member", canRead: false, workspaces: [] });
+    expect(JSON.stringify(hidden)).not.toContain(hiddenRoot);
+    expect(await act("files.workspaces", { projectId: HIDDEN_PROJECT }, ADMIN)).toMatchObject({ canRead: true, workspaces: [{ path: hiddenRoot }] });
+  });
+
+  it("files.locate answers no project for a task in a hidden project", async () => {
+    const { act, harness } = await setup();
+    harness.seed({ issues: [issue(ISSUE_VISIBLE, PROJECT), issue(ISSUE_HIDDEN, HIDDEN_PROJECT)] });
+    await restrict({ [PROJECT]: ["member-1"] });
+    expect(await act("files.locate", { issueRef: ISSUE_VISIBLE }, MEMBER)).toEqual({ projectId: PROJECT, projectName: "Smoke", canRead: true });
+    expect(await act("files.locate", { issueRef: ISSUE_HIDDEN }, MEMBER)).toEqual({ projectId: null, projectName: null, canRead: true });
+    expect(await act("files.locate", { issueRef: ISSUE_HIDDEN }, ADMIN)).toEqual({ projectId: HIDDEN_PROJECT, projectName: "Vault", canRead: true });
   });
 });
 

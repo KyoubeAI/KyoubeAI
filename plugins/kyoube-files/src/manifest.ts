@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 export const PLUGIN_ID = "kyoube.files";
-export const PLUGIN_VERSION = "0.3.0";
+export const PLUGIN_VERSION = "0.4.0";
 /** The `detailTab` slot id; the project sidebar link opens `?tab=plugin:<PLUGIN_ID>:<TAB_SLOT_ID>`. */
 export const TAB_SLOT_ID = "project-files";
 

@@ -1,16 +1,20 @@
 import { definePlugin, type PaperclipPlugin, type PluginContext, type PluginWorkspace } from "@paperclipai/plugin-sdk";
 import type { PluginPerformActionContext } from "@paperclipai/plugin-sdk/protocol";
+import { createPolicyReader, type PolicyReader } from "@kyoube/visibility";
 import { RoleResolver } from "./auth.js";
 import { FilesError } from "./errors.js";
 import { WorkspaceFiles } from "./fs-service.js";
 import { PLUGIN_ID } from "./manifest.js";
 import { joinRelative, normalizeRelativePath, validateEntryName } from "./paths.js";
 import { resolveSettings, type FilesSettings } from "./settings.js";
+import { projectVisibleFor } from "./visibility.js";
 
 export interface FilesPluginDeps {
   now?: () => number;
   /** Test seam: the service bound to a resolved workspace root. */
   createFiles?: (root: string, opts: { maxReadBytes: number; maxWriteBytes: number }) => WorkspaceFiles;
+  /** Test seam: where the visibility policy is read from (default: the app's policy files, re-checked every two seconds). */
+  policyReader?: PolicyReader;
 }
 
 type Params = Record<string, unknown>;
@@ -88,6 +92,7 @@ export function createFilesPlugin(deps: FilesPluginDeps): PaperclipPlugin {
     async setup(ctx: PluginContext) {
       const roles = new RoleResolver(ctx.access.members, { now: deps.now });
       const createFiles = deps.createFiles ?? ((root, opts) => new WorkspaceFiles(root, opts));
+      const policyReader = deps.policyReader ?? createPolicyReader();
 
       interface Authorized {
         companyId: string;
@@ -103,9 +108,11 @@ export function createFilesPlugin(deps: FilesPluginDeps): PaperclipPlugin {
        * Every action goes through here. The actor comes from the host (never
        * from `params`), must be a signed-in user, and must hold a company role
        * in `readRoles` (or `writeRoles` for a mutation — checked against a
-       * fresh read of the members API, so a demotion lands at once). The
-       * project must be in the host's company scope, which
-       * `getPrimaryWorkspace` enforces by answering `null` otherwise.
+       * fresh read of the members API, so a demotion lands at once). A company
+       * in need-to-know mode shows a restricted person only the projects their
+       * groups list; the others are refused. The project must be in the host's
+       * company scope, which `getPrimaryWorkspace` enforces by answering `null`
+       * otherwise.
        */
       async function authorize(context: PluginPerformActionContext, params: Params, need: "read" | "write"): Promise<Authorized> {
         const companyId = companyOf(context, params);
@@ -114,6 +121,9 @@ export function createFilesPlugin(deps: FilesPluginDeps): PaperclipPlugin {
         const settings = resolveSettings(await ctx.config.get(companyId));
         const role = await roles.assertAllowed(companyId, actor.userId, need === "read" ? settings.readRoles : settings.writeRoles, need === "read" ? "browsing project files" : "changing project files", { fresh: need === "write" });
         const projectId = str(params, "projectId");
+        if (!(await projectVisibleFor(policyReader, companyId, { userId: actor.userId, role }, projectId))) {
+          throw new FilesError("forbidden", "this project is outside what you can see");
+        }
         const workspaces = await resolveWorkspaces(ctx.projects, projectId, companyId);
         const wanted = typeof params.workspaceId === "string" && params.workspaceId.length > 0 ? params.workspaceId : null;
         const workspace = wanted ? workspaces.find((item) => item.id === wanted) : workspaces[0];
@@ -139,11 +149,13 @@ export function createFilesPlugin(deps: FilesPluginDeps): PaperclipPlugin {
         if (actor.type !== "user" || !actor.userId) throw new FilesError("forbidden", "project files require a signed-in user");
         const settings = resolveSettings(await ctx.config.get(companyId));
         const role = await roles.resolveRole(companyId, actor.userId);
-        const canRead = role !== null && settings.readRoles.includes(role);
+        const mayRead = role !== null && settings.readRoles.includes(role);
         const canWrite = role !== null && settings.writeRoles.includes(role);
         const projectId = str(params, "projectId");
-        // A person who may not browse learns only that the tab is closed to
-        // them — not the folder's path.
+        // A person who may not browse, or whose groups do not include this
+        // project, learns only that the tab is closed to them — not the
+        // folder's path.
+        const canRead = mayRead && (await projectVisibleFor(policyReader, companyId, { userId: actor.userId, role }, projectId));
         const workspaces = canRead ? await resolveWorkspaces(ctx.projects, projectId, companyId) : [];
         return {
           role,
@@ -173,6 +185,7 @@ export function createFilesPlugin(deps: FilesPluginDeps): PaperclipPlugin {
         if (!issueRef || issueRef.length > 200) return { projectId: null, projectName: null, canRead };
         const issue = await ctx.issues.get(issueRef, companyId);
         if (!issue || !issue.projectId) return { projectId: null, projectName: null, canRead };
+        if (!(await projectVisibleFor(policyReader, companyId, { userId: actor.userId, role }, issue.projectId))) return { projectId: null, projectName: null, canRead };
         const project = await ctx.projects.get(issue.projectId, companyId);
         return { projectId: project?.id ?? null, projectName: project?.name ?? null, canRead };
       });

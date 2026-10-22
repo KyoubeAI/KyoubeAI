@@ -1,6 +1,6 @@
 {
   "name": "@kyoube/plugin-files",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Browse and manage the files in a project's working folder from the project page (Paperclip plugin)",
   "license": "BUSL-1.1",
   "type": "module",
@@ -26,6 +26,7 @@
     "react": ">=18"
   },
   "devDependencies": {
+    "@kyoube/visibility": "workspace:*",
     "@types/node": "^24.0.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",

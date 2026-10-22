@@ -204,6 +204,9 @@ importers:
         specifier: 2026.1012.0
         version: 2026.1012.0(react@19.2.8)
     devDependencies:
+      '@kyoube/visibility':
+        specifier: workspace:*
+        version: link:../../packages/visibility
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
