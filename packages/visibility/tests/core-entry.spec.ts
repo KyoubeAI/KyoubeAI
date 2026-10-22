@@ -14,6 +14,7 @@ const TASKS = [
   { id: "g", parentId: "c", projectId: "p2", createdByUserId: "bob", assigneeUserId: null, responsibleUserId: null, conversationUserId: null },
   { id: "h", parentId: null, projectId: "p2", createdByUserId: "bob", assigneeUserId: null, responsibleUserId: null, conversationUserId: null },
   { id: "v", parentId: null, projectId: "p1", createdByUserId: "bob", assigneeUserId: null, responsibleUserId: null, conversationUserId: null },
+  { id: "a", parentId: null, projectId: "p2", createdByUserId: "bob", assigneeUserId: "ann", responsibleUserId: null, conversationUserId: null }, // given to ann in the hidden project p2
 ];
 function helpers(roles: Record<string, string | null>, omitFromMap: string[] = []) {
   const queries: string[] = [];
@@ -73,6 +74,8 @@ describe("decideBoard", () => {
     expect(await decide("ann", "tasks:assign", { issueId: null, parentIssueId: "h", projectId: null })).toMatchObject({ reason: "deny_kyoube_visibility" });
     expect(await decide("ann", "tasks:assign", { issueId: null, parentIssueId: null, projectId: "p1" })).toBeNull();
     expect(await decide("ann", "tasks:assign", { issueId: "h", parentIssueId: null, projectId: null })).toMatchObject({ reason: "deny_kyoube_visibility" });
+    // An existing task is judged on its own visibility: ann holds "a", so she may reassign it although p2 is not on her list.
+    expect(await decide("ann", "tasks:assign", { issueId: "a", parentIssueId: null, projectId: "p2" })).toBeNull();
   });
   it("judges a task missing from the map by loading it", async () => {
     // "r" is left out of the parent map (as a task created a moment ago would be); the one-row load answers for it.

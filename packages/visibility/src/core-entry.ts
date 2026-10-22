@@ -170,10 +170,11 @@ async function restrictedDecision(ctx: Restricted, action: string, resource: Rec
     case "issue:mutate":
       return (await visible(ctx, resource.issueId)) ? null : HIDDEN;
     case "tasks:assign":
-      // Assigning an existing task needs that task; a new subtask follows its parent whatever
-      // project the core gives it; a new root task needs its project, or has none and is the
-      // person's own.
-      if (present(resource.issueId) && !(await visible(ctx, resource.issueId))) return HIDDEN;
+      // Assigning an existing task depends on that task alone: a person given a task in a project
+      // outside their groups sees it through involvement and may assign it. A new subtask follows
+      // its parent whatever project the core gives it; a new root task needs its project, or has
+      // none and is the person's own.
+      if (present(resource.issueId)) return (await visible(ctx, resource.issueId)) ? null : HIDDEN;
       if (present(resource.parentIssueId)) return (await visible(ctx, resource.parentIssueId)) ? null : HIDDEN;
       if (present(resource.projectId)) return projectOnList(ctx, resource.projectId) ? null : HIDDEN;
       return null;
