@@ -18,6 +18,7 @@ COPY plugins/kyoube-license/package.json plugins/kyoube-license/
 COPY plugins/kyoube-notify/package.json plugins/kyoube-notify/
 COPY packages/kyoube-app-sdk/package.json packages/kyoube-app-sdk/
 COPY packages/license/package.json packages/license/
+COPY packages/visibility/package.json packages/visibility/
 RUN pnpm install --frozen-lockfile
 COPY docker/bootstrap docker/bootstrap
 COPY plugins plugins
@@ -35,6 +36,8 @@ RUN pnpm -r build \
  && pnpm --filter @kyoube/plugin-license deploy --prod /out/plugins/license \
  && pnpm --filter @kyoube/plugin-notify deploy --prod /out/plugins/notify \
  && mkdir -p /out/license && cp packages/license/dist/enforce.mjs /out/license/enforce.mjs \
+ && mkdir -p /out/visibility && cp packages/visibility/dist/decide.mjs /out/visibility/decide.mjs \
+ && test -f /out/visibility/decide.mjs \
  && test -f /out/license/enforce.mjs \
  && test -f /out/bootstrap/dist/kyoube.mjs \
  && test -f /out/plugins/terminal/dist/manifest.js \
@@ -144,6 +147,19 @@ RUN grep -q 'kyoube-ask-level' /app/server/dist/services/issue-thread-interactio
  && cd /app/server && node --check dist/services/issue-thread-interactions.js \
  && gosu node node --input-type=module -e 'const m = await import("/opt/kyoube/core-patches/ask-level.mjs"); if (typeof m.applyAskLevel !== "function") process.exit(1); console.log("ask-level ok")'
 
+# Work-object visibility (four standing core patches above) imports
+# /opt/kyoube/visibility/decide.mjs, copied in below with the rest of
+# /opt/kyoube and checked there. Check each marker is in the served code the
+# expected number of times (the search route has two: the scope check and the
+# result filter) and that the three files still parse. Without the module
+# every covered read is refused for operators and viewers.
+RUN test "$(grep -c 'kyoube-visibility' /app/server/dist/services/authorization.js)" -eq 1 \
+ && test "$(grep -c 'kyoube-visibility' /app/server/dist/realtime/live-events-ws.js)" -eq 1 \
+ && test "$(grep -c 'kyoube-visibility' /app/server/dist/routes/issues.js)" -eq 2 \
+ && cd /app/server && node --check dist/services/authorization.js \
+ && node --check dist/realtime/live-events-ws.js \
+ && node --check dist/routes/issues.js
+
 # ---------------------------------------------------------------------------
 # KyoubeAI theme ("Studio"): brand tokens, a skin aimed only at stable hooks
 # (route links, ARIA labels, and the data-kyoube-* markers the Studio plugin
@@ -211,6 +227,8 @@ RUN gosu node node /opt/kyoube/pwa/pwa.mjs --root /app --pwa /opt/kyoube/pwa --r
 COPY --from=kyoube-build /out/bootstrap /opt/kyoube/bootstrap
 COPY --from=kyoube-build /out/plugins /opt/kyoube/plugins
 COPY --from=kyoube-build /out/license /opt/kyoube/license
+COPY --from=kyoube-build /out/visibility /opt/kyoube/visibility
+RUN gosu node node --input-type=module -e 'const m = await import("/opt/kyoube/visibility/decide.mjs"); for (const k of ["decideBoard", "liveEventFilter", "filterSearchResults"]) if (typeof m[k] !== "function") process.exit(1); console.log("visibility ok")'
 COPY docker/kyoube /usr/local/bin/kyoube
 COPY docker/entrypoint.sh /usr/local/bin/kyoube-entrypoint.sh
 RUN chmod +x /usr/local/bin/kyoube /usr/local/bin/kyoube-entrypoint.sh \

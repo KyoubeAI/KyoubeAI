@@ -617,10 +617,13 @@ async function writeFullCore(root) {
   await writeFile(path.join(root, "server/dist/services/local-ai-login.js"), SIGNIN_COMMAND_2026_916_1);
   await writeFile(path.join(root, "server/dist/services/local-ai-credentials.js"), CLAUDE_VERIFY_2026_916_1);
   await writeFile(path.join(root, "server/dist/services/issue-thread-interactions.js"), INTERACTION_CREATE_2026_1012_0);
+  await writeFile(path.join(root, "server/dist/services/authorization.js"), AUTHZ_BOARD_2026_1012_0);
+  await mkdir(path.join(root, "server", "dist", "realtime"), { recursive: true });
+  await writeFile(path.join(root, "server/dist/realtime/live-events-ws.js"), LIVE_WS_SEND_2026_1012_0);
   await mkdir(path.join(root, "server", "dist", "auth"), { recursive: true });
   await writeFile(path.join(root, "server/dist/auth/better-auth.js"), BETTER_AUTH_2026_916_1);
   await mkdir(path.join(root, "server", "dist", "routes"), { recursive: true });
-  await writeFile(path.join(root, "server/dist/routes/issues.js"), CHAT_OPEN_2026_1005_0 + CHAT_MESSAGE_2026_1005_0);
+  await writeFile(path.join(root, "server/dist/routes/issues.js"), CHAT_OPEN_2026_1005_0 + CHAT_MESSAGE_2026_1005_0 + SEARCH_ROUTES_2026_1012_0);
   await mkdir(path.join(root, "packages", "adapters", "hermes", "src", "server"), { recursive: true });
   await writeFile(path.join(root, "packages/adapters/hermes/src/server/execute.ts"), HERMES_QUIET_2026_916_1);
 }
@@ -1114,5 +1117,363 @@ describe("agent-questions-ask-level", () => {
     expect(dockerfile).toMatch(/^COPY docker\/core-patches\/apply\.mjs docker\/core-patches\/lib\.mjs docker\/core-patches\/patches\.mjs docker\/core-patches\/ask-level\.mjs \/opt\/kyoube\/core-patches\/$/m);
     expect(dockerfile).toContain("grep -q 'kyoube-ask-level' /app/server/dist/services/issue-thread-interactions.js");
     expect(dockerfile).toContain('import("/opt/kyoube/core-patches/ask-level.mjs")');
+  });
+});
+
+// Excerpts of core 2026.1012.0's server/dist, copied verbatim from the pristine
+// image (ghcr.io/paperclipai/paperclip:2026.1012.0). Each is whole statements, so
+// the parse test can compile it inside a function, with at least ten lines
+// either side of its anchor wherever the code has them.
+
+// services/authorization.js lines 1218-1273, the board branch of decideBase: the
+// cloud-tenant member allows, the unauthenticated deny, then the board
+// tasks:assign rule. The visibility check goes between the last two.
+const AUTHZ_BOARD_2026_1012_0 =
+  "            if (input.actor.source === \"cloud_tenant\" && input.actor.userId) {\n" +
+  "                const membership = await getActiveMembership(companyId, \"user\", input.actor.userId);\n" +
+  "                if (membership) {\n" +
+  "                    if (input.action === \"agent:read\" ||\n" +
+  "                        input.action === \"company_scope:read\" ||\n" +
+  "                        input.action === \"decision_queue:read\" ||\n" +
+  "                        input.action === \"issue:read\" ||\n" +
+  "                        input.action === \"project:read\") {\n" +
+  "                        return allow({\n" +
+  "                            action: input.action,\n" +
+  "                            reason: \"allow_company_member\",\n" +
+  "                            explanation: \"Allowed by active cloud tenant company membership.\",\n" +
+  "                        });\n" +
+  "                    }\n" +
+  "                    if ((input.action === \"issue:comment\" ||\n" +
+  "                        input.action === \"issue:mutate\" ||\n" +
+  "                        input.action === \"decision_queue:manage\" ||\n" +
+  "                        input.action === \"decision_triage:manage\") &&\n" +
+  "                        membership.membershipRole !== \"viewer\") {\n" +
+  "                        return allow({\n" +
+  "                            action: input.action,\n" +
+  "                            reason: \"allow_company_member\",\n" +
+  "                            explanation: \"Allowed by active cloud tenant company membership.\",\n" +
+  "                        });\n" +
+  "                    }\n" +
+  "                }\n" +
+  "            }\n" +
+  "            if (!input.actor.userId) {\n" +
+  "                return deny({\n" +
+  "                    action: input.action,\n" +
+  "                    reason: \"deny_unauthenticated\",\n" +
+  "                    explanation: \"Board user id is required.\",\n" +
+  "                });\n" +
+  "            }\n" +
+  "            if (input.action === \"tasks:assign\") {\n" +
+  "                if (!(await assignmentTargetIsInCompany(input.resource))) {\n" +
+  "                    return deny({\n" +
+  "                        action: input.action,\n" +
+  "                        reason: \"deny_company_boundary\",\n" +
+  "                        explanation: \"Task assignment target agent is not active in the target company.\",\n" +
+  "                    });\n" +
+  "                }\n" +
+  "                const policyEffect = await assignmentPolicyEffect(input.resource);\n" +
+  "                taskAssignmentPolicyEffect = policyEffect;\n" +
+  "                const policyDeny = await denyForAssignmentPolicyIfNeeded(policyEffect);\n" +
+  "                if (policyDeny)\n" +
+  "                    return policyDeny;\n" +
+  "                const membership = await getActiveMembership(companyId, \"user\", input.actor.userId);\n" +
+  "                if (policyEffect.kind === \"none\" && membership && membership.membershipRole !== \"viewer\") {\n" +
+  "                    return allow({\n" +
+  "                        action: input.action,\n" +
+  "                        reason: \"allow_simple_company_member\",\n" +
+  "                        explanation: \"Allowed by simple mode company-wide task assignment default.\",\n" +
+  "                    });\n" +
+  "                }\n" +
+  "            }\n";
+
+// realtime/live-events-ws.js lines 152-188: the ping loop and the connection
+// handler, whose listener sends every company event to the socket.
+const LIVE_WS_SEND_2026_1012_0 =
+  "    const pingInterval = setInterval(() => {\n" +
+  "        for (const socket of wss.clients) {\n" +
+  "            if (!aliveByClient.get(socket)) {\n" +
+  "                socket.terminate();\n" +
+  "                continue;\n" +
+  "            }\n" +
+  "            aliveByClient.set(socket, false);\n" +
+  "            socket.ping();\n" +
+  "        }\n" +
+  "    }, 30000);\n" +
+  "    wss.on(\"connection\", (socket, req) => {\n" +
+  "        const context = req.paperclipUpgradeContext;\n" +
+  "        if (!context) {\n" +
+  "            socket.close(1008, \"missing context\");\n" +
+  "            return;\n" +
+  "        }\n" +
+  "        const unsubscribe = subscribeCompanyLiveEvents(context.companyId, (event) => {\n" +
+  "            if (socket.readyState !== WebSocket.OPEN)\n" +
+  "                return;\n" +
+  "            socket.send(JSON.stringify(event));\n" +
+  "        });\n" +
+  "        cleanupByClient.set(socket, unsubscribe);\n" +
+  "        aliveByClient.set(socket, true);\n" +
+  "        socket.on(\"pong\", () => {\n" +
+  "            aliveByClient.set(socket, true);\n" +
+  "        });\n" +
+  "        socket.on(\"close\", () => {\n" +
+  "            const cleanup = cleanupByClient.get(socket);\n" +
+  "            if (cleanup)\n" +
+  "                cleanup();\n" +
+  "            cleanupByClient.delete(socket);\n" +
+  "            aliveByClient.delete(socket);\n" +
+  "        });\n" +
+  "        socket.on(\"error\", (err) => {\n" +
+  "            logger.warn({ err, companyId: context.companyId }, \"live websocket client error\");\n" +
+  "        });\n" +
+  "    });\n";
+
+// routes/issues.js lines 5176-5256: the search/extract route and the company
+// search route, whole. Both refuse a company-scope denial with the same 403
+// text, and extract ends in its own `res.json(result)`, so each route is the
+// context that proves the other's anchor is left alone: one fixture serves
+// both search patches.
+const SEARCH_ROUTES_2026_1012_0 =
+  "    router.get(\"/companies/:companyId/search/extract\", async (req, res) => {\n" +
+  "        const companyId = req.params.companyId;\n" +
+  "        assertCompanyAccess(req, companyId);\n" +
+  "        const companyScopeDecision = await access.decide({\n" +
+  "            actor: req.actor,\n" +
+  "            action: \"company_scope:read\",\n" +
+  "            resource: { type: \"company\", companyId },\n" +
+  "        });\n" +
+  "        if (!companyScopeDecision.allowed) {\n" +
+  "            res.status(403).json({\n" +
+  "                error: \"Company search is outside this actor's authorization boundary\",\n" +
+  "            });\n" +
+  "            return;\n" +
+  "        }\n" +
+  "        const parsedQuery = companySearchExtractQuerySchema.safeParse(req.query);\n" +
+  "        if (!parsedQuery.success) {\n" +
+  "            res.status(400).json({\n" +
+  "                error: parsedQuery.error.issues[0]?.message ??\n" +
+  "                    \"Invalid extract search query\",\n" +
+  "            });\n" +
+  "            return;\n" +
+  "        }\n" +
+  "        const rateLimit = searchRateLimiter.consume(companySearchRateLimitActor(req, companyId));\n" +
+  "        res.setHeader(\"X-RateLimit-Limit\", String(rateLimit.limit));\n" +
+  "        res.setHeader(\"X-RateLimit-Remaining\", String(rateLimit.remaining));\n" +
+  "        if (!rateLimit.allowed) {\n" +
+  "            res.setHeader(\"Retry-After\", String(rateLimit.retryAfterSeconds));\n" +
+  "            res.status(429).json({\n" +
+  "                error: \"Search rate limit exceeded\",\n" +
+  "                retryAfterSeconds: rateLimit.retryAfterSeconds,\n" +
+  "            });\n" +
+  "            return;\n" +
+  "        }\n" +
+  "        const result = await getSearchService().extract(companyId, parsedQuery.data);\n" +
+  "        res.json(result);\n" +
+  "    });\n" +
+  "    router.get(\"/companies/:companyId/search\", async (req, res) => {\n" +
+  "        const companyId = req.params.companyId;\n" +
+  "        assertCompanyAccess(req, companyId);\n" +
+  "        const companyScopeDecision = await access.decide({\n" +
+  "            actor: req.actor,\n" +
+  "            action: \"company_scope:read\",\n" +
+  "            resource: { type: \"company\", companyId },\n" +
+  "        });\n" +
+  "        if (!companyScopeDecision.allowed) {\n" +
+  "            res.status(403).json({\n" +
+  "                error: \"Company search is outside this actor's authorization boundary\",\n" +
+  "            });\n" +
+  "            return;\n" +
+  "        }\n" +
+  "        const parsedQuery = companySearchQuerySchema.safeParse(req.query);\n" +
+  "        if (!parsedQuery.success) {\n" +
+  "            res.status(400).json({\n" +
+  "                error: parsedQuery.error.issues[0]?.message ?? \"Invalid search query\",\n" +
+  "            });\n" +
+  "            return;\n" +
+  "        }\n" +
+  "        let query = parsedQuery.data;\n" +
+  "        if (query.assigneeUserId === \"me\") {\n" +
+  "            if (req.actor.type !== \"board\" || !req.actor.userId) {\n" +
+  "                res\n" +
+  "                    .status(403)\n" +
+  "                    .json({ error: \"assigneeUserId=me requires board authentication\" });\n" +
+  "                return;\n" +
+  "            }\n" +
+  "            query = { ...query, assigneeUserId: req.actor.userId };\n" +
+  "        }\n" +
+  "        const rateLimit = searchRateLimiter.consume(companySearchRateLimitActor(req, companyId));\n" +
+  "        res.setHeader(\"X-RateLimit-Limit\", String(rateLimit.limit));\n" +
+  "        res.setHeader(\"X-RateLimit-Remaining\", String(rateLimit.remaining));\n" +
+  "        if (!rateLimit.allowed) {\n" +
+  "            res.setHeader(\"Retry-After\", String(rateLimit.retryAfterSeconds));\n" +
+  "            res.status(429).json({\n" +
+  "                error: \"Search rate limit exceeded\",\n" +
+  "                retryAfterSeconds: rateLimit.retryAfterSeconds,\n" +
+  "            });\n" +
+  "            return;\n" +
+  "        }\n" +
+  "        const result = await getSearchService().search(companyId, query);\n" +
+  "        res.json(result);\n" +
+  "    });\n";
+
+const SEARCH_SCOPE_2026_1012_0 = SEARCH_ROUTES_2026_1012_0;
+const SEARCH_RESULT_2026_1012_0 = SEARCH_ROUTES_2026_1012_0;
+
+const VISIBILITY_MODULE = "/opt/kyoube/visibility/decide.mjs";
+
+/** A response that, as Express's does, refuses a header or a body once a reply has gone. */
+function fakeResponse() {
+  const res = { statusCode: 200, headers: {}, body: undefined, sent: false };
+  const unsent = () => {
+    if (res.sent) throw new Error("Cannot set headers after they are sent to the client");
+  };
+  res.status = (code) => { res.statusCode = code; return res; };
+  res.setHeader = (name, value) => { unsent(); res.headers[name] = value; };
+  res.json = (body) => { unsent(); res.body = body; res.sent = true; return res; };
+  return res;
+}
+
+/**
+ * Runs both search routes, with both search patches applied, as the core would:
+ * access.decide answers company_scope:read with `scope` and issue:read for the
+ * task "visible" only, the search service finds "visible" and "hidden", and the
+ * module path points at a stand-in filterSearchResults that asks access.decide
+ * about each task (or at no file, with `moduleMissing`). Returns the response,
+ * every decision asked for and the actor the route was called with.
+ */
+async function runPatchedSearch({ scope, route = "/companies/:companyId/search", moduleMissing = false }) {
+  const stamp = `${process.pid}-${Math.random().toString(36).slice(2)}`;
+  const moduleFile = path.join(HERE, `.visibility-under-test-${stamp}.mjs`);
+  const routesFile = path.join(HERE, `.hook-under-test-${stamp}.mjs`);
+  const patched = ["visibility-search-scope", "visibility-search-filter"]
+    .reduce((text, id) => applyToText(text, PATCHES.find((entry) => entry.id === id)).text, SEARCH_ROUTES_2026_1012_0)
+    .replace(VISIBILITY_MODULE, pathToFileURL(moduleFile).href);
+  if (!moduleMissing) {
+    await writeFile(moduleFile,
+      "export async function filterSearchResults({ companyId, result, decide }) {\n" +
+      "  const results = [];\n" +
+      '  for (const item of result.results) if ((await decide("issue:read", { type: "issue", companyId, issueId: item.id })).allowed) results.push(item);\n' +
+      "  return { ...result, results, countsByType: { issue: results.length } };\n" +
+      "}\n");
+  }
+  // As runPatchedHook does: the patched routes go through a real module.
+  await writeFile(routesFile, `export default (router, access, assertCompanyAccess, companySearchQuerySchema, companySearchExtractQuerySchema, searchRateLimiter, companySearchRateLimitActor, getSearchService) => {\n${patched}};\n`);
+  try {
+    const { default: register } = await import(pathToFileURL(routesFile).href);
+    const handlers = new Map();
+    const decisions = [];
+    const access = {
+      decide: async ({ actor, action, resource }) => {
+        decisions.push({ actor, action, resource });
+        return action === "company_scope:read" ? scope : { allowed: action === "issue:read" && resource.issueId === "visible" };
+      },
+    };
+    const schema = { safeParse: (query) => ({ success: true, data: query }) };
+    const found = { results: [{ id: "visible", type: "issue" }, { id: "hidden", type: "issue" }], countsByType: { issue: 2 } };
+    const service = { search: async () => found, extract: async () => found };
+    const limiter = { consume: () => ({ allowed: true, limit: 60, remaining: 59 }) };
+    register({ get: (at, handler) => handlers.set(at, handler) }, access, () => {}, schema, schema, limiter, () => "actor", () => service);
+    const actor = { type: "board", userId: "u1" };
+    const res = fakeResponse();
+    await handlers.get(route)({ params: { companyId: "c1" }, query: { q: "x" }, actor }, res);
+    return { res, decisions, actor };
+  } finally {
+    await rm(routesFile, { force: true });
+    await rm(moduleFile, { force: true });
+  }
+}
+
+describe("visibility patches", () => {
+  const byId = (id) => PATCHES.find((patch) => patch.id === id);
+  it("anchors once each on the four core sites and inserts the marker and module path", () => {
+    for (const [id, excerpt, file] of [
+      ["visibility-board-decide", AUTHZ_BOARD_2026_1012_0, "server/dist/services/authorization.js"],
+      ["visibility-live-events", LIVE_WS_SEND_2026_1012_0, "server/dist/realtime/live-events-ws.js"],
+      ["visibility-search-scope", SEARCH_SCOPE_2026_1012_0, "server/dist/routes/issues.js"],
+      ["visibility-search-filter", SEARCH_RESULT_2026_1012_0, "server/dist/routes/issues.js"],
+    ]) {
+      const patch = byId(id);
+      expect(patch.standing).toContain("work-object visibility");
+      expect(patch.upstream).toBeUndefined();
+      expect(patch.expect).toBe(1);
+      expect(patch.files).toEqual([file]);
+      expect(countMatches(excerpt, patch.pattern)).toBe(1);
+      const { text, count } = applyToText(excerpt, patch);
+      expect(count).toBe(1);
+      expect(text).toContain("/* kyoube-visibility (docs/groups.md) */");
+      // The scope patch only lets a visibility denial reach the result; the filter patch loads the module.
+      if (id !== "visibility-search-scope") expect(text).toContain('"/opt/kyoube/visibility/decide.mjs"');
+      expect(countMatches(text, patch.pattern)).toBe(0); // a second apply matches nothing
+    }
+  });
+  it("the board patch runs after the unauthenticated deny and before the board tasks:assign rule", () => {
+    const { text } = applyToText(AUTHZ_BOARD_2026_1012_0, byId("visibility-board-decide"));
+    expect(text.indexOf("Board user id is required.")).toBeLessThan(text.indexOf("kyoube-visibility"));
+    expect(text.indexOf("kyoube-visibility")).toBeLessThan(text.indexOf('if (input.action === "tasks:assign") {'));
+    expect(text).toContain("deny_kyoube_visibility_unavailable");
+    expect(text).toContain("helpers: { getActiveMembership, db, tables: { issues }, ops: { and, eq, inArray, sql } }");
+  });
+  it("the live-events patch keeps the open-socket guard and sends the filtered event", () => {
+    const { text } = applyToText(LIVE_WS_SEND_2026_1012_0, byId("visibility-live-events"));
+    expect(text).toContain("socket.send(JSON.stringify(kyoubeEvent))");
+    expect(text).not.toContain("socket.send(JSON.stringify(event))");
+    expect(text).toContain('context.actorType === "board"');
+  });
+  it("the search patches keep the 403 for everyone but a visibility denial, and filter that case", () => {
+    const scoped = applyToText(SEARCH_SCOPE_2026_1012_0, byId("visibility-search-scope")).text;
+    expect(scoped).toContain('/* kyoube-visibility (docs/groups.md) */ if (!companyScopeDecision.allowed && companyScopeDecision.reason !== "deny_kyoube_visibility") {\n            res.status(403).json({');
+    // The extract route refuses as before.
+    expect(scoped).toContain("        if (!companyScopeDecision.allowed) {\n            res.status(403).json({\n                error: \"Company search is outside this actor's authorization boundary\",\n            });\n            return;\n        }\n        const parsedQuery = companySearchExtractQuerySchema.safeParse(req.query);\n");
+    const filtered = applyToText(SEARCH_RESULT_2026_1012_0, byId("visibility-search-filter")).text;
+    expect(filtered).toContain("filterSearchResults({ companyId, result, decide: (action, resource) => access.decide({ actor: req.actor, action, resource }) })");
+    expect(filtered).toContain("results: [], countsByType: {}");
+    // The extract route answers as before.
+    expect(filtered).toContain("const result = await getSearchService().extract(companyId, parsedQuery.data);\n        res.json(result);\n");
+  });
+  it("the patched search route filters for a visibility denial and refuses every other denial as before", async () => {
+    const open = await runPatchedSearch({ scope: { allowed: true, reason: "allow_company_member" } });
+    expect(open.res.statusCode).toBe(200);
+    expect(open.res.body.results.map((item) => item.id)).toEqual(["visible", "hidden"]);
+    expect(open.decisions.map((decision) => decision.action)).toEqual(["company_scope:read"]);
+    for (const reason of ["deny_company_boundary", "deny_kyoube_visibility_unavailable"]) {
+      const refused = await runPatchedSearch({ scope: { allowed: false, reason } });
+      expect(refused.res).toMatchObject({ statusCode: 403, sent: true, headers: {}, body: { error: "Company search is outside this actor's authorization boundary" } });
+    }
+    const hidden = await runPatchedSearch({ scope: { allowed: false, reason: "deny_kyoube_visibility" } });
+    expect(hidden.res.statusCode).toBe(200);
+    expect(hidden.res.body).toEqual({ results: [{ id: "visible", type: "issue" }], countsByType: { issue: 1 } });
+    expect(hidden.decisions.slice(1).map(({ actor, action, resource }) => [actor, action, resource.issueId])).toEqual([[hidden.actor, "issue:read", "visible"], [hidden.actor, "issue:read", "hidden"]]);
+  });
+  it("the patched search route finds nothing when the module cannot be loaded, and extract stays refused", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const missing = await runPatchedSearch({ scope: { allowed: false, reason: "deny_kyoube_visibility" }, moduleMissing: true });
+    expect(missing.res.statusCode).toBe(200);
+    expect(missing.res.body).toEqual({ results: [], countsByType: {} });
+    expect(error).toHaveBeenCalledWith("[kyoube] visibility module unavailable", expect.anything());
+    error.mockRestore();
+    const extract = await runPatchedSearch({ scope: { allowed: false, reason: "deny_kyoube_visibility" }, route: "/companies/:companyId/search/extract" });
+    expect(extract.res).toMatchObject({ statusCode: 403, body: { error: "Company search is outside this actor's authorization boundary" } });
+  });
+  it("every patched excerpt still parses", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "core-patches-visibility-"));
+    try {
+      const search = applyToText(applyToText(SEARCH_ROUTES_2026_1012_0, byId("visibility-search-scope")).text, byId("visibility-search-filter")).text;
+      const excerpts = [
+        ["core-authorization", AUTHZ_BOARD_2026_1012_0],
+        ["core-live-events", LIVE_WS_SEND_2026_1012_0],
+        ["core-search", SEARCH_ROUTES_2026_1012_0],
+        ["visibility-board-decide", applyToText(AUTHZ_BOARD_2026_1012_0, byId("visibility-board-decide")).text],
+        ["visibility-live-events", applyToText(LIVE_WS_SEND_2026_1012_0, byId("visibility-live-events")).text],
+        ["visibility-search-scope", applyToText(SEARCH_SCOPE_2026_1012_0, byId("visibility-search-scope")).text],
+        ["visibility-search-filter", applyToText(SEARCH_RESULT_2026_1012_0, byId("visibility-search-filter")).text],
+        ["visibility-search-both", search],
+      ];
+      for (const [name, text] of excerpts) {
+        const file = path.join(dir, `${name}.mjs`);
+        await writeFile(file, `async function f() {\n${text}}\n`);
+        await promisify(execFile)(process.execPath, ["--check", file]);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

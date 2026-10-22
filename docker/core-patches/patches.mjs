@@ -9,7 +9,7 @@
  * that no longer has the bug — or that changed the code's shape — fails the
  * build with the patch's id, which is the cue to remove (or redo) it.
  *
- * One kind of entry is permanent: a `standing` entry (KyoubeAI licensing, user groups and agent questions)
+ * One kind of entry is permanent: a `standing` entry (KyoubeAI licensing, user groups, agent questions and work-object visibility)
  * carries `standing: "<what it is for>"` in place of `upstream` and is never
  * deleted. When a core release moves the code it anchors on, the build fails
  * the same way, and the fix is to redo the entry for that core.
@@ -335,6 +335,94 @@ export const PATCHES = [
       '(error) => { console.error("[kyoube] ask-level check unavailable", error); ' +
       `throw unprocessable(${JSON.stringify(ASK_MESSAGES.checkFailed)}, { code: "kyoube_ask_check_failed" }); });` +
       "$3",
+    expect: 1,
+  },
+  // ── Work-object visibility: need-to-know companies (standing: never deleted) ──
+  // docs/groups.md, "Visibility". The core shows every task and project in a
+  // company to every member. These four entries call KyoubeAI code
+  // (packages/visibility, shipped as /opt/kyoube/visibility/decide.mjs) in the
+  // board branch of the core's authorization decision, in its live-events
+  // socket and in its company search, so in a need-to-know company a restricted
+  // operator or viewer sees only the work they are involved in or whose project
+  // is on their list. The module's functions never reject. A module that can't
+  // load refuses every covered action to operators and viewers (owners and
+  // admins keep the core's own rules), strips every live event and finds nothing
+  // in search: fail closed. When an anchor stops matching, redo the entry for
+  // the new core.
+  {
+    id: "visibility-board-decide",
+    title: "work-object visibility: a board decision on a covered action asks KyoubeAI first",
+    standing: "KyoubeAI work-object visibility: need-to-know companies",
+    files: ["server/dist/services/authorization.js"],
+    // `explanation: "Board user id is required.",` occurs once in authorization.js (2026.1012.0): the
+    // unauthenticated deny in decideBase's board branch, after the local-board and instance-admin
+    // allows, directly followed by the board `if (input.action === "tasks:assign") {` rule. Once
+    // patched, the marker sits between the two, so a second apply matches nothing.
+    pattern: /(\n( *)explanation: "Board user id is required\.",\n *\}\);\n( *)\}\n)(?! *\/\* kyoube-visibility)( *if \(input\.action === "tasks:assign"\) \{)/g,
+    replacement:
+      "$1$3/* kyoube-visibility (docs/groups.md) */ { " +
+      'const kyoubeVisibility = await import("/opt/kyoube/visibility/decide.mjs").then(' +
+      "(m) => m.decideBoard({ actor: input.actor, action: input.action, resource: input.resource, companyId, helpers: { getActiveMembership, db, tables: { issues }, ops: { and, eq, inArray, sql } } }), " +
+      'async (error) => { console.error("[kyoube] visibility module unavailable", error); ' +
+      'if (!companyId || !["issue:read", "issue:comment", "issue:mutate", "project:read", "company_scope:read", "tasks:assign"].includes(input.action)) return null; ' +
+      'const kyoubeMembership = await getActiveMembership(companyId, "user", input.actor.userId); const kyoubeRole = String(kyoubeMembership?.membershipRole ?? "").toLowerCase(); ' +
+      'return kyoubeRole === "owner" || kyoubeRole === "admin" ? null : { reason: "deny_kyoube_visibility_unavailable", explanation: "KyoubeAI could not check work visibility, so this is refused. An instance admin can run kyoube doctor to see why." }; }); ' +
+      "if (kyoubeVisibility) return deny({ action: input.action, reason: kyoubeVisibility.reason, explanation: kyoubeVisibility.explanation }); }\n$4",
+    expect: 1,
+  },
+  {
+    id: "visibility-live-events",
+    title: "work-object visibility: a restricted person's live events carry no titles or details",
+    standing: "KyoubeAI work-object visibility: need-to-know companies",
+    files: ["server/dist/realtime/live-events-ws.js"],
+    // `const unsubscribe = subscribeCompanyLiveEvents(context.companyId, (event) => {` occurs once in
+    // live-events-ws.js (2026.1012.0): the connection handler's listener, which sends every company
+    // event to an open socket. Once patched, the listener comes from the marker's closure, so a
+    // second apply matches nothing.
+    pattern: /(\n( *)const unsubscribe = subscribeCompanyLiveEvents\(context\.companyId, )\(event\) => \{\n( *)if \(socket\.readyState !== WebSocket\.OPEN\)\n *return;\n *socket\.send\(JSON\.stringify\(event\)\);\n( *)\}\);/g,
+    replacement:
+      "$1/* kyoube-visibility (docs/groups.md) */ (() => { " +
+      'const kyoubeFilter = context.actorType === "board" ? import("/opt/kyoube/visibility/decide.mjs").then(' +
+      "(m) => m.liveEventFilter({ companyId: context.companyId, userId: context.actorId, lookupPerson: async () => { " +
+      'const [kyoubeRoleRow, kyoubeMembership] = await Promise.all([db.select({ id: instanceUserRoles.id }).from(instanceUserRoles).where(and(eq(instanceUserRoles.userId, context.actorId), eq(instanceUserRoles.role, "instance_admin"))).then((rows) => rows[0] ?? null), ' +
+      'db.select({ role: companyMemberships.membershipRole }).from(companyMemberships).where(and(eq(companyMemberships.companyId, context.companyId), eq(companyMemberships.principalType, "user"), eq(companyMemberships.principalId, context.actorId), eq(companyMemberships.status, "active"))).then((rows) => rows[0] ?? null)]); ' +
+      "return { instanceAdmin: Boolean(kyoubeRoleRow), role: kyoubeMembership?.role ?? null }; } }), " +
+      '(error) => { console.error("[kyoube] visibility module unavailable", error); return async (event) => ({ type: event.type, companyId: event.companyId, createdAt: event.createdAt, payload: {} }); }) : null; ' +
+      "return async (event) => {\n$3if (socket.readyState !== WebSocket.OPEN)\n$3    return;\n$3const kyoubeEvent = kyoubeFilter ? await (await kyoubeFilter)(event) : event;\n$3if (kyoubeEvent && socket.readyState === WebSocket.OPEN)\n$3    socket.send(JSON.stringify(kyoubeEvent));\n$4}; })());",
+    expect: 1,
+  },
+  {
+    id: "visibility-search-scope",
+    title: "work-object visibility: company search lets a visibility denial through to the filter",
+    standing: "KyoubeAI work-object visibility: need-to-know companies",
+    files: ["server/dist/routes/issues.js"],
+    // The company-scope refusal `if (!companyScopeDecision.allowed) {` with the 403 "Company search is
+    // outside this actor's authorization boundary" occurs twice in routes/issues.js (2026.1012.0): in
+    // the search/extract route and in the company search route. The lookahead takes the search
+    // route's alone, by the `companySearchQuerySchema` parse that follows it (extract parses with
+    // `companySearchExtractQuerySchema`). The condition joins the `if` itself, so a visibility
+    // denial never sends the 403 and every other denial still does. Once patched, the `if` follows
+    // the marker, so a second apply matches nothing.
+    pattern: /(\n( *))if \(!companyScopeDecision\.allowed\)(?= \{\n *res\.status\(403\)\.json\(\{\n *error: "Company search is outside this actor's authorization boundary",\n *\}\);\n *return;\n *\}\n *const parsedQuery = companySearchQuerySchema\.safeParse\(req\.query\);)/g,
+    replacement: '$1/* kyoube-visibility (docs/groups.md) */ if (!companyScopeDecision.allowed && companyScopeDecision.reason !== "deny_kyoube_visibility")',
+    expect: 1,
+  },
+  {
+    id: "visibility-search-filter",
+    title: "work-object visibility: company search answers a restricted person with what they may see",
+    standing: "KyoubeAI work-object visibility: need-to-know companies",
+    files: ["server/dist/routes/issues.js"],
+    // `const result = await getSearchService().search(companyId, query);` followed by
+    // `res.json(result);` occurs once in routes/issues.js (2026.1012.0), at the end of the company
+    // search route (search/extract calls `.extract(...)`). A denied company scope reaches it only for
+    // a visibility denial (visibility-search-scope), and only then is the result filtered. Once
+    // patched, `res.json(` is followed by the marker, so a second apply matches nothing.
+    pattern: /(\n( *)const result = await getSearchService\(\)\.search\(companyId, query\);\n *)res\.json\(result\);/g,
+    replacement:
+      "$1/* kyoube-visibility (docs/groups.md) */ res.json(" +
+      'companyScopeDecision.reason === "deny_kyoube_visibility" ? await import("/opt/kyoube/visibility/decide.mjs").then(' +
+      "(m) => m.filterSearchResults({ companyId, result, decide: (action, resource) => access.decide({ actor: req.actor, action, resource }) }), " +
+      '(error) => { console.error("[kyoube] visibility module unavailable", error); return { ...result, results: [], countsByType: {} }; }) : result);',
     expect: 1,
   },
 ];
