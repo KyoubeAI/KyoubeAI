@@ -1,4 +1,7 @@
 // tests/unit/plugin-decisions.spec.ts
+import { mkdtempSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createTestHarness } from "@paperclipai/plugin-sdk/testing";
 import manifest, { DECISIONS_SKILL_KEY, PLUGIN_VERSION } from "../../src/manifest.js";
@@ -8,6 +11,8 @@ import { createStubService } from "../stub-service.js";
 
 const COMPANY = "11111111-1111-4111-8111-111111111111";
 const KYOUBE_CONFIG = { home: "/kyoubeai", hermesHome: "/kyoubeai/.hermes", dataDatabaseUrl: "postgres://x", publicUrl: "http://localhost:3100", paperclipApiUrl: "http://127.0.0.1:3100" };
+// Setup writes the visibility policy; tests point it here, never at /kyoubeai.
+const VISIBILITY_DIR = mkdtempSync(path.join(os.tmpdir(), "kyoube-apps-visibility-"));
 const KEY = { type: "secret_ref", secretId: "11111111-1111-4111-8111-111111111111", version: "latest" };
 
 async function setup() {
@@ -18,6 +23,7 @@ async function setup() {
   const plugin = createAppsPlugin({
     loadKyoubeConfig: async () => KYOUBE_CONFIG,
     migrationsDir: "/nowhere",
+    visibilityDir: VISIBILITY_DIR,
     createPool: () => ({ query: async () => ({ rows: [], rowCount: 0 }), end: async () => {} }) as never,
     migrate: async () => [],
     createService: () => createStubService().service,
@@ -94,7 +100,7 @@ describe("plugin wiring for typed decisions", () => {
 
 describe("the kyoube-decisions skill", () => {
   it("ships as a third managed skill and installs with the other two", async () => {
-    expect(PLUGIN_VERSION).toBe("0.13.0");
+    expect(PLUGIN_VERSION).toBe("0.14.0");
     expect(manifest.skills?.map((skill) => skill.skillKey)).toEqual(["kyoube-data", "kyoube-apps", DECISIONS_SKILL_KEY]);
     const { harness, plugin } = await setup();
     await plugin.definition.onApiRequest!({ routeKey: "skills.install", method: "POST", path: "/skills/install", params: {}, query: {}, body: { companyId: COMPANY }, actor: { actorType: "user", actorId: "admin-1", userId: "admin-1" }, companyId: COMPANY, headers: {} });

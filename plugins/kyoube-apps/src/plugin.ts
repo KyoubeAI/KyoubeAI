@@ -1,3 +1,4 @@
+import path from "node:path";
 import { definePlugin, type PaperclipPlugin, type PluginContext, type PluginLogger } from "@paperclipai/plugin-sdk";
 import type { PluginPerformActionContext } from "@paperclipai/plugin-sdk/protocol";
 import type { Pool } from "pg";
@@ -28,12 +29,14 @@ import { DataError } from "./data/errors.js";
 import { levelAllows, parseLevel, type DataActor } from "./data/permissions.js";
 import { DataService, type DataServiceDeps, type MutationEvent } from "./data/service.js";
 import { GroupService } from "./groups/service.js";
+import { GroupStore } from "./groups/store.js";
 import { isManagerRole, levelSource } from "./groups/levels.js";
 import { fileLicenceGate, type LicenceGate } from "./groups/licence.js";
+import { VisibilityWriter } from "./groups/visibility-writer.js";
 import { runMetaMigrations } from "./db/migrate.js";
 import { createPool as defaultCreatePool } from "./db/pool.js";
 import type { KyoubeRuntimeConfig } from "./kyoube-config.js";
-import { APPS_SKILL_KEY, DATA_SKILL_KEY, DECISIONS_SKILL_KEY, FILL_JOB_KEY, PLUGIN_ID, PURGE_JOB_KEY } from "./manifest.js";
+import { APPS_SKILL_KEY, DATA_SKILL_KEY, DECISIONS_SKILL_KEY, FILL_JOB_KEY, PLUGIN_ID, PURGE_JOB_KEY, VISIBILITY_JOB_KEY } from "./manifest.js";
 import { RoleResolver } from "./roles.js";
 import { registerTools } from "./tools.js";
 
@@ -51,6 +54,8 @@ export interface AppsPluginDeps {
   licence?: LicenceGate;
   /** Where the kyoube CLI's rules token lives (ruling R18); tests point it at a temporary file. */
   rulesTokenPath?: string;
+  /** Where the visibility policy files go (default `<home>/kyoube/visibility`); tests point it at a temporary directory. */
+  visibilityDir?: string;
 }
 
 type Params = Record<string, unknown>;
@@ -222,9 +227,32 @@ export function createAppsPlugin(deps: AppsPluginDeps): PaperclipPlugin {
         pool: dbPool,
         resolveUserRole: (companyId, userId, fresh) => (fresh ? roles.resolveFresh(companyId, userId) : roles.resolveRole(companyId, userId)),
         licence: deps.licence ?? fileLicenceGate(),
+        listProjectIds: async (companyId) => new Set((await ctx.projects.list({ companyId })).map((project) => project.id)),
+        // Active people only, roles lower-cased as RoleResolver does.
+        listMembers: async (companyId) => (await ctx.access.members.list({ companyId }))
+          .filter((m) => m.principalType === "user" && m.status === "active")
+          .map((m) => ({ userId: m.principalId, role: m.membershipRole?.toLowerCase() ?? null })),
+        // The writer is built just below; the hook only runs on a change, after setup.
+        afterVisibilityChange: (companyId) => writeVisibility({ companyId }),
         onMutation: dataActivity.log,
         onMutationError: dataActivity.onError,
       });
+      // The need-to-know policy files the core reads (docs/groups.md): on every change, at worker
+      // start and on the five-minute job.
+      const visibilityWriter = new VisibilityWriter({
+        store: new GroupStore(dbPool),
+        dir: deps.visibilityDir ?? path.posix.join(config.home, "kyoube", "visibility"),
+        log: (message, meta) => ctx.logger.warn(message, meta),
+      });
+      // Never thrown out of setup, the job or a change (which has already committed): the next
+      // change or job run writes again.
+      const writeVisibility = async (meta: { companyId?: string } = {}) => {
+        try {
+          await visibilityWriter.write();
+        } catch (error) {
+          ctx.logger.warn("visibility policy write failed", { ...meta, error: String(error) });
+        }
+      };
       groups = groupService;
       hostMembers = ctx.access.members;
       hostAgents = ctx.agents;
@@ -458,15 +486,19 @@ export function createAppsPlugin(deps: AppsPluginDeps): PaperclipPlugin {
       action("groups.list", (c, a) => groupService.list(c, a));
       action("groups.save", (c, a, p) => groupService.save(c, a, p.group));
       action("groups.delete", (c, a, p) => groupService.remove(c, a, str(p, "id")));
-      // What the pickers offer: company members, agents and live apps. Same gate as the list.
+      action("groups.set_visibility", (c, a, p) => groupService.setVisibilityMode(c, a, p.mode));
+      // What the pickers offer: company members, agents, live apps and projects. Same gate as the list.
       // Member rows carry ids and roles only (no name or email), so the pickers show ids.
       action("groups.options", async (c, a) => {
         await groupService.list(c, a);
-        const [members, agents, appList] = await Promise.all([ctx.access.members.list({ companyId: c }), ctx.agents.list({ companyId: c }), appService.list(c, a)]);
+        const [members, agents, appList, projects] = await Promise.all([
+          ctx.access.members.list({ companyId: c }), ctx.agents.list({ companyId: c }), appService.list(c, a), ctx.projects.list({ companyId: c }),
+        ]);
         return {
           members: members.filter((m) => m.principalType === "user" && m.status === "active").map((m) => ({ id: m.principalId, role: m.membershipRole })),
           agents: agents.filter((agent) => agent.status !== "terminated").map((agent) => ({ id: agent.id, name: agent.name })),
           apps: appList.filter((app) => app.status !== "archived").map((app) => ({ id: app.id, name: app.name, icon: app.icon })),
+          projects: projects.filter((project) => project.archivedAt == null).map((project) => ({ id: project.id, name: project.name })),
         };
       });
       // The Data access page's people table: each active member's effective level and where it comes from.
@@ -657,7 +689,9 @@ export function createAppsPlugin(deps: AppsPluginDeps): PaperclipPlugin {
         const decided = reports.reduce((sum, report) => sum + report.decided, 0);
         if (decided > 0) ctx.logger.info("filled AI columns", { companies: reports.length, decided });
       });
+      ctx.jobs.register(VISIBILITY_JOB_KEY, () => writeVisibility());
 
+      await writeVisibility();
       ctx.logger.info(`${PLUGIN_ID} worker ready`);
     },
 

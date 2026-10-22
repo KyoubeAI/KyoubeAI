@@ -1,4 +1,7 @@
 // tests/unit/plugin-guardrail.spec.ts
+import { mkdtempSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createTestHarness } from "@paperclipai/plugin-sdk/testing";
 import type { AppServiceDeps } from "../../src/apps/service.js";
@@ -9,6 +12,8 @@ import { createAppsPlugin } from "../../src/plugin.js";
 import { createStubService } from "../stub-service.js";
 
 const KYOUBE_CONFIG = { home: "/kyoubeai", hermesHome: "/kyoubeai/.hermes", dataDatabaseUrl: "postgres://x", publicUrl: "http://localhost:3100", paperclipApiUrl: "http://127.0.0.1:3100" };
+// Setup writes the visibility policy; tests point it here, never at /kyoubeai.
+const VISIBILITY_DIR = mkdtempSync(path.join(os.tmpdir(), "kyoube-apps-visibility-"));
 const COMPANY = "11111111-1111-4111-8111-111111111111";
 
 describe("plugin wiring for the guardrail", () => {
@@ -25,6 +30,7 @@ describe("plugin wiring for the guardrail", () => {
     const plugin = createAppsPlugin({
       loadKyoubeConfig: async () => KYOUBE_CONFIG,
       migrationsDir: "/nowhere",
+      visibilityDir: VISIBILITY_DIR,
       createPool: () => ({ query: async () => ({ rows: [], rowCount: 0 }), end: async () => {} }) as never,
       migrate: async () => [],
       createService: () => data.service,
@@ -59,6 +65,7 @@ describe("plugin wiring for the guardrail", () => {
     const plugin = createAppsPlugin({
       loadKyoubeConfig: async () => KYOUBE_CONFIG,
       migrationsDir: "/nowhere",
+      visibilityDir: VISIBILITY_DIR,
       createPool: () => pool as never,
       migrate: async () => [],
       createService: () => data.service,
@@ -83,6 +90,7 @@ describe("plugin wiring for the guardrail", () => {
     const plugin = createAppsPlugin({
       loadKyoubeConfig: async () => KYOUBE_CONFIG,
       migrationsDir: "/nowhere",
+      visibilityDir: VISIBILITY_DIR,
       createPool: () => ({ query: async () => ({ rows: [], rowCount: 0 }), end: async () => {} }) as never,
       migrate: async () => [],
       createService: () => stub.service,

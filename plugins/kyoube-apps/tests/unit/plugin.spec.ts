@@ -8,7 +8,7 @@ import type { DataService, DataServiceDeps, MutationEvent } from "../../src/data
 import manifest from "../../src/manifest.js";
 import { actorFromAction, createAppsPlugin } from "../../src/plugin.js";
 import { createStubService } from "../stub-service.js";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -17,6 +17,8 @@ const OTHER_COMPANY = "22222222-2222-4222-8222-222222222222";
 const ADMIN = { type: "user" as const, userId: "admin-1" };
 
 const KYOUBE_CONFIG = { home: "/kyoubeai", hermesHome: "/kyoubeai/.hermes", dataDatabaseUrl: "postgres://x", publicUrl: "http://localhost:3100", paperclipApiUrl: "http://127.0.0.1:3100" };
+// Setup writes the visibility policy; tests point it here, never at /kyoubeai.
+const VISIBILITY_DIR = mkdtempSync(path.join(os.tmpdir(), "kyoube-apps-visibility-"));
 
 function apiRequest(overrides: Partial<PluginApiRequestInput> = {}): PluginApiRequestInput {
   return { routeKey: "tables.list", method: "GET", path: "/tables", params: {}, query: {}, body: undefined, actor: { actorType: "user", actorId: "admin-1", userId: "admin-1" }, companyId: COMPANY, headers: {}, ...overrides };
@@ -46,6 +48,7 @@ async function setup(opts: { rulesTokenPath?: string; before?: (harness: ReturnT
   const plugin = createAppsPlugin({
     loadKyoubeConfig: async () => KYOUBE_CONFIG,
     migrationsDir: "/nowhere",
+    visibilityDir: VISIBILITY_DIR,
     createPool: () => fakePool as never,
     migrate: async () => [],
     rulesTokenPath: opts.rulesTokenPath,
@@ -87,6 +90,7 @@ async function setupRaw() {
   const plugin = createAppsPlugin({
     loadKyoubeConfig: async () => KYOUBE_CONFIG,
     migrationsDir: "/nowhere",
+    visibilityDir: VISIBILITY_DIR,
     createPool: () => ({ query: async () => ({ rows: [] }), end: async () => {} }) as never,
     migrate: async () => [],
     createService: () => stub.service,
@@ -329,7 +333,7 @@ describe("kyoube.apps plugin wiring", () => {
       data: { register: (key: string, handler: (params: Record<string, unknown>) => Promise<unknown>) => void dataHandlers.set(key, handler) },
       skills: { managed: { ...managed, reconcile: async (key: string, companyId: string) => { if (storeDown) throw new Error("skill store down"); return managed.reconcile(key, companyId); } } },
     };
-    const plugin = createAppsPlugin({ loadKyoubeConfig: async () => KYOUBE_CONFIG, migrationsDir: "/nowhere", createPool: () => ({ query: async () => ({ rows: [] }), end: async () => {} }) as never, migrate: async () => [], createService: () => createStubService().service });
+    const plugin = createAppsPlugin({ loadKyoubeConfig: async () => KYOUBE_CONFIG, migrationsDir: "/nowhere", visibilityDir: VISIBILITY_DIR, createPool: () => ({ query: async () => ({ rows: [] }), end: async () => {} }) as never, migrate: async () => [], createService: () => createStubService().service });
     await plugin.definition.setup(ctx as never);
     const read = dataHandlers.get("data.access")!;
     expect(await read({ companyId: COMPANY, userId: "admin-1" })).toMatchObject({ level: "write" });
@@ -344,7 +348,7 @@ describe("kyoube.apps plugin wiring", () => {
     const harness = createTestHarness({ manifest });
     const managed = harness.ctx.skills.managed;
     const ctx = { ...harness.ctx, skills: { managed: { ...managed, reconcile: async () => { throw new Error("pg: connection refused at 10.0.0.9"); } } } };
-    const plugin = createAppsPlugin({ loadKyoubeConfig: async () => KYOUBE_CONFIG, migrationsDir: "/nowhere", createPool: () => ({ query: async () => ({ rows: [] }), end: async () => {} }) as never, migrate: async () => [], createService: () => createStubService().service });
+    const plugin = createAppsPlugin({ loadKyoubeConfig: async () => KYOUBE_CONFIG, migrationsDir: "/nowhere", visibilityDir: VISIBILITY_DIR, createPool: () => ({ query: async () => ({ rows: [] }), end: async () => {} }) as never, migrate: async () => [], createService: () => createStubService().service });
     await plugin.definition.setup(ctx as never);
     const response = await plugin.definition.onApiRequest?.(apiRequest({ routeKey: "skills.install", method: "POST", path: "/skills/install", body: { companyId: COMPANY } }));
     expect(response?.status).toBe(500);
@@ -550,7 +554,7 @@ describe("kyoube.apps plugin wiring", () => {
   // worker whose setup has not run (or has shut down) serves 503 rather than
   // reaching for a stale module-level singleton.
   it("serves 503 before setup and after shutdown, closing the pool once", async () => {
-    const plugin = createAppsPlugin({ loadKyoubeConfig: async () => KYOUBE_CONFIG, migrationsDir: "/nowhere", createPool: () => ({ query: async () => ({ rows: [] }), end: async () => {} }) as never, migrate: async () => [] });
+    const plugin = createAppsPlugin({ loadKyoubeConfig: async () => KYOUBE_CONFIG, migrationsDir: "/nowhere", visibilityDir: VISIBILITY_DIR, createPool: () => ({ query: async () => ({ rows: [] }), end: async () => {} }) as never, migrate: async () => [] });
     // One body for both route families: the same worker serves `/tables` and
     // `/apps`, and "data service not ready" was wrong about half of them.
     expect(await plugin.definition.onApiRequest?.(apiRequest())).toEqual({ status: 503, body: { error: "plugin not ready" } });
@@ -570,6 +574,7 @@ describe("kyoube.apps plugin wiring", () => {
     const plugin = createAppsPlugin({
       loadKyoubeConfig: async () => KYOUBE_CONFIG,
       migrationsDir: "/nowhere",
+      visibilityDir: VISIBILITY_DIR,
       createPool: () => ({ query: async () => ({ rows: [{ ok: 1 }] }), end: async () => { throw new Error("pool stuck"); } }) as never,
       migrate: async () => [],
       createService: () => createStubService().service,
@@ -663,6 +668,7 @@ describe("kyoube.apps plugin wiring", () => {
     const plugin = createAppsPlugin({
       loadKyoubeConfig: async () => KYOUBE_CONFIG,
       migrationsDir: "/nowhere",
+      visibilityDir: VISIBILITY_DIR,
       createPool: () => ({ query, end: async () => {} }) as never,
       migrate: async () => [],
       createService: () => ({ purgeTrash, attach: () => {}, existingRowIds: async () => aiCells?.existing ?? [] }) as unknown as DataService,
@@ -731,5 +737,63 @@ describe("kyoube.apps group routes and the rules token (ruling R18)", () => {
     });
     expect(await plugin.definition.onApiRequest!(sync("ef".repeat(31)))).toMatchObject({ status: 403, body: { code: "forbidden" } });
     expect(await plugin.definition.onApiRequest!(sync("ef".repeat(32)))).not.toMatchObject({ status: 403 });
+  });
+});
+
+describe("kyoube.apps visibility policy (docs/groups.md)", () => {
+  /** The plugin over a fake pool that answers `query`, with one admin, two projects (one archived) and no apps. */
+  async function setupVisibility(query: (sql: string) => Promise<{ rows: unknown[] }>, visibilityDir = VISIBILITY_DIR) {
+    const harness = createTestHarness({ manifest });
+    harness.seed({
+      accessMembers: [{ id: "m1", companyId: COMPANY, principalType: "user", principalId: "admin-1", status: "active", membershipRole: "admin", grants: [], createdAt: "2026-01-01", updatedAt: "2026-01-01" }],
+      projects: [
+        { id: "p1", companyId: COMPANY, name: "Website", archivedAt: null } as never,
+        { id: "p2", companyId: COMPANY, name: "Old site", archivedAt: new Date("2026-01-01") } as never,
+      ],
+    });
+    const plugin = createAppsPlugin({
+      loadKyoubeConfig: async () => KYOUBE_CONFIG,
+      migrationsDir: "/nowhere",
+      visibilityDir,
+      // `connect` serves the transactions a mode change opens; every statement on it succeeds.
+      createPool: () => ({ query, connect: async () => ({ query: async () => ({ rows: [], rowCount: 0 }), release: () => {} }), end: async () => {} }) as never,
+      migrate: async () => [],
+      createService: () => createStubService().service,
+      createAppService: () => ({ list: async () => [] }) as never,
+      licence: { unlocked: async () => true },
+    });
+    await plugin.definition.setup(harness.ctx);
+    return harness;
+  }
+
+  it("registers the write-visibility job and writes the policy once at setup", async () => {
+    expect(manifest.jobs?.find((job) => job.jobKey === "write-visibility")).toMatchObject({ displayName: "Write the visibility policy", schedule: "*/5 * * * *" });
+    const dir = mkdtempSync(path.join(os.tmpdir(), "kyoube-apps-visibility-setup-"));
+    const index = path.join(dir, "index.json");
+    const harness = await setupVisibility(async (sql) => ({ rows: sql.includes("FROM kyoube_meta.companies") ? [{ company_id: COMPANY, mode: "open" }] : [] }), dir);
+    expect(JSON.parse(readFileSync(index, "utf8"))).toMatchObject({ version: 1, companies: { [COMPANY]: { mode: "open" } } });
+    rmSync(index);
+    await harness.runJob("write-visibility");
+    expect(existsSync(index)).toBe(true);
+  });
+
+  it("never fails setup, the job or a committed change when the policy cannot be written", async () => {
+    const harness = await setupVisibility(async (sql) => {
+      if (sql.includes("FROM kyoube_meta.companies")) throw new Error("database down");
+      return { rows: [] };
+    });
+    await expect(harness.runJob("write-visibility")).resolves.toBeUndefined();
+    const summary = await harness.performAction<{ mode: string }>("groups.set_visibility", { mode: "need_to_know" }, { actor: ADMIN, companyId: COMPANY });
+    expect(summary.mode).toBe("need_to_know");
+    const failures = harness.logs.filter((entry) => entry.level === "warn" && entry.message === "visibility policy write failed");
+    // Setup, the job, then the change's own hook, which names the company.
+    expect(failures.map((entry) => entry.meta)).toEqual([{ error: "Error: database down" }, { error: "Error: database down" }, { companyId: COMPANY, error: "Error: database down" }]);
+    expect(harness.logs.some((entry) => entry.message === "data activity log failed")).toBe(false);
+  });
+
+  it("groups.options lists the company's projects", async () => {
+    const harness = await setupVisibility(async () => ({ rows: [] }));
+    const options = await harness.performAction<{ projects: Array<{ id: string; name: string }> }>("groups.options", {}, { actor: ADMIN, companyId: COMPANY });
+    expect(options.projects).toEqual([{ id: "p1", name: "Website" }]);
   });
 });

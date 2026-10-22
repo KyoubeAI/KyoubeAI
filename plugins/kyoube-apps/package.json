@@ -1,6 +1,6 @@
 {
   "name": "@kyoube/plugin-apps",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "KyoubeAI organisation database and apps (Paperclip plugin)",
   "license": "BUSL-1.1",
   "type": "module",
@@ -30,6 +30,7 @@
   "devDependencies": {
     "@kyoube/app-sdk": "workspace:*",
     "@kyoube/license": "workspace:*",
+    "@kyoube/visibility": "workspace:*",
     "@types/node": "^24.0.0",
     "@types/pg": "^8.23.1",
     "@types/react": "^19.2.18",

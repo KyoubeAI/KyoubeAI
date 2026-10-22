@@ -27,11 +27,11 @@ afterAll(async () => { await db.close(); });
 
 describe("GroupStore", () => {
   it("creates, reads, replaces and removes a group with its members, agents and apps", async () => {
-    const created = await withMeta(db.pool, (client) => store.create(client, C, { name: "Sales", dataLevel: "write", members: ["u1", "u2"], agents: ["a1"], apps: [appA] }));
-    expect(created).toMatchObject({ companyId: C, name: "Sales", dataLevel: "write", members: ["u1", "u2"], agents: ["a1"], apps: [appA] });
+    const created = await withMeta(db.pool, (client) => store.create(client, C, { name: "Sales", dataLevel: "write", members: ["u1", "u2"], agents: ["a1"], apps: [appA], seesAll: true, projects: ["p1", "p2"] }));
+    expect(created).toMatchObject({ companyId: C, name: "Sales", dataLevel: "write", members: ["u1", "u2"], agents: ["a1"], apps: [appA], seesAll: true, projects: ["p1", "p2"] });
     expect(await store.count(C)).toBe(1);
-    const replaced = await withMeta(db.pool, (client) => store.replace(client, C, created.id, { name: "Sales EU", dataLevel: null, members: ["u2"], agents: [], apps: [appA, appB] }));
-    expect(replaced).toMatchObject({ name: "Sales EU", dataLevel: null, members: ["u2"], agents: [], apps: [appA, appB].sort() });
+    const replaced = await withMeta(db.pool, (client) => store.replace(client, C, created.id, { name: "Sales EU", dataLevel: null, members: ["u2"], agents: [], apps: [appA, appB], seesAll: false, projects: ["p2"] }));
+    expect(replaced).toMatchObject({ name: "Sales EU", dataLevel: null, members: ["u2"], agents: [], apps: [appA, appB].sort(), seesAll: false, projects: ["p2"] });
     expect((await store.get(C, created.id))?.name).toBe("Sales EU");
     const removed = await withMeta(db.pool, (client) => store.remove(client, C, created.id));
     expect(removed?.id).toBe(created.id);
@@ -39,13 +39,13 @@ describe("GroupStore", () => {
   });
 
   it("rejects a duplicate name regardless of case", async () => {
-    await withMeta(db.pool, (client) => store.create(client, C, { name: "Support", dataLevel: null, members: [], agents: [], apps: [] }));
-    await expect(withMeta(db.pool, (client) => store.create(client, C, { name: "support", dataLevel: null, members: [], agents: [], apps: [] }))).rejects.toThrow("conflict");
+    await withMeta(db.pool, (client) => store.create(client, C, { name: "Support", dataLevel: null, members: [], agents: [], apps: [], seesAll: false, projects: [] }));
+    await expect(withMeta(db.pool, (client) => store.create(client, C, { name: "support", dataLevel: null, members: [], agents: [], apps: [], seesAll: false, projects: [] }))).rejects.toThrow("conflict");
   });
 
   it("answers levels, hidden apps and agent access", async () => {
-    const g1 = await withMeta(db.pool, (client) => store.create(client, C, { name: "G1", dataLevel: "read", members: ["u1"], agents: ["a1"], apps: [appA] }));
-    await withMeta(db.pool, (client) => store.create(client, C, { name: "G2", dataLevel: "schema", members: ["u1", "u3"], agents: ["a1", "a2"], apps: [] }));
+    const g1 = await withMeta(db.pool, (client) => store.create(client, C, { name: "G1", dataLevel: "read", members: ["u1"], agents: ["a1"], apps: [appA], seesAll: false, projects: [] }));
+    await withMeta(db.pool, (client) => store.create(client, C, { name: "G2", dataLevel: "schema", members: ["u1", "u3"], agents: ["a1", "a2"], apps: [], seesAll: false, projects: [] }));
     expect((await store.levelsForUser(C, "u1")).sort()).toEqual(["read", "schema"]);
     expect(await store.levelsForUser(C, "u9")).toEqual([]);
     expect(await store.hiddenAppIds(C, "u1")).toEqual(new Set());

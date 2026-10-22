@@ -16,7 +16,7 @@ import skillMarkdown from "./skills/kyoube-data.md";
 import { toolDeclarations } from "./tools.js";
 
 export const PLUGIN_ID = "kyoube.apps";
-export const PLUGIN_VERSION = "0.13.0";
+export const PLUGIN_VERSION = "0.14.0";
 export const DATA_PAGE_ROUTE = "data";
 export const DATA_ACCESS_SETTINGS_ROUTE = "data-access";
 export const GROUPS_SETTINGS_ROUTE = "groups";
@@ -26,6 +26,7 @@ export const APPS_SKILL_KEY = "kyoube-apps";
 export const DECISIONS_SKILL_KEY = "kyoube-decisions";
 export const PURGE_JOB_KEY = "purge-trash";
 export const FILL_JOB_KEY = "fill-ai-columns";
+export const VISIBILITY_JOB_KEY = "write-visibility";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: PLUGIN_ID,
@@ -82,6 +83,9 @@ const manifest: PaperclipPluginManifestV1 = {
     "issue.comments.read",
     "authorization.policies.read",
     "companies.read",
+    // Work-object visibility (docs/groups.md): a group's projects are checked against, and picked
+    // from, the company's projects.
+    "projects.read",
   ],
   entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui" },
   instanceConfigSchema: {
@@ -93,6 +97,7 @@ const manifest: PaperclipPluginManifestV1 = {
   jobs: [
     { jobKey: PURGE_JOB_KEY, displayName: "Purge trashed tables and fields", description: "Drops tables/fields soft-deleted more than 30 days ago.", schedule: "0 3 * * *" },
     { jobKey: FILL_JOB_KEY, displayName: "Fill AI columns", description: "Asks the company's typed-decision model about new and changed rows of AI columns (docs/decisions.md).", schedule: "*/5 * * * *" },
+    { jobKey: VISIBILITY_JOB_KEY, displayName: "Write the visibility policy", description: "Rewrites the need-to-know policy files the core reads (docs/groups.md).", schedule: "*/5 * * * *" },
   ],
   skills: [
     { skillKey: DATA_SKILL_KEY, displayName: "Kyoube Data", slug: "kyoube-data", description: "Design and use the company's Kyoube organisation database through the kyoube.apps tools.", markdown: skillMarkdown },

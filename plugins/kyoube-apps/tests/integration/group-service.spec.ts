@@ -18,7 +18,10 @@ beforeAll(async () => {
   db = await createTestDatabase();
   resetCompanyCache();
   await runMetaMigrations(db.pool, migrationsDirFrom(import.meta.url.replace("tests/integration/group-service.spec.ts", "src/db/migrate.ts")));
-  groups = new GroupService({ pool: db.pool, resolveUserRole: async (_c, id) => ROLES[id] ?? null, licence: { unlocked: async () => unlocked } });
+  groups = new GroupService({
+    pool: db.pool, resolveUserRole: async (_c, id) => ROLES[id] ?? null, licence: { unlocked: async () => unlocked },
+    listProjectIds: async () => new Set(), listMembers: async () => [],
+  });
   await ensureCompany(db.pool, C);
   appId = (await db.pool.query<{ id: string }>("INSERT INTO kyoube_meta.apps (company_id, slug, name, status, latest_version) VALUES ($1, 'refunds', 'Refunds', 'published', 1) RETURNING id", [C])).rows[0]!.id;
 });
@@ -73,7 +76,7 @@ describe("GroupService", () => {
       "SELECT operation, actor_kind, actor_id, details FROM kyoube_meta.audit WHERE company_id = $1 AND operation = 'group_delete' AND details->>'groupId' = $2", [C, doomed.id]);
     expect(rows.rows).toHaveLength(1);
     expect(rows.rows[0]).toMatchObject({ actor_kind: "user", actor_id: "admin" });
-    expect(rows.rows[0]!.details).toEqual({ groupId: doomed.id, dataLevel: "read", members: ["op"], agents: ["agent-7"], apps: [appId] });
+    expect(rows.rows[0]!.details).toEqual({ groupId: doomed.id, dataLevel: "read", members: ["op"], agents: ["agent-7"], apps: [appId], seesAll: false, projects: [] });
     expect(JSON.stringify(rows.rows[0]!.details)).not.toContain("Alice");
   });
 
