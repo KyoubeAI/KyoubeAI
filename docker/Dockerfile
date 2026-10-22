@@ -147,15 +147,16 @@ RUN grep -q 'kyoube-ask-level' /app/server/dist/services/issue-thread-interactio
  && cd /app/server && node --check dist/services/issue-thread-interactions.js \
  && gosu node node --input-type=module -e 'const m = await import("/opt/kyoube/core-patches/ask-level.mjs"); if (typeof m.applyAskLevel !== "function") process.exit(1); console.log("ask-level ok")'
 
-# Work-object visibility (four standing core patches above) imports
+# Work-object visibility (seven standing core patches above) imports
 # /opt/kyoube/visibility/decide.mjs, copied in below with the rest of
 # /opt/kyoube and checked there. Check each marker is in the served code the
-# expected number of times (the search route has two: the scope check and the
-# result filter) and that the three files still parse. Without the module
-# every covered read is refused for operators and viewers.
+# expected number of times (routes/issues.js has five: the search route's scope
+# check and result filter, and the check on a person's unassigned task in the
+# create, child and plan routes) and that the three files still parse. Without
+# the module every covered read is refused for operators and viewers.
 RUN test "$(grep -c 'kyoube-visibility' /app/server/dist/services/authorization.js)" -eq 1 \
  && test "$(grep -c 'kyoube-visibility' /app/server/dist/realtime/live-events-ws.js)" -eq 1 \
- && test "$(grep -c 'kyoube-visibility' /app/server/dist/routes/issues.js)" -eq 2 \
+ && test "$(grep -c 'kyoube-visibility' /app/server/dist/routes/issues.js)" -eq 5 \
  && cd /app/server && node --check dist/services/authorization.js \
  && node --check dist/realtime/live-events-ws.js \
  && node --check dist/routes/issues.js

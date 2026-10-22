@@ -60,7 +60,7 @@ describe("visibility constants", () => {
     expect(VISIBILITY_PATCHED).toEqual([
       { path: "/app/server/dist/services/authorization.js", count: 1 },
       { path: "/app/server/dist/realtime/live-events-ws.js", count: 1 },
-      { path: "/app/server/dist/routes/issues.js", count: 2 },
+      { path: "/app/server/dist/routes/issues.js", count: 5 },
     ]);
     expect(VISIBILITY_STALE_MS).toBe(15 * 60_000);
     expect(SHADOW_ENV_KEYS).toEqual(["PAPERCLIP_RESPONSIBLE_USER_AUTHZ_MODE", "PAPERCLIP_RESPONSIBLE_USER_AUTHZ_SHADOW"]);
@@ -92,9 +92,9 @@ describe("visibilityChecks", () => {
 
   it("fails when a patched file lacks its marker count", async () => {
     const dir = await tempDir();
-    const [check] = await visibilityChecks(input(dir, { readText: patched({ "/app/server/dist/routes/issues.js": 1 }) }));
+    const [check] = await visibilityChecks(input(dir, { readText: patched({ "/app/server/dist/routes/issues.js": 2 }) }));
     expect(check).toMatchObject({ name: "visibility", ok: false });
-    expect(check!.detail).toContain("/app/server/dist/routes/issues.js has 1 kyoube-visibility marker, expected 2");
+    expect(check!.detail).toContain("/app/server/dist/routes/issues.js has 2 kyoube-visibility markers, expected 5");
     expect(check!.detail).not.toContain("authorization.js");
 
     // A missing file, and a patch applied twice, fail too.

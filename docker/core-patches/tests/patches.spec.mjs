@@ -623,7 +623,7 @@ async function writeFullCore(root) {
   await mkdir(path.join(root, "server", "dist", "auth"), { recursive: true });
   await writeFile(path.join(root, "server/dist/auth/better-auth.js"), BETTER_AUTH_2026_916_1);
   await mkdir(path.join(root, "server", "dist", "routes"), { recursive: true });
-  await writeFile(path.join(root, "server/dist/routes/issues.js"), CHAT_OPEN_2026_1005_0 + CHAT_MESSAGE_2026_1005_0 + SEARCH_ROUTES_2026_1012_0);
+  await writeFile(path.join(root, "server/dist/routes/issues.js"), CHAT_OPEN_2026_1005_0 + CHAT_MESSAGE_2026_1005_0 + SEARCH_ROUTES_2026_1012_0 + CREATE_ROUTE_2026_1012_0 + CHILD_ROUTE_2026_1012_0 + PLAN_ROUTE_2026_1012_0);
   await mkdir(path.join(root, "packages", "adapters", "hermes", "src", "server"), { recursive: true });
   await writeFile(path.join(root, "packages/adapters/hermes/src/server/execute.ts"), HERMES_QUIET_2026_916_1);
 }
@@ -1471,6 +1471,296 @@ describe("visibility patches", () => {
         const file = path.join(dir, `${name}.mjs`);
         await writeFile(file, `async function f() {\n${text}}\n`);
         await promisify(execFile)(process.execPath, ["--check", file]);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// routes/issues.js lines 8239-8261 (core 2026.1012.0, verbatim), POST /companies/:companyId/issues:
+// the assignment scope, the core's assignment check (an agent, or an assignee named), then the
+// environment check. The lines before the scope are the middle of one object literal.
+const CREATE_ROUTE_2026_1012_0 =
+  "        const createAssignmentScope = {\n" +
+  "            projectId: await resolveCreateAssignmentProjectId({ ...createBody, companyId }),\n" +
+  "            parentIssueId: createBody.parentId ?? null,\n" +
+  "            assigneeAgentId: createBody.assigneeAgentId ?? null,\n" +
+  "            assigneeUserId: rawCreateBody.assigneeUserId ?? null,\n" +
+  "        };\n" +
+  "        await assertTaskBridgeCreateAllowed(req, companyId, createAssignmentScope);\n" +
+  "        if (req.actor.type === \"agent\" ||\n" +
+  "            rawCreateBody.assigneeAgentId ||\n" +
+  "            rawCreateBody.assigneeUserId) {\n" +
+  "            await assertCanAssignTasks(req, companyId, createAssignmentScope);\n" +
+  "        }\n" +
+  "        await assertIssueEnvironmentSelection(companyId, createBody.executionWorkspaceSettings?.environmentId);\n" +
+  "        const executionPolicy = applyActorMonitorScheduledBy(await resolveCreatedIssueExecutionPolicy(req, companyId, createAssignmentScope.projectId, createBody.executionPolicy), actor.actorType);\n" +
+  "        await assertCanManageIssueMonitor(access, req, companyId, createBody.assigneeAgentId ?? null, Boolean(executionPolicy?.monitor));\n" +
+  "        const issueId = randomUUID();\n" +
+  "        const sourceTrust = await sourceTrustForActorWrite({\n" +
+  "            id: issueId,\n" +
+  "            companyId,\n" +
+  "            projectId: createAssignmentScope.projectId,\n" +
+  "            executionPolicy,\n" +
+  "        }, actor);\n" +
+  "        let deduplicationReason = null;\n";
+
+// routes/issues.js lines 8469-8510, POST /issues/:id/children: the same check for a subtask,
+// whose parent lookup checks only the company.
+const CHILD_ROUTE_2026_1012_0 =
+  "        if (!sanitizedBody)\n" +
+  "            return;\n" +
+  "        const normalizedAssigneeAgentId = await normalizeIssueAssigneeAgentReference(parent.companyId, sanitizedBody.assigneeAgentId, { actorType: req.actor.type });\n" +
+  "        await assertNoAgentDelegationCycle({\n" +
+  "            actorType: req.actor.type,\n" +
+  "            actorAgentId: req.actor.agentId,\n" +
+  "            parentIssueId: parent.id,\n" +
+  "            assigneeAgentId: normalizedAssigneeAgentId ?? null,\n" +
+  "        });\n" +
+  "        const createBody = {\n" +
+  "            ...sanitizedBody,\n" +
+  "            ...(normalizedAssigneeAgentId !== undefined\n" +
+  "                ? { assigneeAgentId: normalizedAssigneeAgentId }\n" +
+  "                : {}),\n" +
+  "        };\n" +
+  "        const childAssignmentScope = {\n" +
+  "            projectId: await resolveCreateAssignmentProjectId({ ...createBody, companyId: parent.companyId, parentId: parent.id }),\n" +
+  "            parentIssueId: parent.id,\n" +
+  "            assigneeAgentId: createBody.assigneeAgentId ?? null,\n" +
+  "            assigneeUserId: createBody.assigneeUserId ?? null,\n" +
+  "        };\n" +
+  "        await assertTaskBridgeCreateAllowed(req, parent.companyId, childAssignmentScope);\n" +
+  "        if (req.actor.type === \"agent\" ||\n" +
+  "            sanitizedBody.assigneeAgentId ||\n" +
+  "            sanitizedBody.assigneeUserId) {\n" +
+  "            await assertCanAssignTasks(req, parent.companyId, childAssignmentScope);\n" +
+  "        }\n" +
+  "        await assertIssueEnvironmentSelection(parent.companyId, createBody.executionWorkspaceSettings?.environmentId);\n" +
+  "        const actor = getActorInfo(req);\n" +
+  "        const serializationContext = await resolveWatchdogFollowUpSerializationContext(req, parent);\n" +
+  "        const currentSerializedChild = serializationContext\n" +
+  "            ? await findCurrentSerializedWatchdogChild(parent)\n" +
+  "            : null;\n" +
+  "        const executionPolicy = applyActorMonitorScheduledBy(await resolveCreatedIssueExecutionPolicy(req, parent.companyId, childAssignmentScope.projectId, createBody.executionPolicy), actor.actorType);\n" +
+  "        await assertCanManageIssueMonitor(access, req, parent.companyId, createBody.assigneeAgentId ?? null, Boolean(executionPolicy?.monitor));\n" +
+  "        const issueId = randomUUID();\n" +
+  "        const sourceTrust = await sourceTrustForActorWrite({\n" +
+  "            id: issueId,\n" +
+  "            companyId: parent.companyId,\n" +
+  "            projectId: childAssignmentScope.projectId,\n" +
+  "            executionPolicy,\n" +
+  "        }, actor);\n";
+
+// routes/issues.js lines 8636-8694, POST /issues/:id/accepted-plan-decompositions: each requested
+// child is checked only when it names an assignee.
+const PLAN_ROUTE_2026_1012_0 =
+  "        const sourceIssueId = req.params.id;\n" +
+  "        const sourceIssue = await getAccessibleResource(req, res, svc.getById(sourceIssueId), \"Issue not found\");\n" +
+  "        if (!sourceIssue)\n" +
+  "            return;\n" +
+  "        if (!(await assertAgentIssueMutationAllowed(req, res, sourceIssue)))\n" +
+  "            return;\n" +
+  "        const requestedChildren = [];\n" +
+  "        for (const child of req.body.children) {\n" +
+  "            const sanitizedChild = await sanitizeIssueCreateAttribution(db, req, res, sourceIssue.companyId, child, {\n" +
+  "                surface: \"issues.accepted_plan_decomposition\",\n" +
+  "                entityId: sourceIssue.id,\n" +
+  "            });\n" +
+  "            if (!sanitizedChild)\n" +
+  "                return;\n" +
+  "            const normalizedAssigneeAgentId = await normalizeIssueAssigneeAgentReference(sourceIssue.companyId, sanitizedChild.assigneeAgentId, { actorType: req.actor.type });\n" +
+  "            const childBody = {\n" +
+  "                ...sanitizedChild,\n" +
+  "                ...(normalizedAssigneeAgentId !== undefined\n" +
+  "                    ? { assigneeAgentId: normalizedAssigneeAgentId }\n" +
+  "                    : {}),\n" +
+  "            };\n" +
+  "            requestedChildren.push(childBody);\n" +
+  "            assertNoAgentHostWorkspaceCommandMutation(req, collectIssueWorkspaceCommandPaths(childBody));\n" +
+  "            if (childBody.assigneeAgentId || childBody.assigneeUserId) {\n" +
+  "                await assertCanAssignTasks(req, sourceIssue.companyId, {\n" +
+  "                    projectId: childBody.projectId ?? sourceIssue.projectId ?? null,\n" +
+  "                    parentIssueId: sourceIssue.id,\n" +
+  "                    assigneeAgentId: childBody.assigneeAgentId ?? null,\n" +
+  "                    assigneeUserId: childBody.assigneeUserId ?? null,\n" +
+  "                });\n" +
+  "            }\n" +
+  "            await assertIssueEnvironmentSelection(sourceIssue.companyId, childBody.executionWorkspaceSettings?.environmentId);\n" +
+  "        }\n" +
+  "        const actor = getActorInfo(req);\n" +
+  "        const normalizedChildren = [];\n" +
+  "        for (const child of requestedChildren) {\n" +
+  "            const executionPolicy = applyActorMonitorScheduledBy(normalizeIssueExecutionPolicy(child.executionPolicy), actor.actorType);\n" +
+  "            await assertCanManageIssueMonitor(access, req, sourceIssue.companyId, child.assigneeAgentId ?? null, Boolean(executionPolicy?.monitor));\n" +
+  "            const childIssueId = randomUUID();\n" +
+  "            const sourceTrust = await sourceTrustForActorWrite({\n" +
+  "                id: childIssueId,\n" +
+  "                companyId: sourceIssue.companyId,\n" +
+  "                projectId: child.projectId ?? sourceIssue.projectId ?? null,\n" +
+  "                executionPolicy,\n" +
+  "            }, actor);\n" +
+  "            normalizedChildren.push({\n" +
+  "                ...child,\n" +
+  "                id: childIssueId,\n" +
+  "                executionPolicy,\n" +
+  "                ...(sourceTrust ? { sourceTrust } : {}),\n" +
+  "                createdByAgentId: actor.agentId,\n" +
+  "                createdByUserId: actor.actorType === \"user\" ? actor.actorId : null,\n" +
+  "                actorRunId: actor.runId,\n" +
+  "                actorResponsibleUserId: authenticatedActorResponsibleUserId(req),\n" +
+  "                trustExplicitResponsibleUserId: actor.actorType === \"user\",\n" +
+  "                actorAgentId: actor.agentId,\n" +
+  "                actorUserId: actor.actorType === \"user\" ? actor.actorId : null,\n" +
+  "            });\n" +
+  "        }\n";
+
+/**
+ * Runs `slice` of a create route, patched with entry `id`, as the core would, with the route's
+ * helpers stood in for: access.decide answers with `decision` and records the call,
+ * assertCanAssignTasks records its call, and reaching the environment check means the route
+ * went on to create the task. Resolves to the calls made and what the route threw, if anything.
+ */
+async function runPatchedCreateCheck(id, slice, { actor, body = {}, decision }) {
+  const patched = applyToText(slice, PATCHES.find((entry) => entry.id === id)).text;
+  const calls = [];
+  const stubs = {
+    req: { actor, body: { children: [body] } },
+    res: {},
+    db: {},
+    access: { decide: async (input) => { calls.push(["decide", input]); return decision; } },
+    forbidden: (message, details) => Object.assign(new Error(message), { status: 403, details }),
+    authorizationDeniedDetails: (denied) => ({ reason: denied.reason }),
+    companyId: "c1",
+    createBody: body,
+    rawCreateBody: body,
+    resolveCreateAssignmentProjectId: async (input) => input.projectId ?? null,
+    assertTaskBridgeCreateAllowed: async () => {},
+    assertCanAssignTasks: async (_req, companyId, scope) => { calls.push(["assertCanAssignTasks", companyId, scope]); },
+    assertIssueEnvironmentSelection: async () => { calls.push(["created"]); },
+    parent: { id: "parent", companyId: "c1", projectId: null },
+    sanitizedBody: body,
+    sourceIssue: { id: "source", companyId: "c1", projectId: "p-source" },
+    sanitizeIssueCreateAttribution: async (_db, _req, _res, _companyId, child) => child,
+    normalizeIssueAssigneeAgentReference: async (_companyId, agentId) => agentId,
+    assertNoAgentHostWorkspaceCommandMutation: () => {},
+    collectIssueWorkspaceCommandPaths: () => [],
+  };
+  // As runPatchedCreate does: the patched excerpt goes through a real module.
+  const file = path.join(HERE, `.create-check-under-test-${process.pid}-${Math.random().toString(36).slice(2)}.mjs`);
+  await writeFile(file, `export default async ({ ${Object.keys(stubs).join(", ")} }) => {\n${patched}\n};\n`);
+  try {
+    const { default: run } = await import(pathToFileURL(file).href);
+    const error = await run(stubs).then(() => null, (thrown) => thrown);
+    return { calls, error };
+  } finally {
+    await rm(file, { force: true });
+  }
+}
+
+/** The statements of `excerpt` from the line starting with `from` up to the line starting with `to`. */
+function statementsBetween(excerpt, from, to) {
+  const start = excerpt.indexOf(from);
+  const end = excerpt.indexOf(to, start);
+  if (start < 0 || end < 0) throw new Error(`no ${from} … ${to} in the excerpt`);
+  return excerpt.slice(start, end);
+}
+
+describe("visibility create patches", () => {
+  const byId = (id) => PATCHES.find((patch) => patch.id === id);
+  const SITES = [
+    {
+      id: "visibility-create-check",
+      excerpt: CREATE_ROUTE_2026_1012_0,
+      slice: statementsBetween(CREATE_ROUTE_2026_1012_0, "        const createAssignmentScope = {", "        const executionPolicy = "),
+      body: { title: "t", projectId: "p-hidden", parentId: "t-hidden" },
+      where: { projectId: "p-hidden", parentIssueId: "t-hidden" },
+      agentChecked: true,
+    },
+    {
+      id: "visibility-create-child-check",
+      excerpt: CHILD_ROUTE_2026_1012_0,
+      slice: statementsBetween(CHILD_ROUTE_2026_1012_0, "        const childAssignmentScope = {", "        const actor = getActorInfo(req);"),
+      body: { title: "t" },
+      where: { projectId: null, parentIssueId: "parent" },
+      agentChecked: true,
+    },
+    {
+      id: "visibility-create-plan-check",
+      excerpt: PLAN_ROUTE_2026_1012_0,
+      slice: statementsBetween(PLAN_ROUTE_2026_1012_0, "        const requestedChildren = [];", "        const actor = getActorInfo(req);"),
+      body: { title: "t" },
+      where: { projectId: "p-source", parentIssueId: "source" },
+      // The core checks an agent's plan children only when one names an assignee.
+      agentChecked: false,
+    },
+  ];
+  const person = { type: "board", userId: "u1" };
+
+  it("anchors once each on its own create route, imports nothing, and a second apply matches nothing", () => {
+    for (const { id, excerpt } of SITES) {
+      const patch = byId(id);
+      expect(patch.standing).toContain("work-object visibility");
+      expect(patch.upstream).toBeUndefined();
+      expect(patch.expect).toBe(1);
+      expect(patch.files).toEqual(["server/dist/routes/issues.js"]);
+      for (const other of SITES) expect(countMatches(other.excerpt, patch.pattern)).toBe(other.id === id ? 1 : 0);
+      const { text, count } = applyToText(excerpt, patch);
+      expect(count).toBe(1);
+      expect(text).toContain("} /* kyoube-visibility (docs/groups.md) */ else if (req.actor.type === \"board\") {");
+      expect(text).not.toContain("/opt/kyoube");
+      expect(countMatches(text, patch.pattern)).toBe(0);
+    }
+  });
+
+  it("refuses a person's unassigned task for a visibility denial, asking the decision about where it goes", async () => {
+    for (const { id, slice, body, where } of SITES) {
+      for (const reason of ["deny_kyoube_visibility", "deny_kyoube_visibility_unavailable"]) {
+        const decision = { allowed: false, reason, explanation: `refused: ${reason}` };
+        const { calls, error } = await runPatchedCreateCheck(id, slice, { actor: person, body, decision });
+        expect(error, `${id} ${reason}`).toMatchObject({ status: 403, message: `refused: ${reason}`, details: { reason } });
+        // One decision, no core assignment check, nothing created.
+        expect(calls, id).toEqual([["decide", {
+          actor: person,
+          action: "tasks:assign",
+          resource: { type: "issue", companyId: "c1", issueId: null, ...where, assigneeAgentId: null, assigneeUserId: null },
+          scope: expect.objectContaining({ ...where, assigneeAgentId: null, assigneeUserId: null }),
+        }]]);
+      }
+    }
+  });
+
+  it("lets every other denial through, so an open company creates as the core does", async () => {
+    for (const { id, slice, body } of SITES) {
+      for (const decision of [{ allowed: false, reason: "deny_company_boundary", explanation: "no" }, { allowed: false, reason: "deny_missing_grant", explanation: "no" }, { allowed: true }]) {
+        const { calls, error } = await runPatchedCreateCheck(id, slice, { actor: person, body, decision });
+        expect(error).toBeNull();
+        expect(calls.map(([name]) => name), `${id} ${decision.reason}`).toEqual(["decide", "created"]);
+      }
+    }
+  });
+
+  it("leaves an assigned creation and an agent's creation to the core's own check", async () => {
+    const decision = { allowed: false, reason: "deny_kyoube_visibility", explanation: "would refuse" };
+    for (const { id, slice, body, agentChecked } of SITES) {
+      const assigned = await runPatchedCreateCheck(id, slice, { actor: person, body: { ...body, assigneeAgentId: "a1" }, decision });
+      expect(assigned.error).toBeNull();
+      expect(assigned.calls.map(([name]) => name), id).toEqual(["assertCanAssignTasks", "created"]);
+      const byAgent = await runPatchedCreateCheck(id, slice, { actor: { type: "agent", agentId: "a2" }, body, decision });
+      expect(byAgent.error).toBeNull();
+      expect(byAgent.calls.map(([name]) => name), id).toEqual(agentChecked ? ["assertCanAssignTasks", "created"] : ["created"]);
+    }
+  });
+
+  it("every patched route still parses", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "core-patches-visibility-create-"));
+    try {
+      for (const { id, excerpt } of SITES) {
+        for (const [name, text] of [[`core-${id}`, excerpt], [id, applyToText(excerpt, byId(id)).text]]) {
+          const file = path.join(dir, `${name}.mjs`);
+          await writeFile(file, `async function f() {\n${text}}\n`);
+          await promisify(execFile)(process.execPath, ["--check", file]);
+        }
       }
     } finally {
       await rm(dir, { recursive: true, force: true });

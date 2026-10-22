@@ -19,7 +19,7 @@ export const VISIBILITY_MARKER = "kyoube-visibility";
 export const VISIBILITY_PATCHED: ReadonlyArray<{ path: string; count: number }> = [
   { path: "/app/server/dist/services/authorization.js", count: 1 },
   { path: "/app/server/dist/realtime/live-events-ws.js", count: 1 },
-  { path: "/app/server/dist/routes/issues.js", count: 2 },
+  { path: "/app/server/dist/routes/issues.js", count: 5 },
 ];
 /** The kyoube.apps worker rewrites every policy file at least every five minutes. */
 export const VISIBILITY_STALE_MS = 15 * 60_000;

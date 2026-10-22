@@ -46,6 +46,23 @@ export const SKIP_HARNESS_LABEL = "Skip for now and connect the harness later fr
 
 import { MESSAGES as ASK_MESSAGES } from "./ask-level.mjs";
 
+/**
+ * What the `visibility-create-*` entries add after a create route's own assignment check: when the
+ * core skips that check (a person names no assignee), ask the core's decision for `tasks:assign` on
+ * the new task's place anyway, and refuse only a visibility denial. The decision reaches KyoubeAI
+ * through `visibility-board-decide`, so this imports nothing; every other denial is ignored, so an
+ * open company creates exactly as the core does. `prelude` declares the scope where the route has
+ * none of its own. Exported for the tests.
+ */
+export function visibilityCreateCheck(companyId, scope, prelude = "") {
+  return (
+    ' /* kyoube-visibility (docs/groups.md) */ else if (req.actor.type === "board") { ' + prelude +
+    `const kyoubeDecision = await access.decide({ actor: req.actor, action: "tasks:assign", resource: { type: "issue", companyId: ${companyId}, issueId: null, projectId: ${scope}.projectId, parentIssueId: ${scope}.parentIssueId, assigneeAgentId: null, assigneeUserId: null }, scope: ${scope} }); ` +
+    'if (!kyoubeDecision.allowed && (kyoubeDecision.reason === "deny_kyoube_visibility" || kyoubeDecision.reason === "deny_kyoube_visibility_unavailable")) ' +
+    "throw forbidden(kyoubeDecision.explanation, authorizationDeniedDetails(kyoubeDecision)); }"
+  );
+}
+
 export const PATCHES = [
   {
     id: "pi-transcript-non-assistant-messages",
@@ -339,16 +356,19 @@ export const PATCHES = [
   },
   // ── Work-object visibility: need-to-know companies (standing: never deleted) ──
   // docs/groups.md, "Visibility". The core shows every task and project in a
-  // company to every member. These four entries call KyoubeAI code
+  // company to every member. The first four entries call KyoubeAI code
   // (packages/visibility, shipped as /opt/kyoube/visibility/decide.mjs) in the
   // board branch of the core's authorization decision, in its live-events
   // socket and in its company search, so in a need-to-know company a restricted
   // operator or viewer sees only the work they are involved in or whose project
-  // is on their list. The module's functions never reject. A module that can't
-  // load refuses every covered action to operators and viewers (owners and
-  // admins keep the core's own rules), strips every live event and finds nothing
-  // in search: fail closed. When an anchor stops matching, redo the entry for
-  // the new core.
+  // is on their list. The three `visibility-create-*` entries make the core ask
+  // that decision when a person creates a task without naming an assignee, which
+  // it otherwise skips, so a restricted person cannot file work under a hidden
+  // task or into a project not on their list. The module's functions never
+  // reject. A module that can't load refuses every covered action to operators
+  // and viewers (owners and admins keep the core's own rules), strips every live
+  // event and finds nothing in search: fail closed. When an anchor stops
+  // matching, redo the entry for the new core.
   {
     id: "visibility-board-decide",
     title: "work-object visibility: a board decision on a covered action asks KyoubeAI first",
@@ -423,6 +443,51 @@ export const PATCHES = [
       'companyScopeDecision.reason === "deny_kyoube_visibility" ? await import("/opt/kyoube/visibility/decide.mjs").then(' +
       "(m) => m.filterSearchResults({ companyId, result, decide: (action, resource) => access.decide({ actor: req.actor, action, resource }) }), " +
       '(error) => { console.error("[kyoube] visibility module unavailable", error); return { ...result, results: [], countsByType: {} }; }) : result);',
+    expect: 1,
+  },
+  {
+    id: "visibility-create-check",
+    title: "work-object visibility: a person's unassigned task is checked against where it goes",
+    standing: "KyoubeAI work-object visibility: need-to-know companies",
+    files: ["server/dist/routes/issues.js"],
+    // `await assertCanAssignTasks(req, companyId, createAssignmentScope);` inside the
+    // `if (req.actor.type === "agent" || rawCreateBody.assigneeAgentId || rawCreateBody.assigneeUserId)`
+    // block occurs once in routes/issues.js (2026.1012.0), in POST /companies/:companyId/issues.
+    // `access`, `forbidden`, `authorizationDeniedDetails`, `companyId` and `createAssignmentScope`
+    // are in scope there. Once patched, the block's `}` is followed by the marker, so a second apply
+    // matches nothing.
+    pattern: /(\n( *)if \(req\.actor\.type === "agent" \|\|\n *rawCreateBody\.assigneeAgentId \|\|\n *rawCreateBody\.assigneeUserId\) \{\n *await assertCanAssignTasks\(req, companyId, createAssignmentScope\);\n *\})(?! \/\* kyoube-visibility)/g,
+    replacement: "$1" + visibilityCreateCheck("companyId", "createAssignmentScope"),
+    expect: 1,
+  },
+  {
+    id: "visibility-create-child-check",
+    title: "work-object visibility: a person's unassigned subtask is checked against its parent",
+    standing: "KyoubeAI work-object visibility: need-to-know companies",
+    files: ["server/dist/routes/issues.js"],
+    // The same block with `sanitizedBody` and `childAssignmentScope` occurs once in
+    // routes/issues.js (2026.1012.0), in POST /issues/:id/children, whose parent lookup checks only
+    // the company. `access`, `forbidden`, `authorizationDeniedDetails`, `parent` and
+    // `childAssignmentScope` are in scope there.
+    pattern: /(\n( *)if \(req\.actor\.type === "agent" \|\|\n *sanitizedBody\.assigneeAgentId \|\|\n *sanitizedBody\.assigneeUserId\) \{\n *await assertCanAssignTasks\(req, parent\.companyId, childAssignmentScope\);\n *\})(?! \/\* kyoube-visibility)/g,
+    replacement: "$1" + visibilityCreateCheck("parent.companyId", "childAssignmentScope"),
+    expect: 1,
+  },
+  {
+    id: "visibility-create-plan-check",
+    title: "work-object visibility: a person's unassigned plan subtasks are checked against where they go",
+    standing: "KyoubeAI work-object visibility: need-to-know companies",
+    files: ["server/dist/routes/issues.js"],
+    // `if (childBody.assigneeAgentId || childBody.assigneeUserId) {` with its inline assignment
+    // scope occurs once in routes/issues.js (2026.1012.0), in POST
+    // /issues/:id/accepted-plan-decompositions, once per requested child. The route has no scope
+    // variable, so the check builds the same one; `access`, `forbidden`,
+    // `authorizationDeniedDetails`, `sourceIssue` and `childBody` are in scope there.
+    pattern: /(\n( *)if \(childBody\.assigneeAgentId \|\| childBody\.assigneeUserId\) \{\n *await assertCanAssignTasks\(req, sourceIssue\.companyId, \{\n *projectId: childBody\.projectId \?\? sourceIssue\.projectId \?\? null,\n *parentIssueId: sourceIssue\.id,\n *assigneeAgentId: childBody\.assigneeAgentId \?\? null,\n *assigneeUserId: childBody\.assigneeUserId \?\? null,\n *\}\);\n *\})(?! \/\* kyoube-visibility)/g,
+    replacement:
+      "$1" +
+      visibilityCreateCheck("sourceIssue.companyId", "kyoubeScope",
+        "const kyoubeScope = { projectId: childBody.projectId ?? sourceIssue.projectId ?? null, parentIssueId: sourceIssue.id, assigneeAgentId: null, assigneeUserId: null }; "),
     expect: 1,
   },
 ];
