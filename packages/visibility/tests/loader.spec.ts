@@ -80,4 +80,24 @@ describe("createPolicyReader", () => {
     reader.invalidate();
     expect(await reader.read(C)).toEqual({ state: "need_to_know", policy });
   });
+  it("re-reads a state closed by a failed read at the next check, with no file change", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "vis-"));
+    await writePolicyFiles({ dir, index: compileIndex([{ companyId: C, mode: "need_to_know" }], "x"), companies: [policy] });
+    let now = 1_000_000;
+    let failures = 1;
+    const fs = {
+      readFile: async (file: string) => {
+        if (file.endsWith(`${C}.json`) && failures > 0) {
+          failures -= 1;
+          throw Object.assign(new Error("too many open files"), { code: "EMFILE" });
+        }
+        return readFile(file, "utf8");
+      },
+      stat: (file: string) => stat(file),
+    };
+    const reader = createPolicyReader({ dir, now: () => now, fs });
+    expect(await reader.read(C)).toMatchObject({ state: "closed", reason: "company policy unreadable" });
+    now += 2_001;
+    expect(await reader.read(C)).toEqual({ state: "need_to_know", policy });
+  });
 });

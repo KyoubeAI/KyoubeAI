@@ -74,7 +74,8 @@ interface Checked {
 /**
  * Per company, the last state and the modification times it was read at. Within `checkMs` of the
  * last check a read is answered from memory; after that the index and the company file are
- * stat'ed and read again only when one changed, appeared or disappeared.
+ * stat'ed and read again only when one changed, appeared or disappeared, or the last state was
+ * closed.
  */
 export function createPolicyReader(opts: { dir?: string; checkMs?: number; now?: () => number; fs?: PolicyFs } = {}): PolicyReader {
   const { dir } = opts;
@@ -107,7 +108,9 @@ export function createPolicyReader(opts: { dir?: string; checkMs?: number; now?:
     const started = generation;
     const checkedAt = now();
     const stamps: [Stamp, Stamp] = [await stampOf(paths.index), await stampOf(companyFile(companyId))];
-    const unchanged = previous !== undefined && stamps.every((stamp, i) => stamp !== "error" && stamp === previous.stamps[i]);
+    // A closed state is never kept on unchanged stamps: it may come from a passing read error
+    // (EMFILE, EIO) on a file that is fine, so it is read again at every check.
+    const unchanged = previous !== undefined && previous.state.state !== "closed" && stamps.every((stamp, i) => stamp !== "error" && stamp === previous.stamps[i]);
     const state = unchanged ? previous.state : await readPolicyState(companyId, { dir, fs });
     if (started === generation) checked.set(companyId, { checkedAt, stamps, state });
     return state;
