@@ -305,11 +305,12 @@ sed 's/^/    /' "$TMP/ensure-stored.log"
 echo "==> licensing: five users free, the sixth refused, removing a user frees a seat, a key raises the limit"
 # Every sign-up comes from a fresh cookie jar, so the admin's session in
 # $COOKIES stays as it is.
-signup() { # name email -> prints the HTTP status; the body lands in $TMP/signup.json
+signup() { # name email [cookie-jar] -> prints the HTTP status; the body lands in $TMP/signup.json
   # The core rate-limits sign-ups (429, x-retry-after 10), so wait and retry on a 429.
+  # The new account's session goes into the cookie jar when one is given.
   local code _
   for _ in 1 2 3 4 5 6; do
-    code="$(curl -sS -o "$TMP/signup.json" -w '%{http_code}' -H 'Content-Type: application/json' -H "Origin: $BASE_URL" \
+    code="$(curl -sS -o "$TMP/signup.json" -w '%{http_code}' -c "${3:-/dev/null}" -H 'Content-Type: application/json' -H "Origin: $BASE_URL" \
       -X POST "$BASE_URL/api/auth/sign-up/email" --data "{\"name\":\"$1\",\"email\":\"$2\",\"password\":\"smoke-password-123\"}")"
     [[ "$code" == "429" ]] || break
     sleep 11
@@ -899,6 +900,270 @@ done
 jq -e 'tostring | contains("smoke plan") | not' "$TMP/files-activity.json" >/dev/null \
   || { echo "the activity log leaked file content ('smoke plan')" >&2; exit 1; }
 echo "    files round-trip ok at $FILES_ROOT"
+
+echo "==> visibility: a need-to-know company shows a restricted operator only their projects and tasks"
+# In a need-to-know company (docs/groups.md) the core's own authorization shows an operator the
+# projects their groups list and the tasks they are involved in, with every task beneath one, and
+# no company-wide page. The admin works through the board key; the operator through a session of
+# their own, as a browser would.
+board_new() { # path body -> the id of what the admin's POST created
+  local id
+  id="$(curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X POST "$BASE_URL$1" --data "$2" | jq -r '.id')"
+  [[ -n "$id" && "$id" != "null" ]] || { echo "POST $1 $2 created nothing" >&2; exit 1; }
+  printf '%s' "$id"
+}
+admin_task() { # title [project-id] [parent-id] -> task id
+  board_new "/api/companies/$COMPANY_ID/issues" "$(jq -cn --arg t "$1" --arg p "${2:-}" --arg up "${3:-}" \
+    '{title: $t} + (if $p == "" then {} else {projectId: $p} end) + (if $up == "" then {} else {parentId: $up} end)')"
+}
+OP_COOKIES="$TMP/op-cookies.txt"
+as_op() { # method path [body] -> HTTP_STATUS, body in $TMP/op.json
+  local args=(-sS -o "$TMP/op.json" -w '%{http_code}' -b "$OP_COOKIES" -c "$OP_COOKIES" -H 'Content-Type: application/json' -H "Origin: $BASE_URL" -X "$1" "$BASE_URL$2")
+  if [[ -n "${3:-}" ]]; then args+=(--data "$3"); fi
+  HTTP_STATUS="$(curl "${args[@]}")"
+}
+op_task() { # body -> the id of the task the operator created
+  as_op POST "/api/companies/$COMPANY_ID/issues" "$1"
+  [[ "$HTTP_STATUS" =~ ^2 ]] || { echo "the operator could not create $1: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1; }
+  jq -r '.id' "$TMP/op.json"
+}
+task_ids() { jq -c '[(.issues? // .)[] | .id] | sort' "$1"; }
+task_titles() { jq -c '[(.issues? // .)[] | .title] | sort' "$1"; }
+groups_action() { # action params-json -> the answer in $TMP/groups-action.json; exits unless 200
+  local status
+  status="$(curl -sS -o "$TMP/groups-action.json" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    -X POST "$BASE_URL/api/plugins/kyoube.apps/actions/$1" --data "{\"companyId\":\"$COMPANY_ID\",\"params\":$2}")"
+  [[ "$status" == 200 ]] || { echo "$1 answered $status: $(cat "$TMP/groups-action.json")" >&2; exit 1; }
+}
+
+P_PUB="$(board_new "/api/companies/$COMPANY_ID/projects" '{"name":"Public"}')"
+P_SEC="$(board_new "/api/companies/$COMPANY_ID/projects" '{"name":"Secret"}')"
+PUBLIC_ID="$(admin_task visible-in-public "$P_PUB")"
+SECRET_TASK_ID="$(admin_task secret-task "$P_SEC")"
+OWNER_ROOT_ID="$(admin_task owner-root)"
+OWNER_CHILD_ID="$(admin_task owner-child "" "$OWNER_ROOT_ID")"
+
+# The operator joins as a person would: an invite, a sign-up, the invite accepted.
+INVITE_TOKEN="$(curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X POST "$BASE_URL/api/companies/$COMPANY_ID/invites" \
+  --data '{"humanRole":"operator","allowedJoinTypes":"human"}' | jq -r '.token')"
+[[ -n "$INVITE_TOKEN" && "$INVITE_TOKEN" != "null" ]] || { echo "could not invite the operator" >&2; exit 1; }
+STATUS="$(signup "Smoke Operator" smoke-op@kyoube.local "$OP_COOKIES")"
+[[ "$STATUS" =~ ^2 ]] || { echo "the operator's sign-up failed: $STATUS $(cat "$TMP/signup.json")" >&2; exit 1; }
+as_op POST "/api/invites/$INVITE_TOKEN/accept" '{"requestType":"human"}'
+[[ "$HTTP_STATUS" =~ ^2 ]] || { echo "the operator could not accept the invite: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1; }
+JOIN_ID="$(jq -r '.id' "$TMP/op.json")"
+# This core approves a person's join request as the invite is accepted; the admin approves one that still waits.
+if [[ "$(jq -r '.status' "$TMP/op.json")" == "pending_approval" ]]; then
+  curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X POST \
+    "$BASE_URL/api/companies/$COMPANY_ID/join-requests/$JOIN_ID/approve" --data '{}' >/dev/null
+fi
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/companies/$COMPANY_ID/join-requests" >"$TMP/join-requests.json"
+jq -e --arg id "$JOIN_ID" '[.[] | select(.id == $id and .status == "approved")] | length == 1' "$TMP/join-requests.json" >/dev/null \
+  || { echo "the operator's join request $JOIN_ID is not approved: $(cat "$TMP/join-requests.json")" >&2; exit 1; }
+OP_ID="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/companies/$COMPANY_ID/members" \
+  | jq -r '[(.members // .)[] | select(.principalType == "user" and .membershipRole == "operator" and .status == "active")][0].principalId')"
+[[ -n "$OP_ID" && "$OP_ID" != "null" ]] || { echo "the operator is not an active operator of the company" >&2; exit 1; }
+OP_OWN_ID="$(op_task '{"title":"op-own"}')"
+OP_CHILD_ID="$(op_task "{\"title\":\"op-child\",\"parentId\":\"$OP_OWN_ID\"}")"
+
+# While the company is open the operator sees what the admin sees: every task, every project.
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/companies/$COMPANY_ID/issues" >"$TMP/issues-admin.json"
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/companies/$COMPANY_ID/projects" >"$TMP/projects-admin.json"
+as_op GET "/api/companies/$COMPANY_ID/issues"
+if [[ "$HTTP_STATUS" != 200 || "$(task_ids "$TMP/op.json")" != "$(task_ids "$TMP/issues-admin.json")" ]] \
+  || ! jq -e '[(.issues? // .)[] | .title] | contains(["visible-in-public", "secret-task", "owner-root", "owner-child", "op-own", "op-child"])' "$TMP/op.json" >/dev/null; then
+  echo "in an open company the operator does not see every task: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1
+fi
+OPEN_COUNT="$(jq '(.issues? // .) | length' "$TMP/op.json")"
+as_op GET "/api/companies/$COMPANY_ID/projects"
+if [[ "$HTTP_STATUS" != 200 ]] || [[ "$(jq -c '[.[].id] | sort' "$TMP/op.json")" != "$(jq -c '[.[].id] | sort' "$TMP/projects-admin.json")" ]] \
+  || ! jq -e '[.[].name] | contains(["Public", "Secret"])' "$TMP/op.json" >/dev/null; then
+  echo "in an open company the operator does not see every project: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1
+fi
+echo "    the operator joined by invite and, while the company is open, sees all $OPEN_COUNT tasks and both projects"
+
+if [[ -z "${SMOKE_KEY:-}" ]]; then
+  # Groups and need-to-know need a licence, which only KYOUBE_SMOKE_LICENSE gives this run.
+  STATUS="$(curl -sS -o "$TMP/groups-action.json" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    -X POST "$BASE_URL/api/plugins/kyoube.apps/actions/groups.set_visibility" --data "{\"companyId\":\"$COMPANY_ID\",\"params\":{\"mode\":\"need_to_know\"}}")"
+  if [[ "$STATUS" != 502 ]] || ! jq -e '.code == "WORKER_ERROR" and (.message | contains("needs a KyoubeAI licence"))' "$TMP/groups-action.json" >/dev/null; then
+    echo "an unlicensed switch to need-to-know was not refused for want of a licence: $STATUS $(cat "$TMP/groups-action.json")" >&2; exit 1
+  fi
+  echo "    need-to-know SKIPPED: KYOUBE_SMOKE_LICENSE is not set; the switch is refused without a licence"
+else
+  # The licensing section took its key off again; the groups plugin keeps its licence answer for a minute.
+  # The key is never printed: the output goes to a file that is never shown.
+  compose exec -T app kyoube license set "$SMOKE_KEY" >"$TMP/license-visibility.log" 2>&1 \
+    || { echo "the smoke licence did not apply again (output withheld: it may echo the key)" >&2; exit 1; }
+  for i in $(seq 1 75); do
+    curl -sS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X POST "$BASE_URL/api/plugins/kyoube.apps/actions/groups.list" \
+      --data "{\"companyId\":\"$COMPANY_ID\",\"params\":{}}" >"$TMP/groups-list.json" 2>/dev/null || true
+    jq -e '.data.unlocked == true' "$TMP/groups-list.json" >/dev/null 2>&1 && break
+    sleep 1
+    [[ $i -eq 75 ]] && { echo "the groups plugin never saw the licence: $(cat "$TMP/groups-list.json")" >&2; exit 1; }
+  done
+  groups_action groups.save "$(jq -cn --arg op "$OP_ID" --arg p "$P_PUB" '{group: {name: "Public team", members: [$op], agents: [], apps: [], seesAll: false, projects: [$p]}}')"
+  GROUP_ID="$(jq -r '.data.id' "$TMP/groups-action.json")"
+  [[ -n "$GROUP_ID" && "$GROUP_ID" != "null" ]] || { echo "groups.save made no group: $(cat "$TMP/groups-action.json")" >&2; exit 1; }
+  groups_action groups.set_visibility '{"mode":"need_to_know"}'
+  jq -e --arg op "$OP_ID" '.data.mode == "need_to_know" and (.data.restricted | map(.userId) == [$op])' "$TMP/groups-action.json" >/dev/null \
+    || { echo "the switch to need-to-know did not restrict exactly the operator: $(cat "$TMP/groups-action.json")" >&2; exit 1; }
+  for i in $(seq 1 10); do
+    compose exec -T app test -f "/kyoubeai/kyoube/visibility/$COMPANY_ID.json" && break
+    sleep 1
+    [[ $i -eq 10 ]] && { echo "no policy file /kyoubeai/kyoube/visibility/$COMPANY_ID.json 10 s after the switch" >&2; exit 1; }
+  done
+  # The core looks at the policy files every 2 s.
+  for i in $(seq 1 10); do
+    as_op GET "/api/issues/$SECRET_TASK_ID"
+    [[ "$HTTP_STATUS" != 200 ]] && break
+    sleep 1
+  done
+
+  as_op GET "/api/companies/$COMPANY_ID/issues"
+  [[ "$HTTP_STATUS" == 200 && "$(task_titles "$TMP/op.json")" == '["op-child","op-own","visible-in-public"]' ]] \
+    || { echo "the restricted operator's task list is not exactly op-child, op-own and visible-in-public: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1; }
+  as_op GET "/api/companies/$COMPANY_ID/projects"
+  [[ "$HTTP_STATUS" == 200 && "$(jq -c '[.[].name]' "$TMP/op.json")" == '["Public"]' ]] \
+    || { echo "the restricted operator's project list is not exactly Public: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1; }
+  for HIDDEN in "$SECRET_TASK_ID" "$OWNER_CHILD_ID"; do
+    as_op GET "/api/issues/$HIDDEN"
+    [[ "$HTTP_STATUS" == 403 || "$HTTP_STATUS" == 404 ]] || { echo "the restricted operator opened hidden task $HIDDEN: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1; }
+  done
+  as_op GET "/api/issues/$OP_CHILD_ID"
+  [[ "$HTTP_STATUS" == 200 ]] || { echo "the restricted operator cannot open the subtask of their own task: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1; }
+  # The admin's search finds the secret task, so the operator's not finding it means something.
+  curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/companies/$COMPANY_ID/search?q=secret" >"$TMP/search-admin.json"
+  jq -e --arg s "$SECRET_TASK_ID" '.results | map(.id) | index($s) != null' "$TMP/search-admin.json" >/dev/null \
+    || { echo "the admin's search for 'secret' does not find secret-task: $(cat "$TMP/search-admin.json")" >&2; exit 1; }
+  as_op GET "/api/companies/$COMPANY_ID/search?q=secret"
+  if [[ "$HTTP_STATUS" != 200 ]] || ! jq -e --arg s "$SECRET_TASK_ID" --arg p "$P_SEC" '.results | map(.id) | index($s) == null and index($p) == null' "$TMP/op.json" >/dev/null; then
+    echo "the restricted operator's search for 'secret' is refused or lists the secret project or task: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1
+  fi
+  as_op GET "/api/companies/$COMPANY_ID/search?q=public"
+  if [[ "$HTTP_STATUS" != 200 ]] || ! jq -e --arg p "$P_PUB" --arg t "$PUBLIC_ID" '.results | map(.id) | index($p) != null and index($t) != null' "$TMP/op.json" >/dev/null; then
+    echo "the restricted operator's search for 'public' does not list the Public project and visible-in-public: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1
+  fi
+  as_op POST "/api/companies/$COMPANY_ID/issues" "{\"title\":\"into secret\",\"projectId\":\"$P_SEC\"}"
+  [[ "$HTTP_STATUS" == 403 ]] || { echo "the restricted operator created a task in a hidden project: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1; }
+  as_op POST "/api/companies/$COMPANY_ID/issues" "{\"title\":\"under owner\",\"parentId\":\"$OWNER_ROOT_ID\"}"
+  [[ "$HTTP_STATUS" == 403 ]] || { echo "the restricted operator created a task under a hidden one: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1; }
+  op_task "{\"title\":\"into public\",\"projectId\":\"$P_PUB\"}" >/dev/null
+  op_task "{\"title\":\"under own\",\"parentId\":\"$OP_OWN_ID\"}" >/dev/null
+  as_op GET "/api/companies/$COMPANY_ID/approvals"
+  [[ "$HTTP_STATUS" == 403 ]] || { echo "the restricted operator read the company's approvals: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1; }
+
+  # Live events: the admin's socket carries a new task's title, the operator's only what to refresh.
+  cookie_header() { # cookie-jar -> the Cookie header curl would send
+    sed -n 's/^#HttpOnly_//; /^#/d; p' "$1" | awk -F'\t' 'NF >= 7 { printf "%s%s=%s", (n++ ? "; " : ""), $6, $7 }'
+  }
+  live_events() { # cookie-jar out-file — the company's live events, one per line, until a task is created or 10 s pass
+    node -e '
+      const [url, cookie, origin, out] = process.argv.slice(1);
+      const fs = require("node:fs");
+      const frames = [];
+      const finish = (code) => { fs.writeFileSync(out, frames.join("\n") + "\n"); process.exit(code); };
+      const timer = setTimeout(() => finish(0), 10000);
+      const ws = new WebSocket(url, { headers: { cookie, origin } });
+      ws.onopen = () => fs.writeFileSync(out + ".open", "");
+      ws.onerror = () => finish(1);
+      ws.onmessage = ({ data }) => {
+        frames.push(String(data));
+        try { const event = JSON.parse(String(data)); if (event.type === "activity.logged" && event.payload?.action === "issue.created") { clearTimeout(timer); finish(0); } } catch {}
+      };
+    ' "ws://${BASE_URL#http://}/api/companies/$COMPANY_ID/events/ws" "$(cookie_header "$1")" "$BASE_URL" "$2"
+  }
+  live_events "$OP_COOKIES" "$TMP/live-op.jsonl" & OP_LIVE=$!
+  live_events "$COOKIES" "$TMP/live-admin.jsonl" & ADMIN_LIVE=$!
+  for i in $(seq 1 10); do
+    [[ -e "$TMP/live-op.jsonl.open" && -e "$TMP/live-admin.jsonl.open" ]] && break
+    sleep 1
+    [[ $i -eq 10 ]] && { echo "the live-events sockets did not open (operator: $([[ -e "$TMP/live-op.jsonl.open" ]] && echo open || echo closed), admin: $([[ -e "$TMP/live-admin.jsonl.open" ]] && echo open || echo closed))" >&2; exit 1; }
+  done
+  LIVE_TASK_ID="$(admin_task ws-secret-title "$P_SEC")"
+  wait "$OP_LIVE" || { echo "the operator's live-events socket failed" >&2; exit 1; }
+  wait "$ADMIN_LIVE" || { echo "the admin's live-events socket failed" >&2; exit 1; }
+  live_frame() { jq -sc --arg id "$LIVE_TASK_ID" 'map(select(.type == "activity.logged" and .payload.entityId == $id)) | .[0] // empty' "$1"; }
+  OP_FRAME="$(live_frame "$TMP/live-op.jsonl")"
+  if [[ "$OP_FRAME" != *'"entityType":"issue"'* ]] || grep -q ws-secret-title "$TMP/live-op.jsonl"; then
+    echo "the operator's live events do not name the new task, or carry its title: $(cat "$TMP/live-op.jsonl")" >&2; exit 1
+  fi
+  [[ "$(live_frame "$TMP/live-admin.jsonl")" == *ws-secret-title* ]] \
+    || { echo "the admin's live event for the new task does not carry its title: $(cat "$TMP/live-admin.jsonl")" >&2; exit 1; }
+  echo "    need-to-know: the operator lists op-child, op-own and visible-in-public and the Public project only; hidden tasks answer 403/404;"
+  echo "    search leaves the secret project and task out; creating in a hidden project or under a hidden task is refused; approvals 403;"
+  echo "    their live events carry no titles"
+
+  curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/companies/$COMPANY_ID/issues" \
+    | jq -e --arg s "$SECRET_TASK_ID" '(.issues? // .) | length >= 8 and (map(.id) | index($s) != null)' >/dev/null \
+    || { echo "the admin no longer sees every task in the need-to-know company" >&2; exit 1; }
+  compose exec -T app kyoube doctor >"$TMP/doctor-visibility.log" || true
+  grep -Eq '^ok +visibility +need-to-know in 1 company' "$TMP/doctor-visibility.log" \
+    || { echo "doctor does not report one need-to-know company:" >&2; grep visibility "$TMP/doctor-visibility.log" >&2; exit 1; }
+  grep -Eq "^ok +visibility $COMPANY_ID .*1 restricted" "$TMP/doctor-visibility.log" \
+    || { echo "doctor does not report the company with 1 restricted:" >&2; grep visibility "$TMP/doctor-visibility.log" >&2; exit 1; }
+  echo "    the admin still sees every task; doctor: $(grep -E "^ok +visibility $COMPANY_ID" "$TMP/doctor-visibility.log" | sed "s/^ok *visibility $COMPANY_ID *//")"
+
+  # An agent run for the operator is held to what the operator sees: the core decides each of its
+  # calls again as the run's responsible person, and the task the operator gives the agent makes the
+  # operator that person. So the check runs inside the run, with the run's own token; an agent key
+  # answers for whoever made it (here the admin), whatever run it names. The `process` adapter runs
+  # probe.mjs, so no model is needed.
+  compose exec -T -u node app sh -c 'mkdir -p /kyoubeai/workspaces/smoke && cat > /kyoubeai/workspaces/smoke/visibility-probe.mjs' <<'JS'
+import { existsSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
+const base = String(process.env.PAPERCLIP_API_URL || "").replace(/\/+$/, "").replace(/\/api$/, "");
+const headers = { authorization: "Bearer " + process.env.PAPERCLIP_API_KEY, "x-paperclip-run-id": String(process.env.PAPERCLIP_RUN_ID || "") };
+const out = "/kyoubeai/workspaces/smoke/visibility-probe.json";
+// Only the first run counts; a later wake must not overwrite what it saw.
+if (existsSync(out)) process.exit(0);
+const plan = JSON.parse(await readFile("/kyoubeai/workspaces/smoke/visibility-plan.json", "utf8"));
+const status = async (id) => (await fetch(base + "/api/issues/" + id, { headers })).status;
+const seen = { runId: process.env.PAPERCLIP_RUN_ID ?? null, hidden: await status(plan.hidden), own: await status(plan.own) };
+await writeFile(out, JSON.stringify(seen), { flag: "wx" }).catch(() => console.log("another run wrote the results first"));
+JS
+  jq -nc --arg h "$SECRET_TASK_ID" --arg o "$OP_OWN_ID" '{hidden: $h, own: $o}' \
+    | compose exec -T -u node app sh -c 'cat > /kyoubeai/workspaces/smoke/visibility-plan.json'
+  PROBE_ID="$(board_new "/api/companies/$COMPANY_ID/agents" \
+    '{"name":"smoke-visibility-probe","adapterType":"process","adapterConfig":{"cwd":"/kyoubeai/workspaces/smoke","command":"node","args":["/kyoubeai/workspaces/smoke/visibility-probe.mjs"]}}')"
+  PROBE_TASK_ID="$(op_task "{\"title\":\"op-agent\",\"assigneeAgentId\":\"$PROBE_ID\",\"status\":\"todo\"}")"
+  for i in $(seq 1 90); do
+    compose exec -T app test -s /kyoubeai/workspaces/smoke/visibility-probe.json && break
+    sleep 1
+    [[ $i -eq 90 ]] && { echo "the probe agent's run reported nothing within 90 s" >&2; compose logs --no-color --tail 80 app >&2; exit 1; }
+  done
+  compose exec -T app cat /kyoubeai/workspaces/smoke/visibility-probe.json >"$TMP/probe.json"
+  # Taken back, so no later wake finds the task still the agent's.
+  curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X PATCH "$BASE_URL/api/issues/$PROBE_TASK_ID" --data '{"assigneeAgentId":null}' >/dev/null
+  curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/companies/$COMPANY_ID/heartbeat-runs?agentId=$PROBE_ID" \
+    | jq -c --arg r "$(jq -r '.runId' "$TMP/probe.json")" '[.[] | select(.id == $r)][0] | {id, status, responsibleUserId, issueId: .contextSnapshot.issueId}' >"$TMP/probe-run.json"
+  jq -e --arg op "$OP_ID" --arg t "$PROBE_TASK_ID" '.responsibleUserId == $op and .issueId == $t' "$TMP/probe-run.json" >/dev/null \
+    || { echo "the probe agent's run was not the operator's, on the operator's task: $(cat "$TMP/probe-run.json")" >&2; exit 1; }
+  jq -e '(.hidden == 403 or .hidden == 404) and .own == 200' "$TMP/probe.json" >/dev/null \
+    || { echo "the operator's agent run was not held to what the operator sees (hidden task, own task): $(cat "$TMP/probe.json")" >&2; exit 1; }
+  echo "    an agent's run for the operator gets $(jq -r '.hidden' "$TMP/probe.json") for the hidden task and 200 for the operator's own"
+
+  groups_action groups.set_visibility '{"mode":"open"}'
+  jq -e '.data.mode == "open"' "$TMP/groups-action.json" >/dev/null || { echo "the switch back to open did not take: $(cat "$TMP/groups-action.json")" >&2; exit 1; }
+  for i in $(seq 1 10); do
+    compose exec -T app test -e "/kyoubeai/kyoube/visibility/$COMPANY_ID.json" || break
+    sleep 1
+    [[ $i -eq 10 ]] && { echo "the policy file is still there 10 s after the switch back to open" >&2; exit 1; }
+  done
+  curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/companies/$COMPANY_ID/issues" >"$TMP/issues-admin.json"
+  for i in $(seq 1 10); do
+    as_op GET "/api/companies/$COMPANY_ID/issues"
+    [[ "$HTTP_STATUS" == 200 && "$(task_ids "$TMP/op.json")" == "$(task_ids "$TMP/issues-admin.json")" ]] && break
+    sleep 1
+    [[ $i -eq 10 ]] && { echo "back in open mode the operator still does not see every task: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1; }
+  done
+  echo "    back to open: the operator sees all $(jq '(.issues? // .) | length' "$TMP/op.json") tasks again and the policy file is gone"
+  # The group and the licence go again, so the rest of the smoke runs as before.
+  groups_action groups.delete "{\"id\":\"$GROUP_ID\"}"
+  compose exec -T app kyoube license clear >/dev/null
+fi
+# The operator leaves again, so doctor's user count after the restore is the one admin's.
+compose exec -T app kyoube users remove smoke-op@kyoube.local --yes >/dev/null
 
 echo "==> agent rules: the rules block, protected managers, people-only cards and escalation"
 # The entrypoint starts `kyoube agent-rules --watch`; it must be running.
