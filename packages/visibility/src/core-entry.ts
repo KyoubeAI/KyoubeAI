@@ -27,10 +27,39 @@ type Membership = { membershipRole?: string | null };
 export type LiveEvent = { type: string; companyId: string; createdAt?: string; payload?: unknown; [key: string]: unknown };
 
 export type SearchResult = {
-  results: Array<{ id: string; type: string; artifact?: { issueId?: string | null } | null; [key: string]: unknown }>;
+  results: Array<{ id: string; type: string; artifact?: { issueId?: string | null } | null; issue?: Record<string, unknown> | null; [key: string]: unknown }>;
   countsByType?: Record<string, number>;
   [key: string]: unknown;
 };
+
+/** The facets of the core's search answer (services/company-search.js emptyFilterOptionCounts). */
+export const FILTER_FACETS = ["status", "priority", "assigneeAgentId", "assigneeUserId", "projectId", "labelId", "updatedWithin"] as const;
+/** The types the core counts (services/company-search.js emptySearchCounts). */
+export const SEARCH_TYPES = ["issue", "comment", "document", "artifact", "agent", "project"] as const;
+/** The fields of the core's search answer that describe the request, not what it found. */
+const SEARCH_REQUEST_KEYS = ["query", "normalizedQuery", "scope", "sort", "limit", "offset"] as const;
+
+/**
+ * A search answer built only from `results`, which are already the person's: the request fields
+ * copied, every count recomputed from the kept items (the facets from the kept tasks' own fields;
+ * labels and recency are not on an item, so they stay empty), no zero-results hint and no next page,
+ * since the core's figures count every match, hidden ones included.
+ */
+export function searchAnswer(result: SearchResult, results: SearchResult["results"]): SearchResult {
+  const answer: Record<string, unknown> = {};
+  for (const key of SEARCH_REQUEST_KEYS) if (Object.hasOwn(result ?? {}, key)) answer[key] = result[key];
+  const countsByType: Record<string, number> = Object.fromEntries(SEARCH_TYPES.map((type) => [type, 0]));
+  const filterOptionCounts: Record<string, Record<string, number>> = Object.fromEntries(FILTER_FACETS.map((facet) => [facet, {}]));
+  for (const item of results) {
+    countsByType[item.type] = (countsByType[item.type] ?? 0) + 1;
+    if (item.type !== "issue" || typeof item.issue !== "object" || item.issue === null) continue;
+    for (const facet of ["status", "priority", "assigneeAgentId", "assigneeUserId", "projectId"] as const) {
+      const value = item.issue[facet];
+      if (typeof value === "string" && value !== "") filterOptionCounts[facet]![value] = (filterOptionCounts[facet]![value] ?? 0) + 1;
+    }
+  }
+  return { ...answer, results, countsByType, filterOptionCounts, zeroResults: null, hasMore: false };
+}
 
 /** How long a role, a company's parent map and a person's root set are trusted. */
 const CACHE_MS = 2_000;
@@ -287,13 +316,14 @@ export async function filterSearchResults(input: { companyId: string; result: Se
         }
       }),
     );
-    const results = result.results.filter((_, index) => keep[index] === true);
-    const countsByType: Record<string, number> = {};
-    for (const item of results) countsByType[item.type] = (countsByType[item.type] ?? 0) + 1;
-    return { ...result, results, countsByType };
+    return searchAnswer(result, result.results.filter((_, index) => keep[index] === true));
   } catch (error) {
     reportFailure(error);
-    return { ...result, results: [], countsByType: {} };
+    try {
+      return searchAnswer(result, []);
+    } catch {
+      return searchAnswer({ results: [] }, []);
+    }
   }
 }
 

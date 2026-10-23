@@ -166,14 +166,41 @@ describe("filterSearchResults", () => {
     ], countsByType: { issue: 2, project: 2, artifact: 3, agent: 1 } };
     const filtered = await filterSearchResults({ companyId: C, result, decide });
     expect(filtered.results.map((r) => r.id)).toEqual(["r", "p1", "art1", "a1"]);
-    expect(filtered.countsByType).toEqual({ issue: 1, project: 1, artifact: 1, agent: 1 });
+    expect(filtered.countsByType).toEqual({ issue: 1, comment: 0, document: 0, project: 1, artifact: 1, agent: 1 });
     expect(filtered.query).toBe("q");
     expect(calls.filter((c) => c === "issue:read:r")).toHaveLength(1); // memoised across the task and its artifact
   });
-  it("never throws: a failing decision returns no results at all", async () => {
+  it("answers from an allow-list: the request fields, and counts, facets and paging from the kept items only", async () => {
+    const decide = async (_action: string, resource: Record<string, unknown>) => ({ allowed: resource.issueId === "r" });
+    const task = (id: string, issue: Record<string, unknown>) => ({ id, type: "issue", title: id, issue: { id, ...issue } });
+    // The core's answer counts every match: here the hidden task h in the hidden project p2.
+    const result = {
+      query: "secret", normalizedQuery: "secret", scope: "all", sort: "relevance", limit: 20, offset: 0,
+      results: [task("r", { status: "todo", priority: "high", assigneeAgentId: null, assigneeUserId: "ann", projectId: "p1" }), task("h", { status: "done", priority: "low", assigneeAgentId: "a9", assigneeUserId: null, projectId: "p2" })],
+      countsByType: { issue: 2, comment: 4, document: 1, artifact: 0, agent: 0, project: 0 },
+      filterOptionCounts: { status: { todo: 1, done: 7 }, priority: { high: 1, low: 7 }, assigneeAgentId: { a9: 7 }, assigneeUserId: { ann: 1 }, projectId: { p1: 1, p2: 7 }, labelId: { l1: 7 }, updatedWithin: { "7d": 8 } },
+      zeroResults: { unfilteredTotal: 9, loosenSuggestions: [{ filter: "status", values: ["done"], resultCount: 7, additionalCount: 7 }] },
+      hasMore: true,
+      internal: "never copied",
+    };
+    expect(await filterSearchResults({ companyId: C, result, decide })).toEqual({
+      query: "secret", normalizedQuery: "secret", scope: "all", sort: "relevance", limit: 20, offset: 0,
+      results: [result.results[0]],
+      countsByType: { issue: 1, comment: 0, document: 0, artifact: 0, agent: 0, project: 0 },
+      filterOptionCounts: { status: { todo: 1 }, priority: { high: 1 }, assigneeAgentId: {}, assigneeUserId: { ann: 1 }, projectId: { p1: 1 }, labelId: {}, updatedWithin: {} },
+      zeroResults: null,
+      hasMore: false,
+    });
+  });
+  it("never throws: a failing decision returns no results at all, and no counts", async () => {
     const decide = async () => { throw new Error("db down"); };
-    const result = { query: "q", results: [{ id: "a1", type: "agent" }, { id: "r", type: "issue" }], countsByType: { agent: 1, issue: 1 } };
-    expect(await filterSearchResults({ companyId: C, result, decide })).toEqual({ query: "q", results: [], countsByType: {} });
+    const result = { query: "q", limit: 20, results: [{ id: "a1", type: "agent" }, { id: "r", type: "issue" }], countsByType: { agent: 1, issue: 1 }, filterOptionCounts: { projectId: { p2: 3 } }, hasMore: true };
+    expect(await filterSearchResults({ companyId: C, result, decide })).toEqual({
+      query: "q", limit: 20, results: [],
+      countsByType: { issue: 0, comment: 0, document: 0, artifact: 0, agent: 0, project: 0 },
+      filterOptionCounts: { status: {}, priority: {}, assigneeAgentId: {}, assigneeUserId: {}, projectId: {}, labelId: {}, updatedWithin: {} },
+      zeroResults: null, hasMore: false,
+    });
     expect(console.error).toHaveBeenCalledWith("[kyoube] visibility check failed", expect.any(Error));
   });
 });

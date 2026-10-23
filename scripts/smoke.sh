@@ -1058,6 +1058,9 @@ else
   if [[ "$HTTP_STATUS" != 200 ]] || ! jq -e --arg s "$SECRET_TASK_ID" --arg p "$P_SEC" '.results | map(.id) | index($s) == null and index($p) == null' "$TMP/op.json" >/dev/null; then
     echo "the restricted operator's search for 'secret' is refused or lists the secret project or task: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1
   fi
+  # Nor do its counts: no facet names the Secret project, and there is no next page of hidden matches.
+  jq -e --arg p "$P_SEC" '(.filterOptionCounts.projectId // {} | has($p) | not) and (.filterOptionCounts | tostring | contains($p) | not) and .hasMore == false and .zeroResults == null' "$TMP/op.json" >/dev/null \
+    || { echo "the restricted operator's search for 'secret' counts hidden matches: $(cat "$TMP/op.json")" >&2; exit 1; }
   as_op GET "/api/companies/$COMPANY_ID/search?q=public"
   if [[ "$HTTP_STATUS" != 200 ]] || ! jq -e --arg p "$P_PUB" --arg t "$PUBLIC_ID" '.results | map(.id) | index($p) != null and index($t) != null' "$TMP/op.json" >/dev/null; then
     echo "the restricted operator's search for 'public' does not list the Public project and visible-in-public: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1

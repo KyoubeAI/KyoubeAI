@@ -1369,7 +1369,15 @@ async function runPatchedSearch({ scope, route = "/companies/:companyId/search",
       },
     };
     const schema = { safeParse: (query) => ({ success: true, data: query }) };
-    const found = { results: [{ id: "visible", type: "issue" }, { id: "hidden", type: "issue" }], countsByType: { issue: 2 } };
+    // The core's answer (services/company-search.js): its counts, facets, hint and paging cover both tasks.
+    const found = {
+      query: "x", normalizedQuery: "x", scope: "all", sort: "relevance", limit: 20, offset: 0,
+      results: [{ id: "visible", type: "issue" }, { id: "hidden", type: "issue" }],
+      countsByType: { issue: 2 },
+      filterOptionCounts: { status: { todo: 2 }, projectId: { "p-hidden": 1 } },
+      zeroResults: { unfilteredTotal: 2, loosenSuggestions: [] },
+      hasMore: true,
+    };
     const service = { search: async () => found, extract: async () => found };
     const limiter = { consume: () => ({ allowed: true, limit: 60, remaining: 59 }) };
     register({ get: (at, handler) => handlers.set(at, handler) }, access, () => {}, schema, schema, limiter, () => "actor", () => service);
@@ -1426,7 +1434,8 @@ describe("visibility patches", () => {
     expect(scoped).toContain("        if (!companyScopeDecision.allowed) {\n            res.status(403).json({\n                error: \"Company search is outside this actor's authorization boundary\",\n            });\n            return;\n        }\n        const parsedQuery = companySearchExtractQuerySchema.safeParse(req.query);\n");
     const filtered = applyToText(SEARCH_RESULT_2026_1012_0, byId("visibility-search-filter")).text;
     expect(filtered).toContain("filterSearchResults({ companyId, result, decide: (action, resource) => access.decide({ actor: req.actor, action, resource }) })");
-    expect(filtered).toContain("results: [], countsByType: {}");
+    expect(filtered).toContain("results: [], countsByType: { issue: 0, comment: 0, document: 0, artifact: 0, agent: 0, project: 0 }, filterOptionCounts: {");
+    expect(filtered).not.toContain("...result");
     // The extract route answers as before.
     expect(filtered).toContain("const result = await getSearchService().extract(companyId, parsedQuery.data);\n        res.json(result);\n");
   });
@@ -1441,14 +1450,23 @@ describe("visibility patches", () => {
     }
     const hidden = await runPatchedSearch({ scope: { allowed: false, reason: "deny_kyoube_visibility" } });
     expect(hidden.res.statusCode).toBe(200);
-    expect(hidden.res.body).toEqual({ results: [{ id: "visible", type: "issue" }], countsByType: { issue: 1 } });
+    // What the module answers goes out as it is (here the stand-in's recount).
+    expect(hidden.res.body).toMatchObject({ results: [{ id: "visible", type: "issue" }], countsByType: { issue: 1 } });
     expect(hidden.decisions.slice(1).map(({ actor, action, resource }) => [actor, action, resource.issueId])).toEqual([[hidden.actor, "issue:read", "visible"], [hidden.actor, "issue:read", "hidden"]]);
   });
   it("the patched search route finds nothing when the module cannot be loaded, and extract stays refused", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const missing = await runPatchedSearch({ scope: { allowed: false, reason: "deny_kyoube_visibility" }, moduleMissing: true });
     expect(missing.res.statusCode).toBe(200);
-    expect(missing.res.body).toEqual({ results: [], countsByType: {} });
+    // Only the request the core echoes survives: no counts, facets, hint or next page of hidden matches.
+    expect(missing.res.body).toEqual({
+      query: "x", normalizedQuery: "x", scope: "all", sort: "relevance", limit: 20, offset: 0,
+      results: [],
+      countsByType: { issue: 0, comment: 0, document: 0, artifact: 0, agent: 0, project: 0 },
+      filterOptionCounts: { status: {}, priority: {}, assigneeAgentId: {}, assigneeUserId: {}, projectId: {}, labelId: {}, updatedWithin: {} },
+      zeroResults: null,
+      hasMore: false,
+    });
     expect(error).toHaveBeenCalledWith("[kyoube] visibility module unavailable", expect.anything());
     error.mockRestore();
     const extract = await runPatchedSearch({ scope: { allowed: false, reason: "deny_kyoube_visibility" }, route: "/companies/:companyId/search/extract" });

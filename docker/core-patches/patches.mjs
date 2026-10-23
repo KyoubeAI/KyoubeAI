@@ -459,7 +459,10 @@ export const PATCHES = [
       "$1/* kyoube-visibility (docs/groups.md) */ res.json(" +
       'companyScopeDecision.reason === "deny_kyoube_visibility" ? await import("/opt/kyoube/visibility/decide.mjs").then(' +
       "(m) => m.filterSearchResults({ companyId, result, decide: (action, resource) => access.decide({ actor: req.actor, action, resource }) }), " +
-      '(error) => { console.error("[kyoube] visibility module unavailable", error); return { ...result, results: [], countsByType: {} }; }) : result);',
+      // Without the module nothing is found, and nothing of the core's answer is passed on but the
+      // request it echoes: its counts, facets, zero-results hint and paging cover hidden matches.
+      '(error) => { console.error("[kyoube] visibility module unavailable", error); return { query: result.query, normalizedQuery: result.normalizedQuery, scope: result.scope, sort: result.sort, limit: result.limit, offset: result.offset, results: [], ' +
+      "countsByType: { issue: 0, comment: 0, document: 0, artifact: 0, agent: 0, project: 0 }, filterOptionCounts: { status: {}, priority: {}, assigneeAgentId: {}, assigneeUserId: {}, projectId: {}, labelId: {}, updatedWithin: {} }, zeroResults: null, hasMore: false }; }) : result);",
     expect: 1,
   },
   {
