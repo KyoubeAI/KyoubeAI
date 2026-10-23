@@ -312,9 +312,9 @@ and what data level they hold. Group tables are in `kyoube_meta` (`groups`, `gro
   still replaces the agent's older open one, but the agent the older one asked may already have been
   woken. Refused questions are not recorded, so `kyoube doctor` counts only questions that were let
   through.
-- **Residual: agents are visible.** The core has no per-agent visibility, so people outside a group
-  can still see its agents, their tasks and their runs. Groups restrict giving work and chat, not
-  seeing.
+- **Residual: an agent's groups do not hide it.** The core has no per-agent visibility, so people outside a group
+  can still see its agents. Groups restrict giving work and chat, not seeing. Their tasks and runs
+  follow the company's visibility mode (see Visibility, below).
 - **Residual: people are shown by id and role.** The core's plugin API gives no display names.
 - **Residual: `data.access` can hint at a colleague's group.** The Data page's `data.access` read
   builds its actor from a client-supplied user id (the existing model, see [Data](#data)), and returns
@@ -332,7 +332,7 @@ see everything. The mode is per company and defaults to open.
   (`server/dist/services/authorization.js`), through the standing patch `visibility-board-decide`. Every
   REST route and the UI go through that decision, so they inherit the rule without a check of their
   own. The core's responsible-user intersection carries it to agent runs: an agent working for a
-  restricted person is held to what that person may see. Four more standing patches cover what the
+  restricted person is held to what that person may see. Six more standing patches cover what the
   decision does not reach: the live-events socket (`visibility-live-events`, which cuts every event for
   a restricted person down to its type and ids), company search (`visibility-search-scope` and
   `visibility-search-filter`), and, in `visibility-create-check`, `visibility-create-child-check` and
@@ -379,7 +379,7 @@ What is not covered:
   and the database. Need-to-know covers people through the UI and API, and agents through the API.
 - **Residual: a hidden task's existence can be inferred.** A 403 or 404 to a guessed id says
   something about it. Ids are UUIDs.
-- **Residual: writes into hidden places that need an out-of-band hidden id.** A person accepting an
+- **Residual: writes into hidden places through a `suggest_tasks` card or `PATCH /issues/:id`.** A person accepting an
   agent's `suggest_tasks` card, including one they authored on their own task, is not covered by the
   creation checks. A person may also move a task they can see into a hidden project, or under a hidden
   parent, through `PATCH /issues/:id`, because the mutate check judges the task alone.

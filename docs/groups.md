@@ -124,12 +124,12 @@ never restricted, and a broken policy never locks them out.
 - The tasks they created, are assigned to, are responsible for, or chat in, and every subtask beneath
   those tasks, whichever project it is in. Every task in a project they can see is theirs to see too.
 - Task creation inside that: a new task or subtask, or a plan's subtasks, may go into a project they
-  see or under a task they see. Creating one anywhere else is refused.
+  see or under a task they see. A person creating a task anywhere else is refused.
 - Agents, by name, role and status.
 
 Search and the live updates the screen subscribes to follow the same rule. Search finds only what the
-person may see. A live update about something they may not see carries no title or details, only
-enough for the screen to know what to refresh.
+person may see. Live updates carry only a type and ids for a restricted person, enough for the screen
+to know what to refresh.
 
 **What refuses.** Some pages and answers are company-wide and cannot be cut down per person, so a
 restricted person gets the core's error state instead: Activity, Approvals, Costs, Execution
