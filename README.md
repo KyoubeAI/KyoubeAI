@@ -342,6 +342,19 @@ company role can browse and download, and everyone but `viewer` can change files
 the ceiling at 7); larger transfers belong in the Terminal or with an agent. Every change is written to
 the company's activity log with its path, never its content.
 
+### Groups and visibility
+
+Groups decide which people may use which agents and apps, and at what data level, under **Company
+Settings → Groups**. A company can also be switched to **need-to-know** there: operators and viewers
+then see only the projects of their groups and the tasks they are involved in (created, assigned,
+responsible, or in the chat, plus every subtask beneath), unless their group sees everything. Owners
+and admins always see everything, and every company starts open, so nothing changes until you switch
+one. Search, live updates and task creation follow the same rule, and `kyoube doctor` checks the
+setup. Groups and need-to-know are licensed features. [docs/groups.md](docs/groups.md) is the guide;
+its [Visibility](docs/groups.md#visibility) section covers what a restricted person sees, what
+refuses and what it does not cover. The security model is in
+[SECURITY.md](SECURITY.md#visibility).
+
 ## Development
 
 ```bash

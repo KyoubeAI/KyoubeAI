@@ -385,6 +385,12 @@ What is not covered:
   membership.** `DELETE /attachments/:id` and `PATCH`/`DELETE /work-products/:id` are not addressed by
   a task, so the gate does not see them. Those ids are UUIDs that only the hidden task's own pages
   show. Reading an attachment's content goes through the decision.
+- **Residual: an email sent from a hidden task can be read by its publication id.**
+  `GET /companies/:companyId/email/deliveries/:publicationId` is addressed by the publication, not
+  the task, so the gate does not see it, and the core's own read check there only runs for agents; a
+  person is checked for company membership alone. A restricted person who learns a publication id
+  (a UUID shown on the hidden task's email thread) can read that one delivery record. Resolving a
+  delivery needs an owner or admin, so it has no such gap.
 - **Residual: a visible task names hidden work.** A task the person can see still shows the titles of
   its hidden ancestors, the name of its project when that project is hidden, and its blocked-by and
   blocks relations. Search keeps an artifact of a visible task with its `issueTitle` and `projectName`.

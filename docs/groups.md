@@ -192,7 +192,9 @@ know about:
 - Most of the core asks its authorization decision, and KyoubeAI's patches cover search, live updates,
   task creation and everything addressed by one task or project. A few write routes addressed by an
   attachment or work-product id (deleting an attachment, changing or deleting a work product) check
-  only that the person is in the company. Those ids appear only on the hidden task's own pages.
+  only that the person is in the company. Those ids appear only on the hidden task's own pages. The
+  same goes for reading one email delivery by its publication id: the core checks only agents there,
+  so a person who learns the id can read the record of that one email.
 - Task identifiers are sequential (`PREFIX-17`), and hidden task ids reach a restricted person in live
   updates and in a visible task's parent and ancestor links. They cannot be used to open anything: the
   task and project routes answer "not found".
