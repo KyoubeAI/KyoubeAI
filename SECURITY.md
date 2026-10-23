@@ -329,30 +329,45 @@ projects of their groups and the tasks they are involved in, and owners, admins 
 see everything. The mode is per company and defaults to open.
 
 - **Where it is enforced.** In the core's authorization decision, the board branch of `decideBase`
-  (`server/dist/services/authorization.js`), through the standing patch `visibility-board-decide`. Every
-  REST route and the UI go through that decision, so they inherit the rule without a check of their
-  own. The core's responsible-user intersection carries it to agent runs: an agent working for a
-  restricted person is held to what that person may see. Six more standing patches cover what the
-  decision does not reach: the live-events socket (`visibility-live-events`, which cuts every event for
-  a restricted person down to its type and ids), company search (`visibility-search-scope` and
-  `visibility-search-filter`), and, in `visibility-create-check`, `visibility-create-child-check` and
-  `visibility-create-plan-check`, task creation by a person who names no assignee, which the core does
-  not check. Seven entries in all, in `docker/core-patches/patches.mjs`. The decision module is
-  `/opt/kyoube/visibility/decide.mjs`, built from `packages/visibility`.
+  (`server/dist/services/authorization.js`), through the standing patch `visibility-board-decide`. The
+  routes that ask that decision for a project or task read, a comment, a change (`issue:mutate`) or an
+  assignment inherit the rule, and so do the lists and the UI built on them. The core's responsible-user
+  intersection carries it to agent runs: an agent working for a restricted person is held to what
+  that person may see. Seven more standing patches cover what the decision does not reach:
+  - the live-events socket (`visibility-live-events`, which cuts every event for a restricted person
+    down to its type and ids);
+  - company search (`visibility-search-scope` and `visibility-search-filter`);
+  - task creation by a person who names no assignee, which the core does not check
+    (`visibility-create-check`, `visibility-create-child-check` and `visibility-create-plan-check`);
+  - every route addressed by a task or project id, or by a task identifier such as `PAP-17`
+    (`visibility-route-gate`, in `server/dist/app.js`). Many of these check only company membership:
+    deleting a task, and reading or changing its documents, interactions, approval links, queued
+    comments, work products, attachment uploads, cost summary, cases, live runs and tree holds; and
+    changing, deleting or configuring a project. The gate asks the decision for the task or project first and answers a
+    person's visibility denial with the core's own 404 (`Issue not found`, `Project not found`).
+
+  Eight entries in all, in `docker/core-patches/patches.mjs`. The decision module is
+  `/opt/kyoube/visibility/decide.mjs`, built from `packages/visibility`. What none of them covers is
+  listed below.
 - **The policy.** The groups plugin compiles each need-to-know company's groups into
   `/kyoubeai/kyoube/visibility/index.json` (every company's mode) and `<companyId>.json` (who sees
   everything, and who sees each project) on the home volume. It rewrites them on every group or mode
-  change, at worker start and every five minutes. The core and the Files and notify plugins re-check
-  them every two seconds. The plugin's database stays the source of truth; the files are what the
-  core reads.
+  change, at worker start and every five minutes. It always writes to that fixed path, the one the
+  core reads, and logs a warning at start when the configured home is not `/kyoubeai`. The core and
+  the Files and notify plugins re-check them every two seconds. The plugin's database stays the source
+  of truth; the files are what the core reads.
 - **It fails closed.** An index or a need-to-know company's file that cannot be read or parsed, a
   decision module that does not load, or a check that throws, refuses the covered actions to operators
-  and viewers, strips every live event and finds nothing in search. Owners, admins and instance admins
-  are never affected, so a broken policy cannot lock out the people who fix it. A closed state is
-  re-read at the next two-second check. No index at all means the feature was never turned on, which is
-  open. `kyoube doctor` reports the module, the seven patches (by marker count: one in
-  `authorization.js`, one in `live-events-ws.js`, five in `routes/issues.js`), the policy files, and
-  the home directory.
+  and viewers and finds nothing in search for them. Owners, admins and instance admins keep their
+  access, so a broken policy cannot lock out the people who fix it. A closed state is re-read at the
+  next two-second check. No index at all means the feature was never turned on, which is open.
+- **A module that does not load reaches owners too.** The image checks at build that the module loads,
+  so this needs a broken image. Until the image is fixed, every live-events socket carries stripped
+  events, owners' and admins' included, and every task and project route the gate covers answers 404
+  to every person, owners and admins included (agents are not gated). `kyoube doctor` shows it, with
+  the module, the eight patches (by marker count: one in `authorization.js`, one in
+  `live-events-ws.js`, five in `routes/issues.js`, one in `app.js`), the policy files, and the home
+  directory.
 - **Shadow mode must stay off.** `PAPERCLIP_RESPONSIBLE_USER_AUTHZ_MODE=shadow` and
   `PAPERCLIP_RESPONSIBLE_USER_AUTHZ_SHADOW` turn the core's responsible-user check into a log line.
   With either set on a need-to-know instance, an agent run reaches past what the person it works for
@@ -366,8 +381,16 @@ see everything. The mode is per company and defaults to open.
 
 What is not covered:
 
-- **Residual: attachments and task documents are company-scoped.** A restricted person who knows an id
-  can fetch one.
+- **Residual: a few write routes addressed by an attachment or work-product id check only company
+  membership.** `DELETE /attachments/:id` and `PATCH`/`DELETE /work-products/:id` are not addressed by
+  a task, so the gate does not see them. Those ids are UUIDs that only the hidden task's own pages
+  show. Reading an attachment's content goes through the decision.
+- **Residual: a visible task names hidden work.** A task the person can see still shows the titles of
+  its hidden ancestors, the name of its project when that project is hidden, and its blocked-by and
+  blocks relations. Search keeps an artifact of a visible task with its `issueTitle` and `projectName`.
+- **Residual: dashboard and sidebar counts are company-wide.** `GET /api/companies/:id/dashboard` and
+  `/sidebar-badges` answer a restricted person with the company's aggregate counts: open and in-progress
+  totals, agent, cost and chart data. They carry no titles.
 - **Residual: approvals are invisible to restricted people, including on their own tasks.** They sit
   entirely behind the company-scope guard, so a restricted person cannot see or decide any approval,
   including one on their own task.
@@ -375,14 +398,24 @@ What is not covered:
   workspaces, Timeline, status cards, decision queues and run telemetry show the core's error state
   to a restricted person rather than being hidden.
 - **Residual: agents are visible.** A restricted person sees every agent by name, role and status.
-- **Residual: agent shell access reaches everything.** An agent's shell reaches every project folder
-  and the database. Need-to-know covers people through the UI and API, and agents through the API.
-- **Residual: a hidden task's existence can be inferred.** A 403 or 404 to a guessed id says
-  something about it. Ids are UUIDs.
-- **Residual: writes into hidden places through a `suggest_tasks` card or `PATCH /issues/:id`.** A person accepting an
-  agent's `suggest_tasks` card, including one they authored on their own task, is not covered by the
-  creation checks. A person may also move a task they can see into a hidden project, or under a hidden
-  parent, through `PATCH /issues/:id`, because the mutate check judges the task alone.
+- **Residual: a person can reach hidden work through an agent with shell access.** An agent's shell
+  reaches every project folder and the database, so a restricted person who can give such an agent a
+  task can ask it to read hidden work. Need-to-know covers people through the UI and API, and agents
+  through the API only. In a need-to-know company the Terminal's allowed roles must stay owner and
+  admin (its default).
+- **Residual: hidden ids and identifiers reach a restricted person.** Task identifiers are sequential
+  (`PREFIX-17`), so they can be counted and guessed, and hidden task ids arrive in live-event payloads
+  and in a visible task's parent and ancestor links. The route gate is what stops their use: a route
+  addressed by a hidden task or project answers the core's 404, the same answer as for one that does
+  not exist.
+- **Residual: writes into hidden places through a `suggest_tasks` card or `PATCH /issues/:id`.** With
+  the route gate, a card on a hidden task cannot be reached. A card the person authors on their own task
+  can still name hidden parents or projects, and accepting it creates tasks there: the person can write
+  into a hidden place, not read it. A person may also move a task they can see into a hidden project, or
+  under a hidden parent, through `PATCH /issues/:id`, because the mutate check judges the task alone.
+- **Residual: switching the groups plugin off leaves the policy in force.** If `kyoube.apps` is
+  disabled, the last written policy files stay and the core keeps enforcing them. To lift need-to-know
+  without the plugin, delete `/kyoubeai/kyoube/visibility/index.json`, then restart or wait two seconds.
 - **Residual: Files and notify know company roles only.** An instance admin whose company role is
   operator or viewer is restricted in those two plugins, though not in the core. This fails closed.
 - **Residual: Studio's worker trusts a client-supplied user id for what it still serves.** The agent
@@ -391,9 +424,6 @@ What is not covered:
   restricted person, and the Workspace page's projects count is company-wide.
 - **Residual: `local_trusted` mode.** The board socket's actor is then the literal "board", so its live
   events are stripped in a need-to-know company. KyoubeAI runs authenticated mode.
-- **Residual: the policy directory.** The policy writer derives its directory from the configured home,
-  while the core reads the fixed path `/kyoubeai/kyoube/visibility`. `kyoube doctor` warns when they
-  would differ.
 
 ## Apps
 

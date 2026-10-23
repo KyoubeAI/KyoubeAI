@@ -128,8 +128,11 @@ never restricted, and a broken policy never locks them out.
 - Agents, by name, role and status.
 
 Search and the live updates the screen subscribes to follow the same rule. Search finds only what the
-person may see. Live updates carry only a type and ids for a restricted person, enough for the screen
-to know what to refresh.
+person may see, and its counts cover only that. Live updates carry only a type and ids for a
+restricted person, enough for the screen to know what to refresh. Anything addressed by one task or
+project follows it too: opening, changing or deleting a hidden task or project, or its documents,
+comments, work products and the rest, by its id or by an identifier such as `PAP-17`, answers "not
+found", the same answer as for one that does not exist.
 
 **What refuses.** Some pages and answers are company-wide and cannot be cut down per person, so a
 restricted person gets the core's error state instead: Activity, Approvals, Costs, Execution
@@ -161,8 +164,11 @@ plugins read the same files.
 
 **Fails closed.** If the policy of a need-to-know company, or the index, cannot be read, or the
 decision module in the image does not load, operators and viewers are refused the covered reads and
-writes: projects, tasks and comments. Owners, admins and instance admins are never affected. A refused
-state is read again at the next two-second check, so it heals as soon as the file is back.
+writes: projects, tasks and comments. Owners, admins and instance admins keep their access. A refused
+state is read again at the next two-second check, so it heals as soon as the file is back. A decision
+module that does not load (a broken image; the build checks it) is the one case that reaches owners
+too: until the image is fixed, live updates are stripped for everyone, and every page or action on one
+task or project answers "not found" to every person. `kyoube doctor` shows it.
 
 **Never set the shadow variables.** `PAPERCLIP_RESPONSIBLE_USER_AUTHZ_MODE=shadow` and
 `PAPERCLIP_RESPONSIBLE_USER_AUTHZ_SHADOW` make the core only log an agent run that reaches past what
@@ -180,13 +186,31 @@ minutes old warns: the plugin worker writes it every five minutes, so check the 
 app log. A company that is need-to-know in only one of the database and the index fails, with the fix
 (any group change rewrites the files).
 
-**What it does not cover.** See `SECURITY.md`, Groups, "Visibility". The ones to know about:
+**What it does not cover.** See `SECURITY.md`, Groups, "Visibility", for the full list. The ones to
+know about:
 
-- Attachments and task documents are company-scoped. A restricted person who knows an id can fetch
-  one.
-- An agent's shell reaches every project folder and the database. Need-to-know covers people through
-  the UI and API, and agents through the API.
+- Most of the core asks its authorization decision, and KyoubeAI's patches cover search, live updates,
+  task creation and everything addressed by one task or project. A few write routes addressed by an
+  attachment or work-product id (deleting an attachment, changing or deleting a work product) check
+  only that the person is in the company. Those ids appear only on the hidden task's own pages.
+- Task identifiers are sequential (`PREFIX-17`), and hidden task ids reach a restricted person in live
+  updates and in a visible task's parent and ancestor links. They cannot be used to open anything: the
+  task and project routes answer "not found".
+- A task the person can see still shows the titles of its hidden ancestors, the name of its project
+  when that project is hidden, and its blocked-by and blocks relations. Search keeps such a task's
+  artifacts with their task title and project name.
+- The dashboard and the sidebar badges show company-wide counts (open and in-progress totals, agent,
+  cost and chart data), without titles.
+- A restricted person who can give work to an agent with shell access can ask it to read hidden work:
+  the shell reaches every project folder and the database. Need-to-know covers people through the UI
+  and API, and agents through the API only. Keep the Terminal's allowed roles at owner and admin (the
+  default) in a need-to-know company.
+- A person can still create tasks under a hidden task or in a hidden project by accepting a
+  `suggest_tasks` card they wrote on their own task that names it, and can move a task they see there.
+  They cannot read it afterwards.
 - Approvals, and the pages listed under "What refuses", are not cut down; they refuse.
+- Disabling the `kyoube.apps` plugin leaves the last written policy in force. To lift need-to-know
+  without it, delete `/kyoubeai/kyoube/visibility/index.json`, then restart or wait two seconds.
 
 ## Licence
 
@@ -229,14 +253,16 @@ Agent restrictions use the core's own mechanism, written by the agent rules loop
   inbox takes work from anyone who emails it. Setting up an inbox needs `tools:manage_connections`,
   which only owners and admins hold unless someone grants it.
 
-Work-object visibility needs seven standing core patches, the `visibility-*` entries in
+Work-object visibility needs eight standing core patches, the `visibility-*` entries in
 `docker/core-patches/patches.mjs`. Four, `visibility-board-decide`, `visibility-live-events`,
 `visibility-search-scope` and `visibility-search-filter`, call KyoubeAI's decision module
 (`/opt/kyoube/visibility/decide.mjs`) in the board branch of the core's authorization decision, in its
 live-events socket and in its company search. Three, `visibility-create-check`,
 `visibility-create-child-check` and `visibility-create-plan-check`, make the core's task, subtask and
 plan routes ask the same decision when a person creates a task without naming an assignee, which the
-core otherwise does not check. The core has no visibility setting of its own, so without them everyone
+core otherwise does not check. One, `visibility-route-gate`, puts the decision in front of every route
+addressed by a task or project id or task identifier, many of which check only that the person is in
+the company. The core has no visibility setting of its own, so without them everyone
 in a company sees all of its tasks and projects. The build fails if a core release moves the code one
 of them anchors on.
 

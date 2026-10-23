@@ -81,7 +81,7 @@ that is not a failure, but `doctor` will not call it `ready` either.
 
 This release adds need-to-know visibility ([`groups.md`](groups.md#visibility)): migration
 `0009_visibility.sql` (a mode per company, a sees-everything flag on groups and the projects of each
-group), seven standing core patches, and new plugin versions: `kyoube.apps` 0.14.0, `kyoube.files`
+group), eight standing core patches, and new plugin versions: `kyoube.apps` 0.14.0, `kyoube.files`
 0.4.0, `kyoube.notify` 0.2.0 and `kyoube.studio` 0.6.0.
 Every company starts **open**, so nothing changes until an owner or admin switches a company on the
 Groups page, and switching needs a licence. Studio now reads tasks and approvals through the core, so

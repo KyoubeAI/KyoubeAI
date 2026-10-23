@@ -96,7 +96,7 @@ Need-to-know visibility (`docs/groups.md`, "Visibility") reaches the core throug
 groups plugin writes each company's mode and, for a need-to-know company, who sees what, to
 `/kyoubeai/kyoube/visibility/` on the home volume (`index.json` and `<companyId>.json`), on every
 change, at worker start and from the `write-visibility` job every five minutes. `packages/visibility`
-builds into the decision module `/opt/kyoube/visibility/decide.mjs`, which seven standing core patches
+builds into the decision module `/opt/kyoube/visibility/decide.mjs`, which eight standing core patches
 call. It reads the files with a two-second check, and the Files and notify plugins read them through
 the same package.
 
