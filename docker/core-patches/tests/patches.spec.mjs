@@ -1421,6 +1421,40 @@ describe("visibility patches", () => {
     expect(text).toContain("deny_kyoube_visibility_unavailable");
     expect(text).toContain("helpers: { getActiveMembership, db, tables: { issues }, ops: { and, eq, inArray, sql } }");
   });
+  it("the patched board decision refuses operators without the module, keeps owners on the core's rules, and logs once a minute", async () => {
+    const stamp = `${process.pid}-${Math.random().toString(36).slice(2)}`;
+    const file = path.join(HERE, `.board-under-test-${stamp}.mjs`);
+    const patched = applyToText(AUTHZ_BOARD_2026_1012_0, byId("visibility-board-decide")).text.replace(VISIBILITY_MODULE, pathToFileURL(path.join(HERE, `no-such-module-${stamp}.mjs`)).href);
+    await writeFile(file,
+      "export default async ({ input, companyId, getActiveMembership, deny, allow, db, issues, and, eq, inArray, sql, assignmentTargetIsInCompany, assignmentPolicyEffect, denyForAssignmentPolicyIfNeeded }) => {\n" +
+      `let taskAssignmentPolicyEffect;\n${patched}return { reached: "the core's own rules" };\n};\n`);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    delete globalThis.__kyoubeVisibilityLastLog;
+    try {
+      const { default: decide } = await import(pathToFileURL(file).href);
+      const ask = (role, action = "issue:read") => decide({
+        input: { actor: { type: "board", userId: "u1", source: "session" }, action, resource: { type: "issue", companyId: "c1", issueId: "t1" } },
+        companyId: "c1",
+        getActiveMembership: async () => ({ membershipRole: role }),
+        deny: (denied) => ({ allowed: false, ...denied }),
+        allow: (allowed) => ({ allowed: true, ...allowed }),
+        db: {}, issues: {}, and: () => ({}), eq: () => ({}), inArray: () => ({}), sql: () => ({}),
+      });
+      for (let i = 0; i < 2; i += 1) expect(await ask("operator")).toMatchObject({ allowed: false, reason: "deny_kyoube_visibility_unavailable" });
+      expect(await ask("owner")).toEqual({ reached: "the core's own rules" });
+      expect(await ask("operator", "agent:read")).toEqual({ reached: "the core's own rules" });
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledWith("[kyoube] visibility module unavailable", expect.anything());
+      // A minute on, it says so again.
+      globalThis.__kyoubeVisibilityLastLog -= 60_001;
+      await ask("operator");
+      expect(error).toHaveBeenCalledTimes(2);
+    } finally {
+      error.mockRestore();
+      delete globalThis.__kyoubeVisibilityLastLog;
+      await rm(file, { force: true });
+    }
+  });
   it("the live-events patch keeps the open-socket guard and sends the filtered event", () => {
     const { text } = applyToText(LIVE_WS_SEND_2026_1012_0, byId("visibility-live-events"));
     expect(text).toContain("socket.send(JSON.stringify(kyoubeEvent))");

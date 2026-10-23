@@ -400,7 +400,8 @@ export const PATCHES = [
       "$1$3/* kyoube-visibility (docs/groups.md) */ { " +
       'const kyoubeVisibility = await import("/opt/kyoube/visibility/decide.mjs").then(' +
       "(m) => m.decideBoard({ actor: input.actor, action: input.action, resource: input.resource, companyId, helpers: { getActiveMembership, db, tables: { issues }, ops: { and, eq, inArray, sql } } }), " +
-      'async (error) => { console.error("[kyoube] visibility module unavailable", error); ' +
+      // Every decision lands here while the module is missing, so the log line is kept to once a minute.
+      'async (error) => { const kyoubeNow = Date.now(); if (!(kyoubeNow - (globalThis.__kyoubeVisibilityLastLog ?? -Infinity) < 60000)) { globalThis.__kyoubeVisibilityLastLog = kyoubeNow; console.error("[kyoube] visibility module unavailable", error); } ' +
       'if (!companyId || !["issue:read", "issue:comment", "issue:mutate", "project:read", "company_scope:read", "tasks:assign"].includes(input.action)) return null; ' +
       'const kyoubeMembership = await getActiveMembership(companyId, "user", input.actor.userId); const kyoubeRole = String(kyoubeMembership?.membershipRole ?? "").toLowerCase(); ' +
       'return kyoubeRole === "owner" || kyoubeRole === "admin" ? null : { reason: "deny_kyoube_visibility_unavailable", explanation: "KyoubeAI could not check work visibility, so this is refused. An instance admin can run kyoube doctor to see why." }; }); ' +
