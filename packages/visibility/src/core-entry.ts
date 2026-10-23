@@ -1,13 +1,17 @@
 // The decision the core imports from /opt/kyoube/visibility/decide.mjs: inside its authorization
-// decision, its live-events websocket and its search route. A security boundary, so it imports
-// only its sibling modules and node built-ins (build.mjs bundles it with nothing external), and
-// none of its three functions ever rejects: a failure answers closed and is logged at most once
-// a minute, because the core patches only catch a failure to import this file.
+// decision, its live-events websocket, its search route and the gate in front of its task and
+// project routes. A security boundary, so it imports only its sibling modules and node built-ins
+// (build.mjs bundles it with nothing external), and none of its functions ever rejects: a failure
+// answers closed (the gate: passes to the core's own route, whose decision is closed) and is logged
+// at most once a minute, because the core patches only catch a failure to import this file.
 
 import { CLOSED, HIDDEN, isCoveredAction, isRestricted, MAX_ANCESTORS, projectVisible, taskVisible, type Denial, type Person, type TaskFacts } from "./decide.js";
 import { stripLiveEvent } from "./live-events.js";
 import { createPolicyReader, type PolicyReader } from "./loader.js";
 import type { CompanyPolicy } from "./policy.js";
+import { coreLookups, routeGate as createRouteGate, type RouteGateDeps } from "./route-gate.js";
+
+export { coreLookups };
 
 /** What the core's authorization closure hands over: its membership lookup and drizzle. */
 export interface CoreHelpers {
@@ -291,6 +295,11 @@ export async function filterSearchResults(input: { companyId: string; result: Se
     reportFailure(error);
     return { ...result, results: [], countsByType: {} };
   }
+}
+
+/** The gate in front of the core's task and project routes (route-gate.ts), logging as the rest of this file does. */
+export function routeGate(deps: RouteGateDeps): ReturnType<typeof createRouteGate> {
+  return createRouteGate({ report: reportFailure, ...deps });
 }
 
 /** For the tests: fresh caches, a reader on a temp dir, a fake clock. */

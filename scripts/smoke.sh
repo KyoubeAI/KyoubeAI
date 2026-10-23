@@ -1032,6 +1032,24 @@ else
   done
   as_op GET "/api/issues/$OP_CHILD_ID"
   [[ "$HTTP_STATUS" == 200 ]] || { echo "the restricted operator cannot open the subtask of their own task: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1; }
+  OP_CHILD_IDENTIFIER="$(jq -r '.identifier' "$TMP/op.json")"
+  # The route gate (visibility-route-gate): a route addressed by a hidden task or project answers the
+  # core's 404, by id or by identifier, even where the core checks only company membership, and
+  # changes nothing. A visible task still opens by its identifier.
+  SECRET_IDENTIFIER="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/issues/$SECRET_TASK_ID" | jq -r '.identifier')"
+  [[ -n "$SECRET_IDENTIFIER" && "$SECRET_IDENTIFIER" != "null" && -n "$OP_CHILD_IDENTIFIER" && "$OP_CHILD_IDENTIFIER" != "null" ]] \
+    || { echo "secret-task or op-child has no identifier: '$SECRET_IDENTIFIER' '$OP_CHILD_IDENTIFIER'" >&2; exit 1; }
+  for ROUTE in "DELETE /api/issues/$SECRET_TASK_ID" "GET /api/issues/$SECRET_TASK_ID/cost-summary" "GET /api/issues/$SECRET_IDENTIFIER" "PATCH /api/projects/$P_SEC"; do
+    as_op "${ROUTE%% *}" "${ROUTE#* }" "$([[ "$ROUTE" == PATCH* ]] && echo '{"name":"renamed"}')"
+    [[ "$HTTP_STATUS" == 404 ]] || { echo "the restricted operator's $ROUTE answered $HTTP_STATUS, not 404: $(cat "$TMP/op.json")" >&2; exit 1; }
+  done
+  as_op GET "/api/issues/$OP_CHILD_IDENTIFIER"
+  [[ "$HTTP_STATUS" == 200 ]] || { echo "the restricted operator cannot open op-child by its identifier $OP_CHILD_IDENTIFIER: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1; }
+  curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/issues/$SECRET_TASK_ID" | jq -e '.title == "secret-task"' >/dev/null \
+    || { echo "secret-task is gone or changed for the admin after the operator's DELETE" >&2; exit 1; }
+  curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/projects/$P_SEC" | jq -e '.name == "Secret"' >/dev/null \
+    || { echo "the Secret project was renamed by the operator's PATCH" >&2; exit 1; }
+  echo "    route gate: the operator's DELETE, cost summary and $SECRET_IDENTIFIER of secret-task and PATCH of the Secret project answer 404; both are unchanged; $OP_CHILD_IDENTIFIER opens"
   # The admin's search finds the secret task, so the operator's not finding it means something.
   curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/companies/$COMPANY_ID/search?q=secret" >"$TMP/search-admin.json"
   jq -e --arg s "$SECRET_TASK_ID" '.results | map(.id) | index($s) != null' "$TMP/search-admin.json" >/dev/null \

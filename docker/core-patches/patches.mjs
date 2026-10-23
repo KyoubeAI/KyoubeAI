@@ -63,6 +63,20 @@ export function visibilityCreateCheck(companyId, scope, prelude = "") {
   );
 }
 
+/**
+ * Where `visibility-route-gate` mounts the gate, each a prefix of the core's routes (2026.1012.0)
+ * addressed by one task or project: `/issues/:id/…` and `/projects/:id/…` in every route file, the
+ * attachment upload under a company, the email thread of a task (which checks only agents), and the
+ * project membership a person sets for themselves. Exported for the tests.
+ */
+export const ROUTE_GATE_PATHS = [
+  ["issue", "/issues/:kyoubeRef"],
+  ["issue", "/companies/:kyoubeCompanyId/issues/:kyoubeRef"],
+  ["issue", "/companies/:kyoubeCompanyId/email/tasks/:kyoubeRef"],
+  ["project", "/projects/:kyoubeRef"],
+  ["project", "/companies/:kyoubeCompanyId/resource-memberships/me/projects/:kyoubeRef"],
+];
+
 export const PATCHES = [
   {
     id: "pi-transcript-non-assistant-messages",
@@ -356,7 +370,7 @@ export const PATCHES = [
   },
   // ── Work-object visibility: need-to-know companies (standing: never deleted) ──
   // docs/groups.md, "Visibility". The core shows every task and project in a
-  // company to every member. The first four entries call KyoubeAI code
+  // company to every member. Eight entries. The first four call KyoubeAI code
   // (packages/visibility, shipped as /opt/kyoube/visibility/decide.mjs) in the
   // board branch of the core's authorization decision, in its live-events
   // socket and in its company search, so in a need-to-know company a restricted
@@ -364,11 +378,14 @@ export const PATCHES = [
   // is on their list. The three `visibility-create-*` entries make the core ask
   // that decision when a person creates a task without naming an assignee, which
   // it otherwise skips, so a restricted person cannot file work under a hidden
-  // task or into a project not on their list. The module's functions never
-  // reject. A module that can't load refuses every covered action to operators
-  // and viewers (owners and admins keep the core's own rules), strips every live
-  // event and finds nothing in search: fail closed. When an anchor stops
-  // matching, redo the entry for the new core.
+  // task or into a project not on their list. `visibility-route-gate` puts the
+  // same decision in front of every board route addressed by a task or project
+  // id or identifier, many of which check only company membership. The module's
+  // functions never reject. A module that can't load refuses every covered
+  // action to operators and viewers (owners and admins keep the core's own
+  // rules), strips every live event, finds nothing in search and answers 404 on
+  // the task and project routes to every person: fail closed. When an anchor
+  // stops matching, redo the entry for the new core.
   {
     id: "visibility-board-decide",
     title: "work-object visibility: a board decision on a covered action asks KyoubeAI first",
@@ -488,6 +505,32 @@ export const PATCHES = [
       "$1" +
       visibilityCreateCheck("sourceIssue.companyId", "kyoubeScope",
         "const kyoubeScope = { projectId: childBody.projectId ?? sourceIssue.projectId ?? null, parentIssueId: sourceIssue.id, assigneeAgentId: null, assigneeUserId: null }; "),
+    expect: 1,
+  },
+  {
+    id: "visibility-route-gate",
+    title: "work-object visibility: a person's request addressed by a hidden task or project answers not found",
+    standing: "KyoubeAI work-object visibility: need-to-know companies",
+    files: ["server/dist/app.js"],
+    // `api.use(boardMutationGuard());` occurs once in app.js (2026.1012.0): in createApp, after the API
+    // router is made and before any of its routes is mounted, so a middleware mounted right after it
+    // runs before every task and project route (by id or, for a task, by identifier such as PAP-17;
+    // many of them check only company membership). `db` is createApp's parameter and `api` the
+    // router; app.js imports none of the authorization service, the project service, the tables or
+    // `eq`, so the replacement imports them itself, relative to app.js. Only a board actor is gated;
+    // agents keep the core's own checks (SECURITY.md, Groups, "Visibility", says what that leaves). The
+    // gate (packages/visibility, route-gate.ts) answers 404 only for a visibility denial and passes
+    // every other case on; if the module cannot be loaded, every person gets 404 on these routes and
+    // the failure is logged at most once a minute. Once patched, the marker follows the anchor, so a
+    // second apply matches nothing.
+    pattern: /(\n( *)api\.use\(boardMutationGuard\(\)\);\n)(?! *\/\* kyoube-visibility)/g,
+    replacement:
+      "$1$2/* kyoube-visibility (docs/groups.md) */ { let kyoubeGate = null; " +
+      'const kyoubeLoadGate = () => (kyoubeGate ??= Promise.all([import("/opt/kyoube/visibility/decide.mjs"), import("./services/authorization.js"), import("./services/projects.js"), import("@paperclipai/db"), import("drizzle-orm")]).then(' +
+      "([m, kyoubeAuthz, kyoubeProjects, kyoubeSchema, kyoubeOrm]) => m.routeGate({ decide: kyoubeAuthz.authorizationService(db).decide, ...m.coreLookups({ db, tables: { issues: kyoubeSchema.issues, projects: kyoubeSchema.projects }, ops: { eq: kyoubeOrm.eq }, resolveProjectReference: kyoubeProjects.projectService(db).resolveByReference }) })).catch(" +
+      '(error) => { kyoubeGate = null; const kyoubeNow = Date.now(); if (!(kyoubeNow - (globalThis.__kyoubeVisibilityGateLastLog ?? -Infinity) < 60000)) { globalThis.__kyoubeVisibilityGateLastLog = kyoubeNow; console.error("[kyoube] visibility module unavailable", error); } return null; })); ' +
+      `for (const [kyoubeKind, kyoubePath] of ${JSON.stringify(ROUTE_GATE_PATHS).replaceAll(",", ", ")}) ` +
+      'api.use(kyoubePath, (req, res, next) => req.actor?.type !== "board" ? next() : kyoubeLoadGate().then((kyoubeRouteGate) => kyoubeRouteGate ? kyoubeRouteGate(kyoubeKind, req, res, next) : void res.status(404).json({ error: kyoubeKind === "project" ? "Project not found" : "Issue not found" }))); }\n',
     expect: 1,
   },
 ];

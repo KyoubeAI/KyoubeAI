@@ -14,7 +14,7 @@ const D = "22222222-2222-4222-8222-222222222222";
 const NOW = Date.parse("2026-10-23T12:00:00.000Z");
 const minutesAgo = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
 
-const okModule = async () => ({ decideBoard() {}, liveEventFilter() {}, filterSearchResults() {} });
+const okModule = async () => ({ decideBoard() {}, liveEventFilter() {}, filterSearchResults() {}, routeGate() {}, coreLookups() {} });
 const markers = (count: number) => Array.from({ length: count }, () => `/* ${VISIBILITY_MARKER} (docs/groups.md) */`).join("\n");
 /** Every patched file with exactly its marker count, but for the counts given. */
 const patched = (override: Record<string, number | null> = {}) => async (file: string) => {
@@ -61,6 +61,7 @@ describe("visibility constants", () => {
       { path: "/app/server/dist/services/authorization.js", count: 1 },
       { path: "/app/server/dist/realtime/live-events-ws.js", count: 1 },
       { path: "/app/server/dist/routes/issues.js", count: 5 },
+      { path: "/app/server/dist/app.js", count: 1 },
     ]);
     expect(VISIBILITY_STALE_MS).toBe(15 * 60_000);
     expect(SHADOW_ENV_KEYS).toEqual(["PAPERCLIP_RESPONSIBLE_USER_AUTHZ_MODE", "PAPERCLIP_RESPONSIBLE_USER_AUTHZ_SHADOW"]);
@@ -87,7 +88,10 @@ describe("visibilityChecks", () => {
 
     const partial = await visibilityChecks(input(dir, { importModule: async () => ({ decideBoard() {} }) }));
     expect(partial[0]).toMatchObject({ name: "visibility", ok: false });
-    expect(partial[0]!.detail).toContain(`${VISIBILITY_MODULE_PATH} has no liveEventFilter, filterSearchResults`);
+    expect(partial[0]!.detail).toContain(`${VISIBILITY_MODULE_PATH} has no liveEventFilter, filterSearchResults, routeGate, coreLookups`);
+    // A module from before the route gate is incomplete too.
+    const older = await visibilityChecks(input(dir, { importModule: async () => ({ decideBoard() {}, liveEventFilter() {}, filterSearchResults() {} }) }));
+    expect(older[0]!.detail).toContain(`${VISIBILITY_MODULE_PATH} has no routeGate, coreLookups`);
   });
 
   it("fails when a patched file lacks its marker count", async () => {
@@ -102,6 +106,11 @@ describe("visibilityChecks", () => {
     expect(twice).toMatchObject({ ok: false });
     expect(twice!.detail).toContain("/app/server/dist/services/authorization.js has 0 kyoube-visibility markers, expected 1");
     expect(twice!.detail).toContain("/app/server/dist/realtime/live-events-ws.js has 2 kyoube-visibility markers, expected 1");
+
+    // An image without the route gate.
+    const [noGate] = await visibilityChecks(input(dir, { readText: patched({ "/app/server/dist/app.js": 0 }) }));
+    expect(noGate).toMatchObject({ ok: false });
+    expect(noGate!.detail).toContain("/app/server/dist/app.js has 0 kyoube-visibility markers, expected 1");
   });
 
   it("fails when the index is unreadable", async () => {

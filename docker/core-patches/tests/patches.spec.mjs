@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MESSAGES as ASK_MESSAGES } from "../ask-level.mjs";
 import { applyPatches, applyToText, countMatches, coreVersionHint, expandGlob } from "../lib.mjs";
-import { CORE_VERSION, PATCHES, SKIP_HARNESS_LABEL } from "../patches.mjs";
+import { CORE_VERSION, PATCHES, ROUTE_GATE_PATHS, SKIP_HARNESS_LABEL } from "../patches.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APPLY = path.join(HERE, "..", "apply.mjs");
@@ -618,6 +618,7 @@ async function writeFullCore(root) {
   await writeFile(path.join(root, "server/dist/services/local-ai-credentials.js"), CLAUDE_VERIFY_2026_916_1);
   await writeFile(path.join(root, "server/dist/services/issue-thread-interactions.js"), INTERACTION_CREATE_2026_1012_0);
   await writeFile(path.join(root, "server/dist/services/authorization.js"), AUTHZ_BOARD_2026_1012_0);
+  await writeFile(path.join(root, "server/dist/app.js"), APP_API_2026_1012_0);
   await mkdir(path.join(root, "server", "dist", "realtime"), { recursive: true });
   await writeFile(path.join(root, "server/dist/realtime/live-events-ws.js"), LIVE_WS_SEND_2026_1012_0);
   await mkdir(path.join(root, "server", "dist", "auth"), { recursive: true });
@@ -1761,6 +1762,218 @@ describe("visibility create patches", () => {
           await writeFile(file, `async function f() {\n${text}}\n`);
           await promisify(execFile)(process.execPath, ["--check", file]);
         }
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// app.js lines 460-492 (core 2026.1012.0, verbatim), in createApp: the plugin recovery hook, then the
+// API router made and its first routes mounted. The gate goes right after the board mutation guard,
+// before any task or project route.
+const APP_API_2026_1012_0 =
+  "    const managedBundledPluginKeys = managedAutoInstallKeys !== null\n" +
+  "        ? bundledPluginInstalls.map((install) => install.pluginKey)\n" +
+  "        : [];\n" +
+  "    let runtimePluginLoader = null;\n" +
+  "    // A sibling process can install a managed bundled plugin while this process\n" +
+  "    // skips the mid-install row, then finish the row after this process's\n" +
+  "    // loadAll() pass. The capabilities route may recover only those managed\n" +
+  "    // bundles by starting their ready-but-unstarted worker lazily.\n" +
+  "    const recoverManagedBundledPluginWorker = managedAutoInstallKeys !== null\n" +
+  "        ? createManagedBundledPluginWorkerRecovery({\n" +
+  "            managedBundledPluginKeys,\n" +
+  "            workerManager,\n" +
+  "            getLoader: () => runtimePluginLoader,\n" +
+  "        })\n" +
+  "        : undefined;\n" +
+  "    // Mount API routes\n" +
+  "    const api = Router();\n" +
+  "    const agentAvatars = agentAvatarRoutes();\n" +
+  "    api.use(agentAvatars.router);\n" +
+  "    api.use(boardMutationGuard());\n" +
+  "    api.use(\"/health\", health);\n" +
+  "    api.use(openApiRoutes());\n" +
+  "    api.use(\"/cloud\", cloudRoutes());\n" +
+  "    api.use(\"/companies\", companyRoutes(db, opts.storageService));\n" +
+  "    api.use(llmRoutes(db));\n" +
+  "    api.use(folderRoutes(db));\n" +
+  "    api.use(companySkillRoutes(db));\n" +
+  "    api.use(companySkillPolicyRoutes(db));\n" +
+  "    api.use(inboxAgentPolicyRoutes(db));\n" +
+  "    api.use(builtInAgentRoutes(db));\n" +
+  "    api.use(summarySlotRoutes(db));\n" +
+  "    api.use(statusCardRoutes(db));\n" +
+  "    api.use(teamsCatalogRoutes(db));\n";
+
+const GATE_IMPORTS = ["/opt/kyoube/visibility/decide.mjs", "./services/authorization.js", "./services/projects.js", "@paperclipai/db", "drizzle-orm"];
+
+/**
+ * Mounts the API router's first routes, patched with `visibility-route-gate`, as createApp would,
+ * with each of the gate's imports pointed at a stand-in: the visibility module's routeGate asks the
+ * decision about every task the ref names and answers 404 for a visibility denial (or no module, with
+ * `moduleMissing`), the authorization service answers with `answer` and records each question, and
+ * the database holds `rows`. Resolves to what was mounted, the decisions asked, what the stand-in
+ * coreLookups was given, and `request(path, req)`, which runs the gate mounted at `path` and resolves
+ * to the response and how often `next` was called.
+ */
+async function runPatchedGate({ answer = { allowed: true, reason: "allow_company_member" }, rows = [], moduleMissing = false } = {}) {
+  const stamp = `${process.pid}-${Math.random().toString(36).slice(2)}`;
+  const file = (name) => path.join(HERE, `.gate-${name}-under-test-${stamp}.mjs`);
+  const stubs = {
+    "/opt/kyoube/visibility/decide.mjs": moduleMissing ? null :
+      "export const seen = [];\n" +
+      "export function coreLookups(input) { seen.push(input); return { findIssues: async (ref) => input.db.rows.filter((row) => row.id === ref || row.identifier === ref), findProjects: async (ref) => input.db.rows.filter((row) => row.id === ref) }; }\n" +
+      "export function routeGate(deps) { return async (kind, req, res, next) => {\n" +
+      "  const rows = kind === \"issue\" ? await deps.findIssues(req.params.kyoubeRef) : await deps.findProjects(req.params.kyoubeRef, null);\n" +
+      "  for (const row of rows) { const d = await deps.decide({ actor: req.actor, action: `${kind}:read`, resource: { type: kind, companyId: row.companyId, [kind === \"issue\" ? \"issueId\" : \"projectId\"]: row.id } });\n" +
+      "    if (!d.allowed && (d.reason === \"deny_kyoube_visibility\" || d.reason === \"deny_kyoube_visibility_unavailable\")) { res.status(404).json({ error: \"Issue not found\" }); return; } }\n" +
+      "  next(); }; }\n",
+    "./services/authorization.js": "export function authorizationService(db) { return { decide: async (input) => db.decide(input) }; }\n",
+    "./services/projects.js": "export function projectService(db) { return { resolveByReference: async () => ({ project: null, ambiguous: false }), db }; }\n",
+    "@paperclipai/db": 'export const issues = { name: "issues" }; export const projects = { name: "projects" };\n',
+    "drizzle-orm": "export const eq = (column, value) => ({ eq: [column, value] });\n",
+  };
+  const files = Object.fromEntries(GATE_IMPORTS.map((specifier, index) => [specifier, file(`import${index}`)]));
+  let patched = applyToText(statementsBetween(APP_API_2026_1012_0, "    const api = Router();", "    api.use(openApiRoutes());"), PATCHES.find((entry) => entry.id === "visibility-route-gate")).text;
+  for (const specifier of GATE_IMPORTS) patched = patched.replace(`import(${JSON.stringify(specifier)})`, `import(${JSON.stringify(pathToFileURL(files[specifier]).href)})`);
+  const appFile = file("app");
+  for (const specifier of GATE_IMPORTS) if (stubs[specifier] !== null) await writeFile(files[specifier], stubs[specifier]);
+  await writeFile(appFile, `export default (db, Router, agentAvatarRoutes, boardMutationGuard, health) => {\n${patched}return api;\n};\n`);
+  try {
+    const { default: mount } = await import(pathToFileURL(appFile).href);
+    const decisions = [];
+    const db = { rows, decide: async (input) => { decisions.push(input); return answer; } };
+    const api = { mounted: [], use(...args) { this.mounted.push(args); } };
+    mount(db, () => api, () => ({ router: "avatars" }), () => "guard", "health");
+    const request = async (at, req) => {
+      const handler = api.mounted.find(([where]) => where === at)?.[1];
+      if (!handler) throw new Error(`nothing is mounted at ${at}`);
+      const res = fakeResponse();
+      let nexts = 0;
+      await handler(req, res, () => { nexts += 1; });
+      return { res, nexts };
+    };
+    // The gate loads on a person's first request; the stand-in module is read back for what it was given.
+    const seen = async () => (moduleMissing ? null : (await import(pathToFileURL(files[GATE_IMPORTS[0]]).href)).seen);
+    return { api, db, decisions, seen, request, cleanup: async () => { for (const at of [appFile, ...Object.values(files)]) await rm(at, { force: true }); } };
+  } catch (error) {
+    for (const at of [appFile, ...Object.values(files)]) await rm(at, { force: true });
+    throw error;
+  }
+}
+
+describe("visibility route gate patch", () => {
+  const byId = (id) => PATCHES.find((patch) => patch.id === id);
+  const gate = byId("visibility-route-gate");
+  const person = { type: "board", userId: "u1" };
+  const T = "33333333-3333-4333-8333-333333333333";
+  const rows = [{ id: T, identifier: "PAP-17", companyId: "c1" }];
+  const runs = [];
+  const run = async (options) => {
+    const started = await runPatchedGate(options);
+    runs.push(started);
+    return started;
+  };
+  beforeEach(() => {
+    delete globalThis.__kyoubeVisibilityGateLastLog;
+  });
+  afterEach(async () => {
+    for (const started of runs.splice(0)) await started.cleanup();
+  });
+
+  it("anchors once on the board mutation guard, after it and before every route, and a second apply matches nothing", () => {
+    expect(gate.standing).toContain("work-object visibility");
+    expect(gate.upstream).toBeUndefined();
+    expect(gate.expect).toBe(1);
+    expect(gate.files).toEqual(["server/dist/app.js"]);
+    expect(countMatches(APP_API_2026_1012_0, gate.pattern)).toBe(1);
+    const { text, count } = applyToText(APP_API_2026_1012_0, gate);
+    expect(count).toBe(1);
+    expect(text.split("kyoube-visibility").length - 1).toBe(1);
+    expect(text).toContain("    api.use(boardMutationGuard());\n    /* kyoube-visibility (docs/groups.md) */ {");
+    expect(text.indexOf("kyoube-visibility")).toBeLessThan(text.indexOf('api.use("/health", health);'));
+    for (const specifier of GATE_IMPORTS) expect(text).toContain(`import(${JSON.stringify(specifier)})`);
+    for (const [, at] of ROUTE_GATE_PATHS) expect(text).toContain(JSON.stringify(at));
+    expect(countMatches(text, gate.pattern)).toBe(0);
+  });
+
+  it("mounts the gate on every task and project prefix, between the guard and the first route", async () => {
+    const { api } = await run();
+    expect(api.mounted.map(([first]) => first)).toEqual(["avatars", "guard", ...ROUTE_GATE_PATHS.map(([, at]) => at), "/health"]);
+    expect(ROUTE_GATE_PATHS.map(([kind]) => kind)).toEqual(["issue", "issue", "issue", "project", "project"]);
+  });
+
+  it("answers 404 to a person's visibility denial and asks the core's own decision with createApp's database", async () => {
+    for (const reason of ["deny_kyoube_visibility", "deny_kyoube_visibility_unavailable"]) {
+      const { request, decisions, seen, db } = await run({ rows, answer: { allowed: false, reason } });
+      for (const ref of [T, "PAP-17"]) {
+        const { res, nexts } = await request("/issues/:kyoubeRef", { actor: person, params: { kyoubeRef: ref } });
+        expect(res, `${reason} ${ref}`).toMatchObject({ statusCode: 404, sent: true, body: { error: "Issue not found" } });
+        expect(nexts).toBe(0);
+      }
+      expect(decisions.map(({ actor, action, resource }) => [actor, action, resource.issueId])).toEqual([[person, "issue:read", T], [person, "issue:read", T]]);
+      // The lookups get createApp's db, the core's tables, eq and the project resolver, once.
+      const given = await seen();
+      expect(given).toHaveLength(1);
+      expect(given[0].db).toBe(db);
+      expect(given[0].tables).toEqual({ issues: { name: "issues" }, projects: { name: "projects" } });
+      expect(given[0].ops.eq("a", "b")).toEqual({ eq: ["a", "b"] });
+      expect(typeof given[0].resolveProjectReference).toBe("function");
+    }
+  });
+
+  it("passes every other denial, an allow, an unknown ref and an agent on to the core's route", async () => {
+    for (const answer of [{ allowed: false, reason: "deny_company_boundary" }, { allowed: false, reason: "deny_missing_grant" }, { allowed: true, reason: "allow_company_member" }]) {
+      const { request } = await run({ rows, answer });
+      const { res, nexts } = await request("/issues/:kyoubeRef", { actor: person, params: { kyoubeRef: T } });
+      expect(res.sent, answer.reason).toBe(false);
+      expect(nexts).toBe(1);
+    }
+    const hidden = { rows, answer: { allowed: false, reason: "deny_kyoube_visibility" } };
+    const unknown = await (await run(hidden)).request("/projects/:kyoubeRef", { actor: person, params: { kyoubeRef: "nothing" } });
+    expect([unknown.res.sent, unknown.nexts]).toEqual([false, 1]);
+    const { request, decisions } = await run(hidden);
+    for (const actor of [{ type: "agent", agentId: "a1", companyId: "c1" }, { type: "none" }]) {
+      const byAgent = await request("/issues/:kyoubeRef", { actor, params: { kyoubeRef: T } });
+      expect([byAgent.res.sent, byAgent.nexts]).toEqual([false, 1]);
+    }
+    expect(decisions).toEqual([]);
+  });
+
+  it("answers 404 to every person and lets agents through when the module cannot be loaded, logging once a minute", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { request } = await run({ rows, moduleMissing: true });
+      for (const [at, kind] of [["/issues/:kyoubeRef", "Issue"], ["/projects/:kyoubeRef", "Project"]]) {
+        const { res, nexts } = await request(at, { actor: person, params: { kyoubeRef: T } });
+        expect(res).toMatchObject({ statusCode: 404, body: { error: `${kind} not found` } });
+        expect(nexts).toBe(0);
+      }
+      const byAgent = await request("/issues/:kyoubeRef", { actor: { type: "agent", agentId: "a1" }, params: { kyoubeRef: T } });
+      expect([byAgent.res.sent, byAgent.nexts]).toEqual([false, 1]);
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledWith("[kyoube] visibility module unavailable", expect.anything());
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("is checked by the Dockerfile: one marker in app.js, which still parses, and a module with the gate", async () => {
+    const dockerfile = await readFile(DOCKERFILE, "utf8");
+    expect(dockerfile).toContain("test \"$(grep -c 'kyoube-visibility' /app/server/dist/app.js)\" -eq 1");
+    expect(dockerfile).toContain("node --check dist/app.js");
+    expect(dockerfile).toContain('for (const k of ["decideBoard", "liveEventFilter", "filterSearchResults", "routeGate", "coreLookups"])');
+  });
+
+  it("still parses", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "core-patches-visibility-gate-"));
+    try {
+      for (const [name, text] of [["core-app", APP_API_2026_1012_0], ["visibility-route-gate", applyToText(APP_API_2026_1012_0, gate).text]]) {
+        const at = path.join(dir, `${name}.mjs`);
+        await writeFile(at, `async function f() {\n${text}}\n`);
+        await promisify(execFile)(process.execPath, ["--check", at]);
       }
     } finally {
       await rm(dir, { recursive: true, force: true });

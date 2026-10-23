@@ -177,7 +177,7 @@ people-only cap, so without the patch every such card stays people-only. The sam
 core release moves the anchor, the build fails naming the entry, and the fix is to redo it for that
 core, never to delete it.
 
-The fourth is work-object visibility (`docs/groups.md`, "Visibility"). Seven `standing` entries do it.
+The fourth is work-object visibility (`docs/groups.md`, "Visibility"). Eight `standing` entries do it.
 Four, `visibility-board-decide`, `visibility-live-events`, `visibility-search-scope` and
 `visibility-search-filter`, call KyoubeAI code (`packages/visibility`, shipped as
 `/opt/kyoube/visibility/decide.mjs`) in the board branch of the core's authorization decision
@@ -186,10 +186,13 @@ and its company search (`server/dist/routes/issues.js`), for people in a need-to
 `visibility-create-check`, `visibility-create-child-check` and `visibility-create-plan-check`, make the
 core's task, subtask and plan routes (`server/dist/routes/issues.js`) ask that decision when a person
 creates a task without naming an assignee, which the core otherwise skips, and refuse only a visibility
-denial. The core has no visibility setting of its own, so without the patches everyone in a company
+denial. One, `visibility-route-gate`, mounts a gate in the core's API router (`server/dist/app.js`) in
+front of every route addressed by a task or project id or task identifier, many of which check only
+company membership: a person whose decision on that task or project is a visibility denial gets the
+core's own 404. The core has no visibility setting of its own, so without the patches everyone in a company
 sees all of its tasks and projects. A module that can't load refuses the covered actions to operators
 and viewers, so a failure closes rather than opens. The exit: when upstream ships a company visibility
-mode with the same rules, the seven entries, the module and the policy files go, and the Groups page writes the
+mode with the same rules, the eight entries, the module and the policy files go, and the Groups page writes the
 upstream setting instead. Until then the same rule applies: when a core release moves an anchor, the
 build fails naming the entry, and the fix is to redo it for that core, never to delete it.
 

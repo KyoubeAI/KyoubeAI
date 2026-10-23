@@ -147,19 +147,22 @@ RUN grep -q 'kyoube-ask-level' /app/server/dist/services/issue-thread-interactio
  && cd /app/server && node --check dist/services/issue-thread-interactions.js \
  && gosu node node --input-type=module -e 'const m = await import("/opt/kyoube/core-patches/ask-level.mjs"); if (typeof m.applyAskLevel !== "function") process.exit(1); console.log("ask-level ok")'
 
-# Work-object visibility (seven standing core patches above) imports
+# Work-object visibility (eight standing core patches above) imports
 # /opt/kyoube/visibility/decide.mjs, copied in below with the rest of
 # /opt/kyoube and checked there. Check each marker is in the served code the
 # expected number of times (routes/issues.js has five: the search route's scope
 # check and result filter, and the check on a person's unassigned task in the
-# create, child and plan routes) and that the three files still parse. Without
-# the module every covered read is refused for operators and viewers.
+# create, child and plan routes; app.js has the gate in front of the task and
+# project routes) and that the four files still parse. Without the module every
+# covered read is refused for operators and viewers.
 RUN test "$(grep -c 'kyoube-visibility' /app/server/dist/services/authorization.js)" -eq 1 \
  && test "$(grep -c 'kyoube-visibility' /app/server/dist/realtime/live-events-ws.js)" -eq 1 \
  && test "$(grep -c 'kyoube-visibility' /app/server/dist/routes/issues.js)" -eq 5 \
+ && test "$(grep -c 'kyoube-visibility' /app/server/dist/app.js)" -eq 1 \
  && cd /app/server && node --check dist/services/authorization.js \
  && node --check dist/realtime/live-events-ws.js \
- && node --check dist/routes/issues.js
+ && node --check dist/routes/issues.js \
+ && node --check dist/app.js
 
 # ---------------------------------------------------------------------------
 # KyoubeAI theme ("Studio"): brand tokens, a skin aimed only at stable hooks
@@ -229,7 +232,7 @@ COPY --from=kyoube-build /out/bootstrap /opt/kyoube/bootstrap
 COPY --from=kyoube-build /out/plugins /opt/kyoube/plugins
 COPY --from=kyoube-build /out/license /opt/kyoube/license
 COPY --from=kyoube-build /out/visibility /opt/kyoube/visibility
-RUN gosu node node --input-type=module -e 'const m = await import("/opt/kyoube/visibility/decide.mjs"); for (const k of ["decideBoard", "liveEventFilter", "filterSearchResults"]) if (typeof m[k] !== "function") process.exit(1); console.log("visibility ok")'
+RUN gosu node node --input-type=module -e 'const m = await import("/opt/kyoube/visibility/decide.mjs"); for (const k of ["decideBoard", "liveEventFilter", "filterSearchResults", "routeGate", "coreLookups"]) if (typeof m[k] !== "function") process.exit(1); console.log("visibility ok")'
 COPY docker/kyoube /usr/local/bin/kyoube
 COPY docker/entrypoint.sh /usr/local/bin/kyoube-entrypoint.sh
 RUN chmod +x /usr/local/bin/kyoube /usr/local/bin/kyoube-entrypoint.sh \

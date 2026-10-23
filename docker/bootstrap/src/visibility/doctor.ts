@@ -20,13 +20,14 @@ export const VISIBILITY_PATCHED: ReadonlyArray<{ path: string; count: number }> 
   { path: "/app/server/dist/services/authorization.js", count: 1 },
   { path: "/app/server/dist/realtime/live-events-ws.js", count: 1 },
   { path: "/app/server/dist/routes/issues.js", count: 5 },
+  { path: "/app/server/dist/app.js", count: 1 },
 ];
 /** The kyoube.apps worker rewrites every policy file at least every five minutes. */
 export const VISIBILITY_STALE_MS = 15 * 60_000;
 /** The core's switches that make its agent-on-behalf-of-a-person check log-only. */
 export const SHADOW_ENV_KEYS = ["PAPERCLIP_RESPONSIBLE_USER_AUTHZ_MODE", "PAPERCLIP_RESPONSIBLE_USER_AUTHZ_SHADOW"] as const;
 
-const MODULE_EXPORTS = ["decideBoard", "liveEventFilter", "filterSearchResults"] as const;
+const MODULE_EXPORTS = ["decideBoard", "liveEventFilter", "filterSearchResults", "routeGate", "coreLookups"] as const;
 const REWRITE_HINT = "the kyoube.apps worker rewrites the policy files every five minutes; if this stays, the app log says why (visibility policy write failed)";
 const REFUSED = "so the core refuses this company's covered reads to everyone but its owners and admins";
 
