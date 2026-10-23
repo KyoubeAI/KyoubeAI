@@ -79,14 +79,16 @@ RUN mkdir -p /kyoubeai && chown node:node /kyoubeai && usermod -d /kyoubeai node
 # and every Terminal shell run as, gets passwordless sudo. That is a small step
 # from the existing trust (`node` already owns /app and can read the server's
 # environment), and the container stays the boundary (SECURITY.md, Terminal).
-# The extra packages are what harness installers commonly assume.
+# The extra packages are what harness installers commonly assume. libatomic1 is
+# for the official Node 26 builds (x64 and arm64) that installers
+# such as Hermes download for themselves; the image's own Node does not need it.
 #
 # System packages someone adds later are kept: apt-record (a DPkg hook) writes
 # their names to the home volume and apt-restore (docker/entrypoint.sh) puts
 # them back after a recreate. The baseline it compares against is every
 # package chosen up to here, so this must stay the last apt step in the file.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends sudo unzip xz-utils python3-venv \
+ && apt-get install -y --no-install-recommends sudo unzip xz-utils python3-venv libatomic1 \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /opt/kyoube \
  && apt-mark showmanual | LC_ALL=C sort -u > /opt/kyoube/apt-baseline.txt
@@ -104,6 +106,7 @@ RUN chmod 0440 /etc/sudoers.d/kyoube \
  && test "$(gosu node env HOME=/tmp/npm-check npm_config_cache=/tmp/npm-check sh -c 'cd /tmp && npm config get prefix')" = /kyoubeai/.local \
  && rm -rf /tmp/npm-check \
  && test -x /usr/local/bin/claude \
+ && ldconfig -p | grep -q 'libatomic\.so\.1 ' \
  && ! command -v pi && ! command -v hermes \
  && test -z "$(ls -A /kyoubeai)"
 ENV PATH=/kyoubeai/.local/bin:${PATH} \
