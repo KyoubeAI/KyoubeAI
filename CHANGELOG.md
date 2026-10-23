@@ -4,6 +4,54 @@ All notable changes to KyoubeAI are recorded here, in terms of what changed for 
 building on it. The format is loosely [Keep a Changelog](https://keepachangelog.com/); versioning is
 [SemVer](https://semver.org/).
 
+## 1.13.0 - 2026-10-23
+
+### Added
+
+- **Need-to-know visibility.** A company can be switched from **open** (everyone sees every project
+  and task, as before) to **need-to-know** on the Groups page. Operators and viewers then see the
+  projects of their groups and the tasks they are involved in (created, assigned, responsible, or in
+  the chat), with every subtask beneath, unless their group has **Sees everything in the company**
+  ticked. Owners and admins always see everything. Search, live updates and task creation follow the
+  same rule, and anything addressed by a hidden task or project answers "not found". Company-wide
+  pages (Activity, Approvals, Costs and the like) refuse a restricted person instead of being cut
+  down. Switching to need-to-know lists who becomes restricted first and needs a licence; switching
+  back never does. Every company starts open, so upgrading changes nothing until you switch one
+  ([docs/groups.md](docs/groups.md#visibility)).
+- Groups carry **projects**: a group's form has a **Projects** picker, and its members see those
+  projects in a need-to-know company.
+- `kyoube doctor` has a `visibility` line (the decision module loads, the core patches are in place,
+  the shadow variables are unset, sign-in is on) and one `visibility <companyId>` line per
+  need-to-know company (database and policy file agree, file fresh, who sees all and how many are
+  restricted). It fails if `PAPERCLIP_RESPONSIBLE_USER_AUTHZ_MODE=shadow` or
+  `PAPERCLIP_RESPONSIBLE_USER_AUTHZ_SHADOW` is set.
+- The README has a **Groups and visibility** section, and `SECURITY.md` a **Visibility** section with
+  the model, what fails closed and what is not covered.
+
+### Changed
+
+- Eight standing core patches (`visibility-*` in `docker/core-patches/patches.mjs`) put KyoubeAI's
+  decision module in the core's authorization decision, live-events socket, company search, task
+  creation routes and every route addressed by a task or project. The build fails if a core release
+  moves the code one of them anchors on, and `CONTRIBUTING.md` records them as the fourth standing
+  behaviour exception.
+- The groups plugin (`kyoube.apps`) is 0.14.0: migration `0009_visibility.sql` adds a visibility mode
+  per company, a sees-everything flag per group and the projects of each group. It writes the policy
+  the core reads to `/kyoubeai/kyoube/visibility/` on every change, at worker start and every five
+  minutes. Kyoube Files is 0.4.0 and Kyoube Notify 0.2.0: both refuse a restricted person the project
+  folders, notifications and approval requests of hidden work. Kyoube Studio is 0.6.0: it reads tasks
+  and approvals through the core as the signed-in person, so it holds three capabilities fewer
+  (`issues.read`, `issue.comments.read`, `approvals.read`), and the Workspace page no longer shows an
+  open-task figure. The bootstrap reinstalls all four on update.
+- The image installs `libatomic1`, which the official Node 26 builds that harness installers such as
+  Hermes download for themselves need.
+
+### Fixed
+
+- `install.sh` refuses an address that is not an `http://` or `https://` URL with a host and a valid
+  port, on the prompt and with `--url`, instead of writing it to `KYOUBE_PUBLIC_URL` where the core
+  refuses it at startup.
+
 ## 1.12.1 - 2026-10-22
 
 ### Fixed
