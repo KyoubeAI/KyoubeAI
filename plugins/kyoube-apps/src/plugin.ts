@@ -2,6 +2,7 @@ import path from "node:path";
 import { definePlugin, type PaperclipPlugin, type PluginContext, type PluginLogger } from "@paperclipai/plugin-sdk";
 import type { PluginPerformActionContext } from "@paperclipai/plugin-sdk/protocol";
 import type { Pool } from "pg";
+import { VISIBILITY_DIR } from "@kyoube/visibility";
 import { handleApiRequest } from "./api-routes.js";
 import { handleAppsApiRequest } from "./apps/api-routes.js";
 import { MAX_APP_NOTES } from "./apps/manifest.js";
@@ -54,8 +55,21 @@ export interface AppsPluginDeps {
   licence?: LicenceGate;
   /** Where the kyoube CLI's rules token lives (ruling R18); tests point it at a temporary file. */
   rulesTokenPath?: string;
-  /** Where the visibility policy files go (default `<home>/kyoube/visibility`); tests point it at a temporary directory. */
+  /** Where the visibility policy files go (default VISIBILITY_DIR, the fixed path the core reads); tests point it at a temporary directory. */
   visibilityDir?: string;
+}
+
+/**
+ * Where the policy writer writes: always the fixed directory the core reads, unless a test says
+ * otherwise. The core never looks under a different home, so a home other than /kyoubeai is warned
+ * about rather than followed.
+ */
+export function visibilityPolicyDir(home: string, override?: string): { dir: string; warning: string | null } {
+  const underHome = path.posix.join(home, "kyoube", "visibility");
+  return {
+    dir: override ?? VISIBILITY_DIR,
+    warning: underHome === VISIBILITY_DIR ? null : `the kyoube home is ${home}, but the core reads the visibility policy from ${VISIBILITY_DIR}, so it is written there`,
+  };
 }
 
 type Params = Record<string, unknown>;
@@ -239,9 +253,11 @@ export function createAppsPlugin(deps: AppsPluginDeps): PaperclipPlugin {
       });
       // The need-to-know policy files the core reads (docs/groups.md): on every change, at worker
       // start and on the five-minute job.
+      const policyDir = visibilityPolicyDir(config.home, deps.visibilityDir);
+      if (policyDir.warning) ctx.logger.warn(policyDir.warning, { home: config.home, dir: VISIBILITY_DIR });
       const visibilityWriter = new VisibilityWriter({
         store: new GroupStore(dbPool),
-        dir: deps.visibilityDir ?? path.posix.join(config.home, "kyoube", "visibility"),
+        dir: policyDir.dir,
         log: (message, meta) => ctx.logger.warn(message, meta),
       });
       // Never thrown out of setup, the job or a change (which has already committed): the next

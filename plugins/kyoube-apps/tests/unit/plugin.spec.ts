@@ -6,7 +6,8 @@ import type { AppServiceDeps } from "../../src/apps/service.js";
 import { TaskService, type TaskServiceDeps } from "../../src/tasks/service.js";
 import type { DataService, DataServiceDeps, MutationEvent } from "../../src/data/service.js";
 import manifest from "../../src/manifest.js";
-import { actorFromAction, createAppsPlugin } from "../../src/plugin.js";
+import { actorFromAction, createAppsPlugin, visibilityPolicyDir } from "../../src/plugin.js";
+import { VISIBILITY_DIR as CORE_VISIBILITY_DIR } from "@kyoube/visibility";
 import { createStubService } from "../stub-service.js";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -742,7 +743,7 @@ describe("kyoube.apps group routes and the rules token (ruling R18)", () => {
 
 describe("kyoube.apps visibility policy (docs/groups.md)", () => {
   /** The plugin over a fake pool that answers `query`, with one admin, two projects (one archived) and no apps. */
-  async function setupVisibility(query: (sql: string) => Promise<{ rows: unknown[] }>, visibilityDir = VISIBILITY_DIR) {
+  async function setupVisibility(query: (sql: string) => Promise<{ rows: unknown[] }>, visibilityDir = VISIBILITY_DIR, config = KYOUBE_CONFIG) {
     const harness = createTestHarness({ manifest });
     harness.seed({
       accessMembers: [{ id: "m1", companyId: COMPANY, principalType: "user", principalId: "admin-1", status: "active", membershipRole: "admin", grants: [], createdAt: "2026-01-01", updatedAt: "2026-01-01" }],
@@ -752,7 +753,7 @@ describe("kyoube.apps visibility policy (docs/groups.md)", () => {
       ],
     });
     const plugin = createAppsPlugin({
-      loadKyoubeConfig: async () => KYOUBE_CONFIG,
+      loadKyoubeConfig: async () => config,
       migrationsDir: "/nowhere",
       visibilityDir,
       // `connect` serves the transactions a mode change opens; every statement on it succeeds.
@@ -789,6 +790,25 @@ describe("kyoube.apps visibility policy (docs/groups.md)", () => {
     // Setup, the job, then the change's own hook, which names the company.
     expect(failures.map((entry) => entry.meta)).toEqual([{ error: "Error: database down" }, { error: "Error: database down" }, { companyId: COMPANY, error: "Error: database down" }]);
     expect(harness.logs.some((entry) => entry.message === "data activity log failed")).toBe(false);
+  });
+
+  it("writes where the core reads by default, whatever the home, and only a test overrides it", () => {
+    expect(CORE_VISIBILITY_DIR).toBe("/kyoubeai/kyoube/visibility");
+    expect(visibilityPolicyDir("/kyoubeai")).toEqual({ dir: CORE_VISIBILITY_DIR, warning: null });
+    expect(visibilityPolicyDir("/kyoubeai/")).toEqual({ dir: CORE_VISIBILITY_DIR, warning: null });
+    expect(visibilityPolicyDir("/srv/kyoube")).toEqual({
+      dir: CORE_VISIBILITY_DIR,
+      warning: "the kyoube home is /srv/kyoube, but the core reads the visibility policy from /kyoubeai/kyoube/visibility, so it is written there",
+    });
+    expect(visibilityPolicyDir("/srv/kyoube", "/tmp/x").dir).toBe("/tmp/x");
+  });
+
+  it("warns at setup when the home is not /kyoubeai, and not when it is", async () => {
+    const elsewhere = await setupVisibility(async () => ({ rows: [] }), VISIBILITY_DIR, { ...KYOUBE_CONFIG, home: "/srv/kyoube" });
+    expect(elsewhere.logs.filter((entry) => entry.level === "warn" && entry.message.includes("the core reads the visibility policy from /kyoubeai/kyoube/visibility")).map((entry) => entry.meta))
+      .toEqual([{ home: "/srv/kyoube", dir: "/kyoubeai/kyoube/visibility" }]);
+    const usual = await setupVisibility(async () => ({ rows: [] }));
+    expect(usual.logs.some((entry) => entry.message.includes("the core reads the visibility policy"))).toBe(false);
   });
 
   it("groups.options lists the company's projects", async () => {
