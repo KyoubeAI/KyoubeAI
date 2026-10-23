@@ -159,6 +159,18 @@ url_set_port() {
   printf '%s://%s:%s%s\n' "$scheme" "${hostport%%:*}" "$2" "$path"
 }
 url_origin() { local rest="${1#*://}"; printf '%s://%s\n' "${1%%://*}" "${rest%%/*}"; }
+# valid_url URL: an http(s) address with a host and, if it names one, a port from 1 to 65535. The core's auth refuses
+# anything else at startup, so a bare port (3300) or host must be caught before it reaches KYOUBE_PUBLIC_URL.
+valid_url() {
+  local rest="${1#*://}" hostport port
+  case "$1" in http://*|https://*) ;; *) return 1 ;; esac
+  case "$1" in *[[:space:]]*) return 1 ;; esac
+  hostport="${rest%%/*}"
+  [ -n "${hostport%%:*}" ] || return 1
+  case "$hostport" in *:*) port="${hostport##*:}" ;; *) return 0 ;; esac
+  case "$port" in ''|*[!0-9]*) return 1 ;; esac
+  [ "${#port}" -le 5 ] && [ "$((10#$port))" -ge 1 ] && [ "$((10#$port))" -le 65535 ]
+}
 is_loopback_url() {
   case "$1" in http://localhost|http://localhost[:/]*|http://127.0.0.1|http://127.0.0.1[:/]*) return 0 ;; *) return 1 ;; esac
 }

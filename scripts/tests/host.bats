@@ -172,6 +172,23 @@ fake_docker() {
   ! is_loopback_url https://kyoube.example.com || false
 }
 
+@test "valid_url accepts http(s) addresses and refuses a bare port or host" {
+  valid_url http://localhost:3300
+  valid_url http://127.0.0.1
+  valid_url https://kyoube.example.com
+  valid_url https://kyoube.example.com:8443/app
+  ! valid_url 3300 || false
+  ! valid_url localhost:3300 || false
+  ! valid_url kyoube.example.com || false
+  ! valid_url ftp://kyoube.example.com || false
+  ! valid_url http:// || false
+  ! valid_url http://:3300 || false
+  ! valid_url http://localhost:99999 || false
+  ! valid_url http://localhost:abc || false
+  ! valid_url "http://local host" || false
+  ! valid_url "" || false
+}
+
 @test "split_image_ref splits at the tag, not a registry port" {
   [ "$(split_image_ref kyoubeai:smoke)" = "kyoubeai smoke" ]
   [ "$(split_image_ref localhost:5000/kyoube/app:9.9.0)" = "localhost:5000/kyoube/app 9.9.0" ]

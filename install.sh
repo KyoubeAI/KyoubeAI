@@ -53,6 +53,7 @@ main() {
     valid_port "$port" || die "not a port: $port (use a number from 1 to 65535)"
     port="$((10#$port))"
   fi
+  [ -z "$url" ] || valid_url "$url" || die "not an address: $url (use the full address, e.g. http://localhost:3100 or https://kyoube.example.com)"
   if [ -n "$name" ]; then
     [ "$(normalize_project_name "$name")" = "$name" ] \
       || die "not a valid project name: $name (use lowercase letters, digits, - and _, starting with a letter or digit)"
@@ -279,8 +280,12 @@ valid_port() {
 choose_address() {
   local file="$1" answer p
   if [ -z "$url" ] && [ "$YES" = 0 ]; then
-    printf 'Address people will use to open KyoubeAI [http://localhost:3100]: '
-    IFS= read -r answer </dev/tty || answer=""
+    while :; do
+      printf 'Address people will use to open KyoubeAI [http://localhost:3100]: '
+      IFS= read -r answer </dev/tty || answer=""
+      if [ -z "$answer" ] || valid_url "$answer"; then break; fi
+      warn "not an address: $answer (use the full address, e.g. http://localhost:3100 or https://kyoube.example.com)"
+    done
     url="$answer"
   fi
   url="${url:-http://localhost:3100}"

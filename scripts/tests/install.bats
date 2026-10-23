@@ -208,3 +208,11 @@ changed_nothing() {
   [ "$(git -C "$INST" describe --tags --exact-match HEAD)" = v1.2.0 ]
   grep -Fx "KYOUBE_VERSION=1.2.0" "$INST/.env"
 }
+
+@test "a --url that is not an address is refused before anything is written" {
+  run_install --url 3300 --yes
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not an address: 3300"* ]]
+  [ ! -f "$INST/.env" ]
+  [ ! -s "$STUB_LOG" ]
+}
