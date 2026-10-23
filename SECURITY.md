@@ -322,6 +322,79 @@ and what data level they hold. Group tables are in `kyoube_meta` (`groups`, `gro
   colleague's id can therefore learn their level and, by comparing it with their role, whether a group
   sets it (not which group).
 
+### Visibility
+
+A company can be need-to-know (`docs/groups.md`, "Visibility"): operators and viewers then see the
+projects of their groups and the tasks they are involved in, and owners, admins and instance admins
+see everything. The mode is per company and defaults to open.
+
+- **Where it is enforced.** In the core's authorization decision, the board branch of `decideBase`
+  (`server/dist/services/authorization.js`), through the standing patch `visibility-board-decide`. Every
+  REST route and the UI go through that decision, so they inherit the rule without a check of their
+  own. The core's responsible-user intersection carries it to agent runs: an agent working for a
+  restricted person is held to what that person may see. Four more standing patches cover what the
+  decision does not reach: the live-events socket (`visibility-live-events`, which cuts every event for
+  a restricted person down to its type and ids), company search (`visibility-search-scope` and
+  `visibility-search-filter`), and, in `visibility-create-check`, `visibility-create-child-check` and
+  `visibility-create-plan-check`, task creation by a person who names no assignee, which the core does
+  not check. Seven entries in all, in `docker/core-patches/patches.mjs`. The decision module is
+  `/opt/kyoube/visibility/decide.mjs`, built from `packages/visibility`.
+- **The policy.** The groups plugin compiles each need-to-know company's groups into
+  `/kyoubeai/kyoube/visibility/index.json` (every company's mode) and `<companyId>.json` (who sees
+  everything, and who sees each project) on the home volume. It rewrites them on every group or mode
+  change, at worker start and every five minutes. The core and the Files and notify plugins re-check
+  them every two seconds. The plugin's database stays the source of truth; the files are what the
+  core reads.
+- **It fails closed.** An index or a need-to-know company's file that cannot be read or parsed, a
+  decision module that does not load, or a check that throws, refuses the covered actions to operators
+  and viewers, strips every live event and finds nothing in search. Owners, admins and instance admins
+  are never affected, so a broken policy cannot lock out the people who fix it. A closed state is
+  re-read at the next two-second check. No index at all means the feature was never turned on, which is
+  open. `kyoube doctor` reports the module, the seven patches (by marker count: one in
+  `authorization.js`, one in `live-events-ws.js`, five in `routes/issues.js`), the policy files, and
+  the home directory.
+- **Shadow mode must stay off.** `PAPERCLIP_RESPONSIBLE_USER_AUTHZ_MODE=shadow` and
+  `PAPERCLIP_RESPONSIBLE_USER_AUTHZ_SHADOW` turn the core's responsible-user check into a log line.
+  With either set on a need-to-know instance, an agent run reaches past what the person it works for
+  may see. `kyoube doctor` fails on them, and on a deployment mode other than `authenticated`.
+- **Switching.** Only owners and admins switch a company, with the caller's role re-read from the core.
+  Switching on needs a valid licence and is audited like any group change; switching off never needs
+  one. An existing need-to-know company stays enforced if the licence lapses.
+- **The Files and notify plugins** check the same policy: Files before it serves a project's folder,
+  and notify before it tells a person about a task or an approval. Studio reads tasks through the
+  core (see [Studio](#studio)).
+
+What is not covered:
+
+- **Residual: attachments and task documents are company-scoped.** A restricted person who knows an id
+  can fetch one.
+- **Residual: approvals are invisible to restricted people, including on their own tasks.** They sit
+  entirely behind the company-scope guard, so a restricted person cannot see or decide any approval,
+  including one on their own task.
+- **Residual: company-wide pages show an error state.** Activity, Approvals, Costs, Execution
+  workspaces, Timeline, status cards, decision queues and run telemetry show the core's error state
+  to a restricted person rather than being hidden.
+- **Residual: agents are visible.** A restricted person sees every agent by name, role and status.
+- **Residual: agent shell access reaches everything.** An agent's shell reaches every project folder
+  and the database. Need-to-know covers people through the UI and API, and agents through the API.
+- **Residual: a hidden task's existence can be inferred.** A 403 or 404 to a guessed id says
+  something about it. Ids are UUIDs.
+- **Residual: writes into hidden places that need an out-of-band hidden id.** A person accepting an
+  agent's `suggest_tasks` card, including one they authored on their own task, is not covered by the
+  creation checks. A person may also move a task they can see into a hidden project, or under a hidden
+  parent, through `PATCH /issues/:id`, because the mutate check judges the task alone.
+- **Residual: Files and notify know company roles only.** An instance admin whose company role is
+  operator or viewer is restricted in those two plugins, though not in the core. This fails closed.
+- **Residual: Studio's worker trusts a client-supplied user id for what it still serves.** The agent
+  and access data it returns is visible to every member. Task data no longer goes through it. A running
+  agent whose task is hidden shows "Working" in the roster but "Not working" on its profile for a
+  restricted person, and the Workspace page's projects count is company-wide.
+- **Residual: `local_trusted` mode.** The board socket's actor is then the literal "board", so its live
+  events are stripped in a need-to-know company. KyoubeAI runs authenticated mode.
+- **Residual: the policy directory.** The policy writer derives its directory from the configured home,
+  while the core reads the fixed path `/kyoubeai/kyoube/visibility`. `kyoube doctor` warns when they
+  would differ.
+
 ## Apps
 
 An app is one HTML document written by an agent and reviewed by whoever publishes it. It runs in an
@@ -484,9 +557,10 @@ against the plugin's `readRoles` (default: every role) or `writeRoles` (default:
 `viewer`) under **Settings → Plugins → Kyoube Files**. Reads take the same 30-second membership cache as
 the Data page; every mutation reads the members API afresh, so a demoted or removed member can browse
 for at most 30 more seconds and can change nothing from the moment the change lands. Project
-visibility in core 2026.831.1 through 2026.1012.0 is company-wide (`project:read` is granted to every active member in its
-simple permissions mode), so the company role is the right unit here; if a future core adds
-per-project membership the plugin will need to consult it, and this section will say so. The project
+visibility follows the company's visibility mode (`docs/groups.md`, "Visibility"): in an open company
+it is company-wide, so the company role is the right unit, and in a need-to-know company the plugin
+checks the same policy before it serves a folder, so a restricted person reaches only the projects of
+their groups. The project
 must be in the host's company scope: `getPrimaryWorkspace` answers `null` otherwise, and a
 `params.companyId` that contradicts the host's scope is rejected as spoofing, exactly as in the other
 two plugins.
@@ -544,16 +618,19 @@ hint for the ⌘K label and the layout flag) and makes no network requests. The 
 draws Home, the sidebar's Build group and Team roster, the agent profiles and the Workspace page. It
 also holds the profile's two permission controls, described below.
 
-**What it reads.** Through the host-scoped `getData` bridge only: the company's agents (name, title,
-icon, status, last run, error reason), its tasks (identifier, title, status, assignee, timestamps),
-its pending approvals (type and the title or name in the payload), its projects (a count), its
-members' roles, an agent's harness and skill names (from its adapter configuration; no other
-configuration value leaves the worker), and the agent's own comments on the task it is working on. That is the same company-wide information the core's own dashboard, inbox and task
-list show every member; hidden tasks are skipped. It has no agent tools, no jobs, no outbound network
-and no database credential. Its capabilities are `agents.read`, `issues.read`, `issue.comments.read`,
-`approvals.read`, `projects.read`, `access.members.read` and the UI slot registrations, plus five for
-the permission controls below: `authorization.grants.read` and `authorization.grants.write`,
-`plugin.state.read` and `plugin.state.write`, and `api.routes.register`. The one thing it writes
+**What it reads.** Tasks, pending approvals and a task's comments are read in the browser through the
+core's board API with the signed-in person's session, the same calls the core's own pages make. The
+core answers only what that person may see, so its visibility rules apply (see Groups,
+"Visibility"): in a need-to-know company a restricted person sees their share of the roster and Home,
+and no approvals. The worker serves the rest through the host-scoped `getData` bridge only: the
+company's agents (name, title, icon, status, last run, error reason), its projects (a count), its
+members' roles, and an agent's harness and skill names (the skill keys from its adapter configuration;
+no other configuration value leaves the worker). Agents are visible to every member, as in the core's
+own team list. Studio has no agent tools, no jobs, no outbound network and no database credential. Its
+capabilities are `agents.read`, `projects.read`, `access.members.read` and the UI slot registrations,
+plus five for the permission controls below: `authorization.grants.read` and
+`authorization.grants.write`, `plugin.state.read` and `plugin.state.write`, and `api.routes.register`.
+It no longer holds `issues.read`, `issue.comments.read` or `approvals.read`. The one thing it writes
 besides grants is its own plugin state, and the only secret it touches is the rules token (below),
 which it reads to compare.
 

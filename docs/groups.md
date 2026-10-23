@@ -89,7 +89,7 @@ projects and workspaces, so there is no tab on the agent page.)
 - **Takes effect within about a minute.** The agent rules loop (`kyoube agent-rules --watch`) applies
   group changes once a minute. Apps and data levels change at once.
 - **Seeing is not restricted.** The core has no per-agent visibility, so people outside a group can
-  still see its agents, their tasks and their runs.
+  still see its agents. Their tasks and runs follow the company's [visibility](#visibility).
 - **Chat follows assignment.** Opening a chat with a protected agent, and sending a message in one,
   needs the right to assign that agent. Someone who loses the right can no longer reopen their old
   chat panel. The conversation stays readable as an issue.
@@ -98,6 +98,95 @@ projects and workspaces, so there is no tab on the agent page.)
   Owners, admins and operators keep chat with managers.
 - Other actions in an already-open chat, such as answering an interaction card or uploading an
   attachment, are only checked against the chat's owner by the core.
+
+## Visibility
+
+Groups can also decide which projects and tasks people see. A company has one of two modes, set on
+the Groups page:
+
+- **Open** (the default): everyone in the company sees every project and task, as the core always
+  did. Upgrading changes nothing until an admin switches a company.
+- **Need-to-know:** operators and viewers see the projects of their groups and the tasks they are
+  involved in, unless their group sees everything.
+
+The page shows which mode the company is in: "Visibility: open — everyone in the company sees every
+project and task." or "Visibility: need-to-know — operators and viewers see the projects of their
+groups and the tasks they are involved in, unless their group sees everything."
+
+**Who is restricted.** In a need-to-know company, an operator or a viewer is restricted unless they are
+in a group that has **Sees everything in the company** ticked. Owners, admins and instance admins are
+never restricted, and a broken policy never locks them out.
+
+**What a restricted person sees.**
+
+- The projects of their groups. A group lists its projects with the **Projects** picker on the group's
+  form. A person in several groups sees the projects of all of them.
+- The tasks they created, are assigned to, are responsible for, or chat in, and every subtask beneath
+  those tasks, whichever project it is in. Every task in a project they can see is theirs to see too.
+- Task creation inside that: a new task or subtask, or a plan's subtasks, may go into a project they
+  see or under a task they see. Creating one anywhere else is refused.
+- Agents, by name, role and status.
+
+Search and the live updates the screen subscribes to follow the same rule. Search finds only what the
+person may see. A live update about something they may not see carries no title or details, only
+enough for the screen to know what to refresh.
+
+**What refuses.** Some pages and answers are company-wide and cannot be cut down per person, so a
+restricted person gets the core's error state instead: Activity, Approvals, Costs, Execution
+workspaces, Timeline, status cards, decision queues and run telemetry. Approvals are the same: a
+restricted person sees none and cannot decide one, including one on their own task. Anyone who needs
+these should be in a group that sees everything.
+
+**Agents.** An agent that works for a restricted person sees what that person sees during that run. A
+task it creates is visible to the person. An agent whose instructions assume company-wide context has
+less to go on during that run. Agents themselves are not restricted: a restricted person still sees
+them by name, role and status.
+
+**Switching.** An owner or admin switches a company with **Switch to need-to-know** or **Switch to
+open** on the Groups page. Switching to need-to-know first lists who becomes restricted, by id and
+role, and asks you to confirm. If nobody is restricted yet (every operator and viewer is in a group
+that sees everything), it says so.
+
+**Licence.** Switching to need-to-know needs a valid licence. Switching back to open never does, and
+neither does deleting a group. Without a licence, a company that is already need-to-know
+stays need-to-know. Enforcement never depends on the licence, for the reason given under
+[Licence](#licence).
+
+**The policy files.** The groups plugin writes what the core needs to know to two kinds of file on
+the home volume, in `/kyoubeai/kyoube/visibility/`: `index.json` (each company's mode) and
+`<companyId>.json` (one per need-to-know company: who sees everything, and who sees each project). It
+rewrites them on every group or mode change, when the plugin worker starts, and every five minutes
+(the `write-visibility` job). The core reads them, re-checking every two seconds. The Files and notify
+plugins read the same files.
+
+**Fails closed.** If the policy of a need-to-know company, or the index, cannot be read, or the
+decision module in the image does not load, operators and viewers are refused the covered reads and
+writes: projects, tasks and comments. Owners, admins and instance admins are never affected. A refused
+state is read again at the next two-second check, so it heals as soon as the file is back.
+
+**Never set the shadow variables.** `PAPERCLIP_RESPONSIBLE_USER_AUTHZ_MODE=shadow` and
+`PAPERCLIP_RESPONSIBLE_USER_AUTHZ_SHADOW` make the core only log an agent run that reaches past what
+the person it works for may see, instead of refusing it. Do not set either on an instance that has a
+need-to-know company. `kyoube doctor` fails if they are set. Need-to-know also needs the core to run
+with sign-in (`PAPERCLIP_DEPLOYMENT_MODE=authenticated`, which `docker-compose.yml` sets); doctor
+fails if it does not.
+
+**Checking it.** `docker compose exec app kyoube doctor` prints a `visibility` line for the instance:
+the decision module loads, the core patches are all in place, the shadow variables are unset, sign-in
+is on, and the home directory matches where the core reads. Then it prints one `visibility <companyId>`
+line for each need-to-know company: the database and the index agree, the file is present and valid,
+and a count such as `2 sees all, 5 projects, 3 restricted`. A file whose `writtenAt` is more than 15
+minutes old warns: the plugin worker writes it every five minutes, so check the `plugins` line and the
+app log. A company that is need-to-know in only one of the database and the index fails, with the fix
+(any group change rewrites the files).
+
+**What it does not cover.** See `SECURITY.md`, Groups, "Visibility". The ones to know about:
+
+- Attachments and task documents are company-scoped. A restricted person who knows an id can fetch
+  one.
+- An agent's shell reaches every project folder and the database. Need-to-know covers people through
+  the UI and API, and agents through the API.
+- Approvals, and the pages listed under "What refuses", are not cut down; they refuse.
 
 ## Licence
 
@@ -139,6 +228,17 @@ Agent restrictions use the core's own mechanism, written by the agent rules loop
   assigned to that agent, and the core runs no assignment check for it, so a restricted agent with an
   inbox takes work from anyone who emails it. Setting up an inbox needs `tools:manage_connections`,
   which only owners and admins hold unless someone grants it.
+
+Work-object visibility needs seven standing core patches, the `visibility-*` entries in
+`docker/core-patches/patches.mjs`. Four, `visibility-board-decide`, `visibility-live-events`,
+`visibility-search-scope` and `visibility-search-filter`, call KyoubeAI's decision module
+(`/opt/kyoube/visibility/decide.mjs`) in the board branch of the core's authorization decision, in its
+live-events socket and in its company search. Three, `visibility-create-check`,
+`visibility-create-child-check` and `visibility-create-plan-check`, make the core's task, subtask and
+plan routes ask the same decision when a person creates a task without naming an assignee, which the
+core otherwise does not check. The core has no visibility setting of its own, so without them everyone
+in a company sees all of its tasks and projects. The build fails if a core release moves the code one
+of them anchors on.
 
 Chat needs one standing core patch, `groups-chat-open-assign-check` and
 `groups-chat-message-assign-check` in `docker/core-patches/patches.mjs`. It adds the core's own

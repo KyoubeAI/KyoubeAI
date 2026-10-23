@@ -77,6 +77,20 @@ A plugin stuck in another status has its own log under **Settings → Plugins �
 If a plugin is deliberately disabled by an operator, `ensure-plugins` leaves it alone and says so —
 that is not a failure, but `doctor` will not call it `ready` either.
 
+## Moving to need-to-know visibility
+
+This release adds need-to-know visibility ([`groups.md`](groups.md#visibility)): migration
+`0009_visibility.sql` (a mode per company, a sees-everything flag on groups and the projects of each
+group), seven standing core patches, and new plugin versions: `kyoube.apps` 0.14.0, `kyoube.files`
+0.4.0, `kyoube.notify` 0.2.0 and `kyoube.studio` 0.6.0.
+Every company starts **open**, so nothing changes until an owner or admin switches a company on the
+Groups page, and switching needs a licence. Studio now reads tasks and approvals through the core, so
+it holds three capabilities fewer (`issues.read`, `issue.comments.read` and `approvals.read`).
+After the update, `kyoube doctor` should print a `visibility` line reading `open everywhere`. If a
+core patch stops matching, the build stops naming the `visibility-*` entry, as described under
+[What can break](#what-can-break). Do not set `PAPERCLIP_RESPONSIBLE_USER_AUTHZ_MODE=shadow` or
+`PAPERCLIP_RESPONSIBLE_USER_AUTHZ_SHADOW` on an instance with a need-to-know company.
+
 ## The move to the KyoubeAI organization
 
 After 1.11.0 the repository moved to the KyoubeAI organization, <https://github.com/KyoubeAI/KyoubeAI>,
