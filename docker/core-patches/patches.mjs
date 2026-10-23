@@ -425,7 +425,9 @@ export const PATCHES = [
       'db.select({ role: companyMemberships.membershipRole }).from(companyMemberships).where(and(eq(companyMemberships.companyId, context.companyId), eq(companyMemberships.principalType, "user"), eq(companyMemberships.principalId, context.actorId), eq(companyMemberships.status, "active"))).then((rows) => rows[0] ?? null)]); ' +
       "return { instanceAdmin: Boolean(kyoubeRoleRow), role: kyoubeMembership?.role ?? null }; } }), " +
       '(error) => { console.error("[kyoube] visibility module unavailable", error); return async (event) => ({ type: event.type, companyId: event.companyId, createdAt: event.createdAt, payload: {} }); }) : null; ' +
-      "return async (event) => {\n$3if (socket.readyState !== WebSocket.OPEN)\n$3    return;\n$3const kyoubeEvent = kyoubeFilter ? await (await kyoubeFilter)(event) : event;\n$3if (kyoubeEvent && socket.readyState === WebSocket.OPEN)\n$3    socket.send(JSON.stringify(kyoubeEvent));\n$4}; })());",
+      // The listener is async now, and the core exits on an unhandled rejection, so a failed send
+      // (or filter) is logged the way the core logs a socket error and never escapes.
+      "return async (event) => {\n$3try {\n$3    if (socket.readyState !== WebSocket.OPEN)\n$3        return;\n$3    const kyoubeEvent = kyoubeFilter ? await (await kyoubeFilter)(event) : event;\n$3    if (kyoubeEvent && socket.readyState === WebSocket.OPEN)\n$3        socket.send(JSON.stringify(kyoubeEvent));\n$3}\n$3catch (error) {\n$3    logger.warn({ err: error, companyId: context.companyId }, \"live websocket send failed\");\n$3}\n$4}; })());",
     expect: 1,
   },
   {

@@ -1426,6 +1426,77 @@ describe("visibility patches", () => {
     expect(text).toContain("socket.send(JSON.stringify(kyoubeEvent))");
     expect(text).not.toContain("socket.send(JSON.stringify(event))");
     expect(text).toContain('context.actorType === "board"');
+    expect(text).toContain('logger.warn({ err: error, companyId: context.companyId }, "live websocket send failed");');
+  });
+  /**
+   * Opens one socket on the patched connection handler, as the core would, with the module path
+   * pointed at a stand-in liveEventFilter (marks what it filtered, or rejects with `filterRejects`)
+   * or at no file (`moduleMissing`). Resolves to the subscribed listener, what the socket sent and
+   * what the core's logger was told.
+   */
+  async function runPatchedLive({ actorType = "board", moduleMissing = false, filterRejects = false, send } = {}) {
+    const stamp = `${process.pid}-${Math.random().toString(36).slice(2)}`;
+    const moduleFile = path.join(HERE, `.live-visibility-under-test-${stamp}.mjs`);
+    const handlerFile = path.join(HERE, `.live-under-test-${stamp}.mjs`);
+    const excerpt = LIVE_WS_SEND_2026_1012_0.slice(LIVE_WS_SEND_2026_1012_0.indexOf('    wss.on("connection"'));
+    const patched = applyToText(excerpt, byId("visibility-live-events")).text.replace(VISIBILITY_MODULE, pathToFileURL(moduleFile).href);
+    if (!moduleMissing) {
+      await writeFile(moduleFile, filterRejects
+        ? "export function liveEventFilter() { return async () => { throw new Error(\"filter broke\"); }; }\n"
+        : "export function liveEventFilter({ userId }) { return async (event) => ({ ...event, payload: {}, filteredFor: userId }); }\n");
+    }
+    await writeFile(handlerFile, "export default ({ wss, subscribeCompanyLiveEvents, WebSocket, cleanupByClient, aliveByClient, logger, db, instanceUserRoles, companyMemberships, and, eq }) => {\n" + patched + "};\n");
+    try {
+      const { default: register } = await import(pathToFileURL(handlerFile).href);
+      let onConnection;
+      let listener;
+      const sent = [];
+      const warnings = [];
+      register({
+        wss: { on: (_name, handler) => { onConnection = handler; } },
+        subscribeCompanyLiveEvents: (_companyId, subscribed) => { listener = subscribed; return () => {}; },
+        WebSocket: { OPEN: 1 },
+        cleanupByClient: new Map(),
+        aliveByClient: new Map(),
+        logger: { warn: (...args) => warnings.push(args) },
+        db: {}, instanceUserRoles: {}, companyMemberships: {}, and: () => ({}), eq: () => ({}),
+      });
+      const socket = { readyState: 1, send: send ?? ((frame) => sent.push(JSON.parse(frame))), on: () => {}, close: () => {} };
+      onConnection(socket, { paperclipUpgradeContext: { companyId: "c1", actorType, actorId: actorType === "board" ? "u1" : "a1" } });
+      return { listener, sent, warnings, cleanup: () => rm(moduleFile, { force: true }) };
+    } finally {
+      await rm(handlerFile, { force: true });
+    }
+  }
+  it("the patched live-events listener sends the filtered event to a person and the event itself to an agent", async () => {
+    const event = { type: "activity.logged", companyId: "c1", createdAt: "t", payload: { details: { title: "secret" } } };
+    for (const [actorType, expected] of [["board", { ...event, payload: {}, filteredFor: "u1" }], ["agent", event]]) {
+      const live = await runPatchedLive({ actorType });
+      try {
+        await expect(live.listener(event)).resolves.toBeUndefined();
+        expect(live.sent).toEqual([expected]);
+        expect(live.warnings).toEqual([]);
+      } finally {
+        await live.cleanup();
+      }
+    }
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const missing = await runPatchedLive({ moduleMissing: true });
+    await missing.listener(event);
+    expect(missing.sent).toEqual([{ type: "activity.logged", companyId: "c1", createdAt: "t", payload: {} }]);
+    error.mockRestore();
+  });
+  it("the patched live-events listener logs a failed send or filter and never rejects", async () => {
+    const event = { type: "activity.logged", companyId: "c1", payload: {} };
+    for (const options of [{ send: () => { throw new Error("socket gone"); } }, { filterRejects: true }, { actorType: "agent", send: () => { throw new Error("socket gone"); } }]) {
+      const live = await runPatchedLive(options);
+      try {
+        await expect(live.listener(event)).resolves.toBeUndefined();
+        expect(live.warnings).toEqual([[{ err: expect.any(Error), companyId: "c1" }, "live websocket send failed"]]);
+      } finally {
+        await live.cleanup();
+      }
+    }
   });
   it("the search patches keep the 403 for everyone but a visibility denial, and filter that case", () => {
     const scoped = applyToText(SEARCH_SCOPE_2026_1012_0, byId("visibility-search-scope")).text;
