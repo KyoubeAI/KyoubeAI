@@ -1,0 +1,39 @@
+{
+  "name": "@kyoube/adapter-antigravity",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "External KyoubeAI adapter for Google Antigravity CLI (agy)",
+  "license": "BUSL-1.1",
+  "paperclip": {
+    "adapterType": "antigravity_local",
+    "adapterUiParser": "1.0.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./ui-parser": "./dist/ui-parser.js"
+  },
+  "files": ["dist", "package.json"],
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  }
+}
