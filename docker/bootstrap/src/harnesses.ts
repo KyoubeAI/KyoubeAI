@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 
-/** One agent harness CLI a built-in local adapter runs. */
+/** One agent harness CLI a built-in or bundled local adapter runs. */
 export interface HarnessSpec {
   /** The command the adapter runs by default, looked up on PATH. */
   name: string;
@@ -13,7 +13,7 @@ export interface HarnessSpec {
 }
 
 /**
- * Every harness CLI a built-in local adapter runs, in the order `kyoube harness list` prints them.
+ * Every harness CLI a built-in or bundled (antigravity_local) local adapter runs, in the order `kyoube harness list` prints them.
  * KyoubeAI's image ships none of its own. The core image carries claude, codex, gemini, kimi and
  * opencode in /usr/local/bin; whatever a person installs lands in ~/.local/bin, which is first on PATH.
  */
@@ -31,6 +31,7 @@ export const HARNESSES: readonly HarnessSpec[] = [
     install: "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --non-interactive",
   },
   { name: "grok", label: "Grok CLI", adapterTypes: ["grok_local"], install: null },
+  { name: "agy", label: "Antigravity CLI", adapterTypes: ["antigravity_local"], install: "curl -fsSL https://antigravity.google/cli/install.sh | bash" },
 ];
 
 export type HarnessOrigin = "yours" | "core image" | "other";

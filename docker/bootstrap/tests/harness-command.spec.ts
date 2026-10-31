@@ -25,7 +25,7 @@ describe("kyoube harness", () => {
   it("list prints one line per harness with its origin", async () => {
     const { deps, lines } = setup({ claude: "/usr/local/bin/claude", pi: "/kyoubeai/.local/bin/pi" });
     expect(await runHarness(["list"], env, deps)).toBe(0);
-    expect(lines).toHaveLength(8);
+    expect(lines).toHaveLength(9);
     expect(lines[0]).toBe("claude    claude 1.0 — core image (/usr/local/bin/claude)");
     expect(lines.find((line) => line.startsWith("pi "))).toBe("pi        pi 1.0 — yours (/kyoubeai/.local/bin/pi)");
     expect(lines.find((line) => line.startsWith("hermes "))).toBe("hermes    not installed");

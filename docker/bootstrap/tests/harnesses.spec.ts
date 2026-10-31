@@ -19,11 +19,12 @@ describe("the harness catalogue", () => {
     expect(findHarness("opencode")?.install).toBe("npm install -g opencode-ai");
     expect(findHarness("kimi")?.install).toBe("npm install -g @moonshot-ai/kimi-code");
     expect(findHarness("grok")?.install).toBeNull();
+    expect(findHarness("agy")?.install).toBe("curl -fsSL https://antigravity.google/cli/install.sh | bash");
   });
 
-  it("covers every built-in adapter type that runs a local CLI, once", () => {
+  it("covers every local CLI adapter type, once", () => {
     expect(HARNESSES.flatMap((spec) => spec.adapterTypes).sort()).toEqual([
-      "claude_local", "codex_local", "gemini_local", "grok_local", "hermes_local", "kimi_local", "opencode_local", "pi_local",
+      "antigravity_local", "claude_local", "codex_local", "gemini_local", "grok_local", "hermes_local", "kimi_local", "opencode_local", "pi_local",
     ]);
     expect(new Set(HARNESSES.map((spec) => spec.name)).size).toBe(HARNESSES.length);
   });
