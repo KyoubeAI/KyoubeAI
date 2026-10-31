@@ -4,6 +4,30 @@ All notable changes to KyoubeAI are recorded here, in terms of what changed for 
 building on it. The format is loosely [Keep a Changelog](https://keepachangelog.com/); versioning is
 [SemVer](https://semver.org/).
 
+## 1.14.0 - 2026-10-31
+
+### Added
+
+- **Antigravity CLI as an agent harness.** Agents can run on Google's Antigravity CLI (`agy`): choose
+  **Antigravity** on an agent's **Runtime** tab. `kyoube harness install agy` runs Google's official
+  installer into `/kyoubeai/.local/bin`; sign in by running `agy` in the Terminal (Google OAuth, with a
+  link and a code to paste back) or with a Gemini API key. The model list comes from `agy models`.
+  Conversations carry over between runs and start fresh when the agent's workspace moves. The prompt goes
+  to `agy` on stdin, so large agent instructions are no problem. **Test** checks that `agy` runs and is
+  signed in ([README](README.md#antigravity-cli)).
+- The image ships the adapter in `/opt/kyoube/adapters/antigravity` (`packages/adapter-antigravity`) and
+  registers it with the core at every start, by writing its record to `/kyoubeai/adapter-plugins.json`
+  before the core starts and checking it through the adapters API afterwards. Other external adapters in
+  that file are kept. If the file cannot be read it is left alone and the start goes on without the
+  Antigravity record. A refused registration (adapter management hidden or cloud-managed) is logged and
+  never holds up plugin updates or the Kyoube skills ([docs/architecture.md](docs/architecture.md#bundled-adapters)).
+
+### Changed
+
+- Kyoube Studio is 0.6.1: agent profiles name the Antigravity harness. The bootstrap reinstalls it on
+  update.
+- `kyoube harness list` and `kyoube doctor` include `agy`.
+
 ## 1.13.0 - 2026-10-23
 
 ### Added
