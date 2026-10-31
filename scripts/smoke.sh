@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end smoke test: builds the image, starts the stack on port 3199,
 # creates the first admin, installs the Kyoube plugins through `kyoube`, and
-# creates one agent per harness (stand-in pi and Hermes CLIs in ~/.local/bin), and proves installs survive a restore. Requires docker compose v2, curl, jq.
+# creates one agent per harness (stand-in pi, Hermes and agy CLIs in ~/.local/bin), and proves installs survive a restore. Requires docker compose v2, curl, jq.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -451,11 +451,22 @@ compose exec -T app kyoube ensure-plugins --api-key "$TOKEN"
 assert_plugin "$BUMP2" plugin.state.read
 echo "    kyoube.terminal reinstalled at $BUMP2 with the new capability"
 
+echo "==> the bundled Antigravity adapter is loaded by the core at startup"
+# kyoube write-config seeds /kyoubeai/adapter-plugins.json before the core
+# starts, so the core's own startup load picks it up (not only the API install
+# the ensure-plugins pass makes later).
+compose logs app | grep 'Loaded external adapters from plugin store' | grep antigravity_local >/dev/null \
+  || { echo "the core did not load antigravity_local from adapter-plugins.json at startup" >&2; exit 1; }
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/adapters" \
+  | jq -e '.[] | select(.type == "antigravity_local" and .source == "external" and .isLocalPath == true)' >/dev/null \
+  || { echo "GET /api/adapters does not list antigravity_local from the bundle" >&2; exit 1; }
+echo "    antigravity_local registered from /opt/kyoube/adapters/antigravity"
+
 echo "==> create a company and one agent per harness"
 COMPANY_ID="$(curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -X POST "$BASE_URL/api/companies" --data '{"name":"Smoke Co"}' | jq -r '.id')"
 [[ -n "$COMPANY_ID" && "$COMPANY_ID" != "null" ]] || { echo "company create failed" >&2; exit 1; }
-for ADAPTER in claude_local pi_local hermes_local; do
+for ADAPTER in claude_local pi_local hermes_local antigravity_local; do
   STATUS="$(curl -sS -o "$TMP/agent.json" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
     -X POST "$BASE_URL/api/companies/$COMPANY_ID/agents" \
     --data "{\"name\":\"smoke-$ADAPTER\",\"adapterType\":\"$ADAPTER\",\"adapterConfig\":{\"cwd\":\"/kyoubeai/workspaces/smoke\"}}")"
@@ -1605,14 +1616,14 @@ apps_bridge data.set_agent_grant "{\"companyId\":\"$COMPANY_ID\",\"params\":{\"a
 echo "    held without a person, the agent cannot answer the card, a person allows it once"
 
 echo "==> installs land on the home volume: stand-in harnesses, npm -g, sudo apt"
-# The image ships no pi or Hermes. Stand-ins in ~/.local/bin let the agents
+# The image ships no pi, Hermes or agy. Stand-ins in ~/.local/bin let the agents
 # created above resolve their harness (doctor checks that below), and the
 # restore further down proves they, npm globals and kept apt packages come back.
 # shellcheck disable=SC2016  # expanded by the shell inside the container
 compose exec -T -u node app sh -c '
   set -e
   mkdir -p "$HOME/.local/bin"
-  for name in pi hermes; do
+  for name in pi hermes agy; do
     printf "#!/bin/sh\necho \"%s 0.0.0-smoke\"\n" "$name" > "$HOME/.local/bin/$name"
     chmod +x "$HOME/.local/bin/$name"
   done
