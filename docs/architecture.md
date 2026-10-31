@@ -30,7 +30,7 @@ docker compose
 ├── app   (this repo's image; FROM ghcr.io/paperclipai/paperclip:<KYOUBE_CORE_VERSION>)
 │   │
 │   ├─ core server + UI  (upstream; rebranded, themed and patched at build time, see "Core patches")
-│   │    ├─ adapters: claude_local · pi_local · hermes_local
+│   │    ├─ adapters: claude_local · pi_local · hermes_local (core) · antigravity_local (bundled, /opt/kyoube/adapters)
 │   │    ├─ plugin runtime
 │   │    │     ├─ worker  kyoube.terminal   — node-pty PTY sessions
 │   │    │     ├─ worker  kyoube.apps       — DataService + AppService + user groups (docs/groups.md)
@@ -70,7 +70,8 @@ out of the server through `ctx.http.fetch`, to the company's chosen `/v1/systemo
 read through `ctx.secrets`; the notify plugin calls out only to browsers' push services, through Node's
 own `fetch` (see "Core event → push"). Everything Kyoube adds
 is one of these plugins, the `@kyoube/app-sdk` package the apps plugin injects into apps
-(`packages/kyoube-app-sdk`), and the `kyoube` bootstrap CLI (`docker/bootstrap`) that installs them.
+(`packages/kyoube-app-sdk`), the Antigravity CLI adapter (`packages/adapter-antigravity`, see "Bundled
+adapters"), and the `kyoube` bootstrap CLI (`docker/bootstrap`) that installs them.
 
 `@kyoube/plugin-agent-rules` (`plugins/kyoube-agent-rules`) has no UI and no tools. It holds the one
 part of the agent working rules the core lets only a plugin do: setting a manager agent's assignment
@@ -393,6 +394,18 @@ The entrypoint also starts `kyoube agent-rules --watch` in the background
 `docker/bootstrap/src/agent-rules/pass.ts`): per company it reads `POST /groups/agent-access` from `kyoube.apps`, posts the result to
 `POST /groups/apply` on `kyoube.agent-rules`, and reports the outcome to `POST /groups/sync-report`. A
 failed read skips the step for that company and is never applied as "no groups".
+
+### Bundled adapters
+
+The core loads external agent adapters from the records in `adapter-plugins.json` in its home
+(`/kyoubeai/adapter-plugins.json`, not per instance). The image carries one, `antigravity_local`
+(`packages/adapter-antigravity`, deployed to `/opt/kyoube/adapters/antigravity`), which runs the Antigravity
+CLI (`agy`). `kyoube write-config` writes its record before the core starts, replacing any record of the
+same type and keeping every other one; a store it cannot read is left alone. Each `ensure-plugins` pass then
+checks `GET /api/adapters` and re-registers the bundle through `POST /api/adapters/install` (local path)
+when it is missing, registered from npm, or at another version. That pass is best effort: a refused install
+(adapter management hidden by `PAPERCLIP_HIDDEN_SETTINGS`, or a cloud-managed instance) is logged and the
+rest of the pass goes on.
 
 ### SDK `apiVersion` and the stable-contract rule
 

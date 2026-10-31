@@ -110,15 +110,16 @@ fast-forwards the current branch and rebuilds. [docs/upgrading.md](docs/upgradin
 
 ## Harnesses
 
-Agents work through an agent harness: Claude Code, Codex, Hermes Agent, pi, Gemini CLI, OpenCode or Kimi
-Code. You install the ones you want from the **Terminal** (the **Workspace** page, then **Terminal**, for
+Agents work through an agent harness: Claude Code, Codex, Hermes Agent, pi, Antigravity CLI, Gemini CLI,
+OpenCode or Kimi Code. You install the ones you want from the **Terminal** (the **Workspace** page, then **Terminal**, for
 company owners and admins), the same way you would on your own machine.
 
 What you install stays:
 
 - Harnesses land in `/kyoubeai/.local`, on the `kyoubeai-home` volume, which comes first on the `PATH` of
   every agent and every Terminal shell.
-- Their logins (`~/.claude`, `~/.codex`, `~/.hermes`, `~/.pi`, and so on) live on the same volume.
+- Their logins (`~/.claude`, `~/.codex`, `~/.hermes`, `~/.pi`, `~/.gemini`, and so on) live on the same
+  volume.
 - System packages you add with `sudo apt install` are put back automatically after a restart, an update or
   a core upgrade.
 
@@ -127,7 +128,7 @@ carries it to a new machine. The Terminal runs as the same user as your agents a
 Terminal access as root on the container ([SECURITY.md](SECURITY.md#terminal)).
 
 ```bash
-kyoube harness install claude   # also: codex, hermes, pi, gemini, opencode, kimi
+kyoube harness install claude   # also: codex, hermes, pi, agy, gemini, opencode, kimi
 kyoube harness list             # what is installed, which version, and whether it is yours
 ```
 
@@ -184,6 +185,23 @@ once, as above.
 1. `kyoube harness install pi`.
 2. Run `pi` in the Terminal and use `/login`, or put provider keys in `~/.pi`.
 3. Choose pi on the agent's **Runtime** tab. pi does not use AI connections.
+
+### Antigravity CLI
+
+1. `kyoube harness install agy`. This is Google's official installer; it puts `agy` in
+   `/kyoubeai/.local/bin`.
+2. Sign in, one of these ways:
+   - **Google account:** run `agy` in the Terminal and choose **Google OAuth**. It prints a sign-in link;
+     open it, sign in, and paste the code the page shows back into the Terminal. Then leave `agy` with
+     Ctrl+D. The sign-in is kept in `~/.gemini/antigravity-cli`.
+   - **Gemini API key:** add `"modelProvider": "gemini"` to `~/.gemini/antigravity-cli/settings.json` and
+     set `GEMINI_API_KEY` in the agent's environment. The key alone does nothing.
+3. Choose Antigravity on the agent's **Runtime** tab and pick a model (the list comes from `agy models`).
+   **Test** checks that `agy` runs and is signed in. Antigravity does not use AI connections.
+
+Antigravity is not one of the core's own adapters: KyoubeAI ships it in the image
+(`packages/adapter-antigravity`) and registers it with the core at every start. Agents keep their
+conversation across runs, and start a new one when their workspace moves.
 
 ### Gemini CLI, OpenCode, Kimi Code
 
