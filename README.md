@@ -133,7 +133,9 @@ kyoube harness list             # what is installed, which version, and whether 
 ```
 
 `kyoube harness install` runs the harness's official installer. The core image carries its own copies of
-Claude Code, Codex, Gemini CLI, Kimi Code and OpenCode as fallbacks; yours take precedence.
+Claude Code, Codex, Gemini CLI, Kimi Code and OpenCode as fallbacks; yours take precedence. **Hermes, pi
+and the Antigravity CLI are not in the image:** they can be chosen on an agent's **Runtime** tab straight
+away, but the agent's runs fail until you install them.
 `kyoube doctor` flags any harness your agents use that is not installed or no longer runs. KyoubeAI has
 no installer for Grok: install it from its own instructions so that `grok` lands in
 `/kyoubeai/.local/bin`.
@@ -188,16 +190,19 @@ once, as above.
 
 ### Antigravity CLI
 
-1. `kyoube harness install agy`. This is Google's official installer; it puts `agy` in
-   `/kyoubeai/.local/bin`.
+1. `kyoube harness install agy` in the Terminal. Do this first: Antigravity shows on the **Runtime** tab
+   with its models even before `agy` is installed, and its runs fail until it is. This is Google's official
+   installer; it puts `agy` in `/kyoubeai/.local/bin`.
 2. Sign in, one of these ways:
    - **Google account:** run `agy` in the Terminal and choose **Google OAuth**. It prints a sign-in link;
      open it, sign in, and paste the code the page shows back into the Terminal. Then leave `agy` with
      Ctrl+D. The sign-in is kept in `~/.gemini/antigravity-cli`.
    - **Gemini API key:** add `"modelProvider": "gemini"` to `~/.gemini/antigravity-cli/settings.json` and
      set `GEMINI_API_KEY` in the agent's environment. The key alone does nothing.
-3. Choose Antigravity on the agent's **Runtime** tab and pick a model (the list comes from `agy models`).
-   **Test** checks that `agy` runs and is signed in. Antigravity does not use AI connections.
+3. Choose Antigravity on the agent's **Runtime** tab and pick a model (the list comes from `agy models` once
+   `agy` is installed). **Test** checks that `agy` is installed and signed in, and says what to do if not.
+   Antigravity does not use AI connections, and there is no sign-in on the agent page: the core's sign-in
+   panel is only for agents in a managed sandbox.
 
 Antigravity is not one of the core's own adapters: KyoubeAI ships it in the image
 (`packages/adapter-antigravity`) and registers it with the core at every start. Agents keep their
