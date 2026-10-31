@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1, PluginApiRouteDeclaration } from "@paperclipai/plugin-sdk";
 
 export const PLUGIN_ID = "kyoube.studio";
-export const PLUGIN_VERSION = "0.6.0";
+export const PLUGIN_VERSION = "0.6.1";
 /** The Workspace page's route under a company: `/<prefix>/workspace`. */
 export const WORKSPACE_ROUTE = "workspace";
 /** The team and agent profiles: `/<prefix>/team` and `/<prefix>/team/<agent>[/tasks]`. */

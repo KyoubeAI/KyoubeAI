@@ -55,6 +55,8 @@ describe("buildProfile", () => {
     expect(state).toBe("working");
     expect(profileOf("mkt").agent.harness).toBe("Claude Code");
     expect(profileOf("mkt").agent.roleLabel).toBe("CMO");
+    const agyProfile = buildProfile("mkt", [{ ...agents[2]!, adapterType: "antigravity_local" }], [], [], NOW);
+    expect(agyProfile.found && agyProfile.agent.harness).toBe("Antigravity");
   });
 
   it("shows what it is working on with its own latest notes, oldest first, as plain text", () => {

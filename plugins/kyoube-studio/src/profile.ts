@@ -92,7 +92,7 @@ const ROLE_LABELS: Record<string, string> = {
 
 /** The harness an agent runs on, as people call it. */
 const HARNESS_LABELS: Record<string, string> = {
-  claude_local: "Claude Code", pi_local: "pi", hermes_local: "Hermes", codex_local: "Codex", gemini_local: "Gemini CLI",
+  antigravity_local: "Antigravity", claude_local: "Claude Code", pi_local: "pi", hermes_local: "Hermes", codex_local: "Codex", gemini_local: "Gemini CLI",
   cursor_local: "Cursor", cursor: "Cursor", cursor_cloud: "Cursor Cloud", opencode_local: "OpenCode", grok_local: "Grok",
   kimi_local: "Kimi", openclaw_gateway: "OpenClaw",
 };
