@@ -459,6 +459,56 @@ describe("execute & testEnvironment", () => {
     expect(logs.join("")).toContain("timeout=0s");
   });
 
+  it("tells people to install agy when it is missing, on Test and on a run", async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), "agy-missing-"));
+    const config = { command: "agy-not-installed-here", cwd: tmp, env: { HOME: tmp } };
+    const envTest = await testEnvironment({ companyId: "c1", adapterType: "antigravity_local", config });
+    expect(envTest.status).toBe("fail");
+    const missing = envTest.checks.find((c) => c.code === "antigravity_cli_missing");
+    expect(missing?.message).toContain("not installed");
+    expect(missing?.hint).toContain("kyoube harness install agy");
+
+    await expect(
+      execute({
+        runId: "run-1",
+        agent: { id: "a1", companyId: "c1", name: "A", adapterType: "antigravity_local", adapterConfig: {} },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config,
+        context: {},
+        onLog: async () => {},
+      }),
+    ).rejects.toThrow("kyoube harness install agy");
+  });
+
+  it("says how to sign in when agy is not signed in", async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), "agy-noauth-"));
+    const fakeBin = path.join(tmp, "fake-agy.sh");
+    // What agy 1.4.12 prints in print mode with no sign-in.
+    await writeFile(
+      fakeBin,
+      [
+        "#!/usr/bin/env bash",
+        "cat > /dev/null",
+        "echo '{\"event\":\"result\",\"result\":{\"conversation_id\":\"\",\"status\":\"ERROR\",\"response\":\"\",\"error\":\"authentication failed or timed out\",\"finished_reason\":\"error\"}}'",
+        "echo \"Error: authentication required. Run 'agy' to log in, then retry.\" >&2",
+        "exit 1",
+      ].join("\n"),
+    );
+    await chmod(fakeBin, 0o755);
+    const res = await execute({
+      runId: "run-2",
+      agent: { id: "a1", companyId: "c1", name: "A", adapterType: "antigravity_local", adapterConfig: {} },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: { command: fakeBin, cwd: tmp, env: { HOME: tmp } },
+      context: {},
+      onLog: async () => {},
+    });
+    expect(res.exitCode).toBe(1);
+    expect(res.errorCode).toBe("antigravity_auth_required");
+    expect(res.errorMessage).toContain("not signed in");
+    expect(res.errorMessage).toContain("choose Google OAuth");
+  });
+
   it("builds wake prompt with issue details and runtime env notes", () => {
     const prompt = buildPrompt(
       {

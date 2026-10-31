@@ -115,7 +115,7 @@ Runs Google Antigravity CLI (\`agy\`) in headless \`stream-json\` mode as a mana
 
 ## Prerequisites
 
-- \`agy\` binary available on \`PATH\` (e.g., \`/kyoubeai/.local/bin/agy\`)
+- Installed: the Antigravity CLI is not part of the KyoubeAI image. Run \`kyoube harness install agy\` in the Terminal (Workspace, then Terminal); it lands in \`/kyoubeai/.local/bin/agy\`. The model list falls back to a built-in one until \`agy\` is installed.
 - Signed in: run \`agy\` in the Terminal, choose Google OAuth, open the printed link and paste the code back (the token is kept in \`~/.gemini/antigravity-cli/\`). Or use a Gemini API key: \`"modelProvider": "gemini"\` in \`~/.gemini/antigravity-cli/settings.json\` plus \`GEMINI_API_KEY\`
 
 ## Core Configuration

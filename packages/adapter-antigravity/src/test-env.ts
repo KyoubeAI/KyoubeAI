@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ADAPTER_TYPE, AGY_CLI, ANTIGRAVITY_MODELS, DEFAULT_MODEL } from "./constants.js";
+import { ADAPTER_TYPE, AGY_CLI, ANTIGRAVITY_MODELS, DEFAULT_MODEL, INSTALL_HINT, SIGN_IN_HINT } from "./constants.js";
 import { detectModel } from "./models.js";
 import { resolveAntigravityHome } from "./skills.js";
 import type {
@@ -122,9 +122,9 @@ export async function testEnvironment(
     checks.push({
       code: "antigravity_cli_missing",
       level: "error",
-      message: `Antigravity CLI command "${command}" was not found on PATH.`,
+      message: `Antigravity CLI is not installed ("${command}" is not on PATH).`,
       detail: `Searched PATH: ${searchPath}`,
-      hint: "Install the Antigravity CLI binary (`agy`) into /kyoubeai/.local/bin/agy (or mount it from the host) and ensure it is executable.",
+      hint: INSTALL_HINT,
     });
     return {
       adapterType: ADAPTER_TYPE,
@@ -201,8 +201,8 @@ export async function testEnvironment(
     checks.push({
       code: "antigravity_auth_missing",
       level: "warn",
-      message: "No Antigravity OAuth token or API key detected.",
-      hint: "Run `agy` in the Terminal, choose Google OAuth, open the link it prints, sign in and paste the code back. For a Gemini API key instead, set \"modelProvider\": \"gemini\" in ~/.gemini/antigravity-cli/settings.json and GEMINI_API_KEY in the agent's environment.",
+      message: "Antigravity CLI is installed but not signed in.",
+      hint: SIGN_IN_HINT,
     });
   }
 

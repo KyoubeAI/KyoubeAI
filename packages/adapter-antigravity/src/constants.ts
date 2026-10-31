@@ -4,6 +4,13 @@ export const ADAPTER_TYPE = "antigravity_local";
 export const ADAPTER_LABEL = "Antigravity";
 export const AGY_CLI = "agy";
 
+/** agy is not in the KyoubeAI image; people install it themselves, like pi and Hermes. */
+export const INSTALL_HINT =
+  "The Antigravity CLI is not part of the KyoubeAI image. In the Terminal (Workspace, then Terminal), run `kyoube harness install agy`, then sign in by running `agy`.";
+/** agy has no login subcommand: running it starts the sign-in, which prints a link when there is no browser. */
+export const SIGN_IN_HINT =
+  "In the Terminal, run `agy`, choose Google OAuth, open the link it prints, sign in and paste the code back, then leave agy with Ctrl+D. A Gemini API key works too: set \"modelProvider\": \"gemini\" in ~/.gemini/antigravity-cli/settings.json and GEMINI_API_KEY in the agent's environment.";
+
 export const DEFAULT_MODEL = "gemini-4-argon-high";
 export const DEFAULT_TIMEOUT_SEC = 900;
 export const DEFAULT_GRACE_SEC = 15;

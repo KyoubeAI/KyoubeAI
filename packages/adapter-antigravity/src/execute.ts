@@ -7,6 +7,8 @@ import {
   DEFAULT_GRACE_SEC,
   DEFAULT_MODEL,
   DEFAULT_TIMEOUT_SEC,
+  INSTALL_HINT,
+  SIGN_IN_HINT,
 } from "./constants.js";
 import { detectModel, inferProviderFromModel, resolveModelId } from "./models.js";
 import {
@@ -464,7 +466,7 @@ export async function runChildProcess(
       const errno = (err as NodeJS.ErrnoException).code;
       const msg =
         errno === "ENOENT"
-          ? `Failed to start Antigravity CLI command "${command}" in "${opts.cwd}". Verify that "agy" is installed and on PATH (${opts.env.PATH ?? ""}).`
+          ? `Antigravity CLI is not installed ("${command}" is not on PATH). ${INSTALL_HINT}`
           : `Failed to start command "${command}" in "${opts.cwd}": ${err.message}`;
       reject(new Error(msg));
     });
@@ -812,9 +814,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const failed =
     (proc.exitCode ?? 0) !== 0 ||
     Boolean(parsed.status && parsed.status !== "SUCCESS" && parsed.status !== "DONE");
-  const errorMessage = failed
-    ? parsed.errorMessage || `Antigravity CLI exited with code ${proc.exitCode ?? -1}`
-    : null;
+  const errorMessage = !failed
+    ? null
+    : authRequired
+      ? `Antigravity CLI is not signed in. ${SIGN_IN_HINT}`
+      : parsed.errorMessage || `Antigravity CLI exited with code ${proc.exitCode ?? -1}`;
 
   return {
     exitCode: proc.exitCode,
