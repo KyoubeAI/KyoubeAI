@@ -4,6 +4,23 @@ All notable changes to KyoubeAI are recorded here, in terms of what changed for 
 building on it. The format is loosely [Keep a Changelog](https://keepachangelog.com/); versioning is
 [SemVer](https://semver.org/).
 
+## 1.14.1 - 2026-10-31
+
+### Fixed
+
+- **Antigravity says what to do when it is not ready.** The Antigravity CLI (`agy`) is not part of the
+  image, yet Antigravity shows on the **Runtime** tab with a model list, so an agent could be set up
+  with no `agy` behind it. **Test** now says the CLI is not installed and to run
+  `kyoube harness install agy` in the Terminal, or, once it is installed, that it is not signed in and how
+  to sign in (run `agy`, choose Google OAuth, open the link, paste the code back). A run that fails for
+  either reason says the same instead of a PATH dump or "authentication failed or timed out". The README
+  says plainly that Hermes, pi and the Antigravity CLI must be installed before their agents run, and
+  that Antigravity's sign-in is in the Terminal, not on the agent page.
+
+### Changed
+
+- The bundled Antigravity adapter is 0.1.1; it is re-registered on the first start.
+
 ## 1.14.0 - 2026-10-31
 
 ### Added
