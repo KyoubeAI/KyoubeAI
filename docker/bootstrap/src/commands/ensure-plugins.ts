@@ -1,3 +1,4 @@
+import { ensureAdapters, resolveAdapterRoot } from "../adapters.js";
 import { readConfig, resolveConfigPath, type KyoubeConfig } from "../config.js";
 import { resolveBoardApiKey, resolveBoardKeyPath } from "../key-store.js";
 import {
@@ -171,6 +172,22 @@ export async function runEnsurePlugins(
       log(
         `kyoube: plugins ok (installed ${result.installed.length}, upgraded ${result.upgraded.length}, skipped ${result.skipped.length})`,
       );
+      // Best effort: the startup seed already registers the bundled adapters, and a refused install
+      // (adapter management hidden or cloud-managed) must not hold up the skills below.
+      if (client.listAdapters && client.installLocalAdapter) {
+        try {
+          await ensureAdapters({
+            client: {
+              listAdapters: () => client.listAdapters!(),
+              installLocalAdapter: (p) => client.installLocalAdapter!(p),
+            },
+            adapterRoot: resolveAdapterRoot(env),
+            log,
+          });
+        } catch (error) {
+          log(`kyoube: could not register the bundled adapters (${error instanceof Error ? error.message : String(error)})`);
+        }
+      }
       // Every pass, not only after an install: the worker cannot reach a
       // company's skill library from its own start-up code, so this is how a
       // company that already existed gets the Kyoube skills after an upgrade.

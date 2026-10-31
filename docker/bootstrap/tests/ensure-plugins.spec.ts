@@ -1,3 +1,4 @@
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -330,6 +331,33 @@ describe("runEnsurePlugins", () => {
     expect(installed).toEqual(["c1", "c2"]);
     expect(sleeps).toEqual([]);
     expect(lines.some((line) => line.includes("Kyoube skills ensured in 2/2 companies"))).toBe(true);
+  });
+
+  it("still installs the Kyoube skills and returns 0 when registering a bundled adapter is refused", async () => {
+    const adapterRoot = path.join(await mkdtemp(path.join(os.tmpdir(), "kyoube-ensure-adapters-")), "adapters");
+    await mkdir(path.join(adapterRoot, "antigravity"), { recursive: true });
+    await writeFile(
+      path.join(adapterRoot, "antigravity", "package.json"),
+      JSON.stringify({ name: "@kyoube/adapter-antigravity", version: "0.1.0", paperclip: { adapterType: "antigravity_local" } }),
+    );
+    const installed: string[] = [];
+    const client: CoreClient = {
+      ...fakeRunClient(async () => ({ status: "ok" }), {
+        listCompanies: async () => [{ id: "c1", name: "Acme" }],
+        installPluginSkills: async (companyId) => { installed.push(companyId); return { data: { status: "created" }, apps: { status: "created" } }; },
+      }),
+      listAdapters: async () => [],
+      installLocalAdapter: async () => { throw new CoreApiError(403, {}, "Adapter management is managed by the hosting operator on this instance", "POST /api/adapters/install"); },
+    };
+    const lines: string[] = [];
+    const code = await runEnsurePlugins(
+      { "api-key": "test-key" },
+      { KYOUBE_ADAPTER_ROOT: adapterRoot },
+      { readConfig: async () => fakeConfig(), createClient: () => client, sleep: async () => {}, log: (line) => lines.push(line) },
+    );
+    expect(code).toBe(0);
+    expect(installed).toEqual(["c1"]);
+    expect(lines.some((line) => line.startsWith("kyoube: could not register the bundled adapters"))).toBe(true);
   });
 
   it("retries a company whose worker is still activating, and only reports the ones that never took the skills", async () => {

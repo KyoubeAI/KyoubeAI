@@ -17,6 +17,7 @@ COPY plugins/kyoube-agent-rules/package.json plugins/kyoube-agent-rules/
 COPY plugins/kyoube-license/package.json plugins/kyoube-license/
 COPY plugins/kyoube-notify/package.json plugins/kyoube-notify/
 COPY packages/kyoube-app-sdk/package.json packages/kyoube-app-sdk/
+COPY packages/adapter-antigravity/package.json packages/adapter-antigravity/
 COPY packages/license/package.json packages/license/
 COPY packages/visibility/package.json packages/visibility/
 RUN pnpm install --frozen-lockfile
@@ -35,11 +36,14 @@ RUN pnpm -r build \
  && pnpm --filter @kyoube/plugin-agent-rules deploy --prod /out/plugins/agent-rules \
  && pnpm --filter @kyoube/plugin-license deploy --prod /out/plugins/license \
  && pnpm --filter @kyoube/plugin-notify deploy --prod /out/plugins/notify \
+ && pnpm --filter @kyoube/adapter-antigravity deploy --prod /out/adapters/antigravity \
  && mkdir -p /out/license && cp packages/license/dist/enforce.mjs /out/license/enforce.mjs \
  && mkdir -p /out/visibility && cp packages/visibility/dist/decide.mjs /out/visibility/decide.mjs \
  && test -f /out/visibility/decide.mjs \
  && test -f /out/license/enforce.mjs \
  && test -f /out/bootstrap/dist/kyoube.mjs \
+ && test -f /out/adapters/antigravity/dist/index.js \
+ && test -f /out/adapters/antigravity/dist/ui-parser.js \
  && test -f /out/plugins/terminal/dist/manifest.js \
  && test -f /out/plugins/apps/dist/manifest.js \
  && test -f /out/plugins/files/dist/manifest.js \
@@ -233,6 +237,7 @@ RUN gosu node node /opt/kyoube/pwa/pwa.mjs --root /app --pwa /opt/kyoube/pwa --r
 # minified.
 COPY --from=kyoube-build /out/bootstrap /opt/kyoube/bootstrap
 COPY --from=kyoube-build /out/plugins /opt/kyoube/plugins
+COPY --from=kyoube-build /out/adapters /opt/kyoube/adapters
 COPY --from=kyoube-build /out/license /opt/kyoube/license
 COPY --from=kyoube-build /out/visibility /opt/kyoube/visibility
 RUN gosu node node --input-type=module -e 'const m = await import("/opt/kyoube/visibility/decide.mjs"); for (const k of ["decideBoard", "liveEventFilter", "filterSearchResults", "routeGate", "coreLookups"]) if (typeof m[k] !== "function") process.exit(1); console.log("visibility ok")'
@@ -260,6 +265,8 @@ RUN chmod +x /usr/local/bin/kyoube /usr/local/bin/kyoube-entrypoint.sh \
  && test -f /opt/kyoube/plugins/license/dist/worker.js \
  && test -f /opt/kyoube/plugins/license/dist/ui/index.js \
  && gosu node node --input-type=module -e 'const m = await import("/opt/kyoube/license/enforce.mjs"); const r = await m.checkSeat({ countUsers: async () => 0 }); if (!r.ok || r.limit !== 5) process.exit(1); console.log("licence check ok")' \
+ && gosu node node --input-type=module -e 'const m = await import("/opt/kyoube/adapters/antigravity/dist/index.js"); if (m.createServerAdapter().type !== "antigravity_local") process.exit(1); console.log("antigravity adapter ok")' \
+ && test -f /opt/kyoube/adapters/antigravity/dist/ui-parser.js \
  && gosu node sh -c 'node -e "require(\"/opt/kyoube/bootstrap/node_modules/pg\"); console.log(\"bootstrap deps ok\")"' \
  && HOME=/tmp/build-home node /opt/kyoube/bootstrap/dist/kyoube.mjs --help >/dev/null \
  && rm -rf /tmp/build-home \

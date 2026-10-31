@@ -1,3 +1,5 @@
+import type { InstalledAdapterInfo } from "./adapters.js";
+
 export interface HealthInfo {
   status: string;
   /**
@@ -107,6 +109,10 @@ export interface CoreClient {
   setUserCompanyAccess(userId: string, companyIds: string[]): Promise<void>;
   /** `POST /api/admin/users/:userId/demote-instance-admin`. */
   demoteInstanceAdmin(userId: string): Promise<void>;
+  /** `GET /api/adapters` — lists all registered built-in and external adapters. */
+  listAdapters?(): Promise<InstalledAdapterInfo[]>;
+  /** `POST /api/adapters/install` with `isLocalPath` — registers, or re-registers, a local external adapter package. */
+  installLocalAdapter?(localPath: string): Promise<InstalledAdapterInfo>;
 }
 
 export class CoreApiError extends Error {
@@ -291,6 +297,32 @@ export function createCoreClient(opts: CoreClientOptions): CoreClient {
     async whoAmI(token) {
       const me = await request<{ userId?: string; user?: { id?: string } | null }>("/api/cli-auth/me", { token });
       return { userId: me.userId ?? me.user?.id ?? null };
+    },
+    async listAdapters() {
+      const rows = await request<unknown[]>("/api/adapters");
+      return (Array.isArray(rows) ? rows : []).map((row) => {
+        const record = (row ?? {}) as Record<string, unknown>;
+        return {
+          type: String(record.type ?? ""),
+          packageName: typeof record.packageName === "string" ? record.packageName : undefined,
+          version: typeof record.version === "string" ? record.version : undefined,
+          isLocalPath: record.isLocalPath === true,
+          source: typeof record.source === "string" ? record.source : undefined,
+          disabled: typeof record.disabled === "boolean" ? record.disabled : undefined,
+        };
+      });
+    },
+    async installLocalAdapter(localPath) {
+      const raw = await request<Record<string, unknown>>("/api/adapters/install", {
+        method: "POST",
+        body: { packageName: localPath, isLocalPath: true },
+      });
+      return {
+        type: String(raw?.type ?? ""),
+        packageName: typeof raw?.packageName === "string" ? raw.packageName : undefined,
+        version: typeof raw?.version === "string" ? raw.version : undefined,
+        isLocalPath: true,
+      };
     },
   };
 }
