@@ -64,7 +64,7 @@ export interface PublishConnection {
 export const connectionsOf = (preview: PublishPreviewData): PublishConnection[] => preview.connections?.list ?? [];
 export const connectionsChanged = (preview: PublishPreviewData): boolean => connectionsOf(preview).length > 0 && preview.connections?.changed === true;
 
-const AUTH_LABELS: Record<string, string> = { bearer: "bearer token", header: "API key header", basic: "basic auth" };
+const AUTH_LABELS: Record<string, string> = { bearer: "bearer token", header: "API key header", basic: "basic auth", authorization: "Authorization header" };
 const METHOD_LABELS: Record<string, string> = { read: "GET only", "read-write": "GET, POST, PUT, PATCH, DELETE" };
 
 /** Spec §2: what the person confirms, per connection; the change mark says what this version adds. */

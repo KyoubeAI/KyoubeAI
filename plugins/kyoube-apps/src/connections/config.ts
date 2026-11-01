@@ -1,6 +1,6 @@
 export const MAX_CONNECTIONS = 20;
 export const CONNECTION_NAME_RE = /^[a-z][a-z0-9_-]{0,39}$/;
-export type ConnectionAuth = "bearer" | "header" | "basic";
+export type ConnectionAuth = "bearer" | "header" | "basic" | "authorization";
 export type ConnectionMethods = "read" | "read-write";
 
 export interface Connection {
@@ -17,7 +17,7 @@ export interface Connection {
   configPath: string;
 }
 
-const AUTHS: readonly string[] = ["bearer", "header", "basic"];
+const AUTHS: readonly string[] = ["bearer", "header", "basic", "authorization"];
 const METHODS: readonly string[] = ["read", "read-write"];
 const HEADER_TOKEN_RE = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
 // The credentials and framing headers, plus the hop-by-hop ones: a secret sent as one of those would
@@ -36,7 +36,7 @@ const CONNECTIONS_PROPERTY = {
     properties: {
       name: { type: "string", title: "Name", description: "Lower-case letters, digits, - and _; what apps and agents use, e.g. stripe." },
       baseUrl: { type: "string", title: "Base URL", description: "https:// only, e.g. https://api.stripe.com/v1/. Calls can only reach paths under it." },
-      auth: { type: "string", title: "Auth", enum: ["bearer", "header", "basic"], description: "bearer: Authorization: Bearer <secret>. header: the secret in the header named below. basic: the secret is user:password." },
+      auth: { type: "string", title: "Auth", enum: ["bearer", "header", "basic", "authorization"], description: "bearer: Authorization: Bearer <secret>. header: the secret in the header named below. basic: the secret is user:password. authorization: Authorization: <secret>, for APIs that take the bare key." },
       headerName: { type: "string", title: "Header name (auth = header)", description: "e.g. X-API-Key" },
       // ajv validates the saved { type: "secret_ref" } object against this; the form keys on `format`.
       secret: { type: ["string", "object"], format: "secret-ref", title: "Secret", description: "A company secret holding the key." },
@@ -73,7 +73,7 @@ function parseOne(item: unknown, index: number, seen: Set<string>): Connection |
   const baseUrl = joined.endsWith("/") ? joined : `${joined}/`;
 
   const auth = row.auth;
-  if (typeof auth !== "string" || !AUTHS.includes(auth)) return "auth must be bearer, header or basic";
+  if (typeof auth !== "string" || !AUTHS.includes(auth)) return "auth must be bearer, header, basic or authorization";
   let headerName: string | null = null;
   if (auth === "header") {
     const header = str(row.headerName);

@@ -331,12 +331,15 @@ describe("buildHeaders", () => {
     expect(headers.authorization).toBe(`Basic ${Buffer.from("user:pa:ss").toString("base64")}`);
     expect(headers.authorization).toBe("Basic dXNlcjpwYTpzcw==");
   });
+  it("sends the secret as the whole Authorization value for authorization auth", () => {
+    expect(buildHeaders(conn({ auth: "authorization" }), call({ accept: "x/y" }), SECRET)).toEqual({ accept: "x/y", authorization: SECRET });
+  });
   it("refuses a call that sets the connection's own header, in any case", () => {
     invalid(() => buildHeaders(conn({ auth: "header", headerName: "accept" }), call({ accept: "x" }), SECRET));
     invalid(() => buildHeaders(conn({ auth: "header", headerName: "idempotency-key" }), call({ "Idempotency-Key": "x" }), SECRET));
   });
   it("refuses a call that carries authorization, whatever the auth style", () => {
-    for (const auth of ["bearer", "basic", "header"] as const) {
+    for (const auth of ["bearer", "basic", "header", "authorization"] as const) {
       invalid(() => buildHeaders(conn({ auth, headerName: auth === "header" ? "x-api-key" : null }), call({ authorization: "evil" }), SECRET));
     }
   });
@@ -352,14 +355,15 @@ describe("buildHeaders", () => {
     // Basic encodes the secret, so control characters in it are harmless there.
     expect(buildHeaders(conn({ auth: "basic" }), call(), "a\nb").authorization).toMatch(/^Basic /);
   });
-  it("tells the service which secrets can never be sent (bearer and header with a control character)", () => {
+  it("tells the service which secrets can never be sent (bearer, header and authorization with a control character)", () => {
     expect(secretHasControlChar(conn({ auth: "bearer" }), "key\n")).toBe(true);
     expect(secretHasControlChar(conn({ auth: "header", headerName: "x-api-key" }), "k\x7fey")).toBe(true);
+    expect(secretHasControlChar(conn({ auth: "authorization" }), "key\r")).toBe(true);
     expect(secretHasControlChar(conn({ auth: "bearer" }), "key")).toBe(false);
     expect(secretHasControlChar(conn({ auth: "basic" }), "user:pa\nss")).toBe(false);
   });
   it("refuses a secret with any control character for bearer and header auth, without echoing it", () => {
-    for (const auth of ["bearer", "header"] as const) {
+    for (const auth of ["bearer", "header", "authorization"] as const) {
       for (const bad of ["ab\tcd", "ab\x01cd", "ab\x7fcd", "ab\x1fcd"]) {
         const error = failure(() => buildHeaders(conn({ auth, headerName: auth === "header" ? "x-api-key" : null }), call(), bad));
         expect(error.code).toBe("invalid");

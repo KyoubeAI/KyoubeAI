@@ -122,7 +122,7 @@ function mapFetchFailure(error: unknown, name: string): { status: number } | Dat
 export const SECRET_CALL_RETRY_MS = 15_000;
 
 /**
- * A bearer or header secret with a control character resolves fine but can never be sent, so it is
+ * A bearer, header or authorization secret with a control character resolves fine but can never be sent, so it is
  * reported as the connection's problem rather than as a refused call that blames the caller.
  */
 const CONTROL_CHAR_PROBLEM = "the secret contains a line break or other control character";

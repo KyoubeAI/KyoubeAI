@@ -59,6 +59,7 @@ describe("parseConnections", () => {
     expect(one({ auth: "header", headerName: "X-Connection-Key" }).connections).toHaveLength(1);
     expect(c?.headerName).toBe("x-api-key");
     expect(one({ auth: "basic", headerName: "X-Ignored" }).connections[0]?.headerName).toBeNull();
+    expect(one({ auth: "authorization", headerName: "X-Ignored" }).connections[0]).toMatchObject({ auth: "authorization", headerName: null });
   });
   it("requires a secret_ref object, refusing a bare string", () => {
     expect(problemOf({ secret: undefined })).not.toBe("none");

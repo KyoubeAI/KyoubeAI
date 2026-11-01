@@ -102,8 +102,9 @@ ask the user for exactly this:
 2. An instance admin adds the connection under **Settings, then Plugins, then Kyoube Data & Apps**
    (pick the company), in the "connections" list, with: a `name` (lower-case letters, digits, `-` and
    `_`, starting with a letter), the base URL (`https://` only, such as `https://api.example.com/v1/`),
-   the auth style (`bearer`, `header` with its header name such as `X-API-Key`, or `basic` where the
-   secret is `user:password`), the secret, and the methods: `read` (GET only) or `read-write`.
+   the auth style (`bearer`, `header` with its header name such as `X-API-Key`, `basic` where the
+   secret is `user:password`, or `authorization` for an API that takes the bare key as the whole
+   `Authorization` header), the secret, and the methods: `read` (GET only) or `read-write`.
 3. Only if you yourself must call it (not just the app): an owner or admin gives you a grant under
    **Company Settings, then Data access, then Connections**: `read` or `read-write`.
 

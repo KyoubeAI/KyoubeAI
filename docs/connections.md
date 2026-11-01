@@ -14,7 +14,7 @@ A connection is a named base URL plus the credential for it. Each one has:
 |---|---|
 | `name` | Lower-case letters, digits, `-` and `_`, starting with a letter, 1 to 40 characters, unique in the company. Apps and agents refer to it by name. |
 | `baseUrl` | An absolute `https://` URL. It is saved ending in `/`; any query or fragment is dropped, and credentials in the URL are refused. |
-| `auth` | `bearer` sends `Authorization: Bearer <secret>`. `header` sends the secret in a header you name (for example `X-API-Key`). `basic` treats the secret as `user:password` and sends it base64-encoded. |
+| `auth` | `bearer` sends `Authorization: Bearer <secret>`. `header` sends the secret in a header you name (for example `X-API-Key`). `basic` treats the secret as `user:password` and sends it base64-encoded. `authorization` sends `Authorization: <secret>`, the bare key, for APIs such as Postiz that take it without `Bearer`. |
 | `headerName` | The header for `header` auth. `authorization`, `cookie`, `host`, `content-length`, `content-type`, the hop-by-hop headers (`connection`, `keep-alive`, `te`, `trailer`, `transfer-encoding`, `upgrade`) and `expect`, `proxy-*` and prototype-style names are refused. |
 | `secret` | A company secret, picked with the core's secret picker. |
 | `methods` | `read` allows GET only. `read-write` allows GET, POST, PUT, PATCH and DELETE. |
