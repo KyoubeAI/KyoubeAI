@@ -1,0 +1,170 @@
+# Self-hosted Postiz for posting to LinkedIn (docs/postiz.md). Agents reach it through a company MCP
+# connection at http://postiz:5000/api/mcp; people use its web UI to connect the LinkedIn Page.
+#
+# Add it to COMPOSE_FILE in .env, after the tunnel file if you use one:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.tunnel.yml:docker-compose.postiz.yml
+# People's browsers must reach POSTIZ_PUBLIC_URL, so give it its own tunnel hostname pointing at
+# http://postiz:5000. Postiz fetches its own uploads through that URL when it publishes, so if the
+# hostname is behind Cloudflare Access, bypass Access for /uploads/ (docs/postiz.md).
+#
+# Postiz's database, Redis and Temporal sit on their own network, out of the agents' reach; only the
+# postiz service joins the app's network. Images follow gitroomhq/postiz-docker-compose, pinned.
+services:
+  postiz:
+    image: ghcr.io/gitroomhq/postiz-app:${POSTIZ_VERSION:-v2.25.3}
+    environment:
+      MAIN_URL: ${POSTIZ_PUBLIC_URL:?set POSTIZ_PUBLIC_URL in .env}
+      FRONTEND_URL: ${POSTIZ_PUBLIC_URL}
+      NEXT_PUBLIC_BACKEND_URL: ${POSTIZ_PUBLIC_URL}/api
+      BACKEND_INTERNAL_URL: http://localhost:3000
+      JWT_SECRET: ${POSTIZ_JWT_SECRET:?set POSTIZ_JWT_SECRET in .env}
+      DATABASE_URL: postgresql://postiz:${POSTIZ_DB_PASSWORD:?set POSTIZ_DB_PASSWORD in .env}@postiz-db:5432/postiz
+      REDIS_URL: redis://postiz-redis:6379
+      TEMPORAL_ADDRESS: postiz-temporal:7233
+      IS_GENERAL: "true"
+      # Only the first account may sign up; everyone else is invited from inside Postiz.
+      DISABLE_REGISTRATION: "true"
+      RUN_CRON: "true"
+      STORAGE_PROVIDER: local
+      UPLOAD_DIRECTORY: /uploads
+      NEXT_PUBLIC_UPLOAD_DIRECTORY: /uploads
+      # One LinkedIn developer app serves both the linkedin and linkedin-page providers.
+      LINKEDIN_CLIENT_ID: ${LINKEDIN_CLIENT_ID:-}
+      LINKEDIN_CLIENT_SECRET: ${LINKEDIN_CLIENT_SECRET:-}
+      API_LIMIT: ${POSTIZ_API_LIMIT:-30}
+      NX_ADD_PLUGINS: "false"
+    volumes:
+      - postiz-config:/config
+      - postiz-uploads:/uploads
+    ports:
+      - "127.0.0.1:${POSTIZ_PORT:-4007}:5000"
+    networks:
+      - default
+      - postiz
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "const r=require('http').get('http://localhost:5000/',res=>process.exit(res.statusCode<500?0:1));r.on('error',()=>process.exit(1));r.setTimeout(4000,()=>{r.destroy();process.exit(1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    depends_on:
+      postiz-db:
+        condition: service_healthy
+      postiz-redis:
+        condition: service_healthy
+      postiz-temporal:
+        condition: service_healthy
+
+  postiz-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postiz
+      POSTGRES_PASSWORD: ${POSTIZ_DB_PASSWORD}
+      POSTGRES_DB: postiz
+    volumes:
+      - postiz-pgdata:/var/lib/postgresql/data
+    networks:
+      - postiz
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postiz -d postiz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  postiz-redis:
+    image: redis:7.2
+    volumes:
+      - postiz-redis-data:/data
+    networks:
+      - postiz
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # Temporal runs Postiz's scheduled posts and token refreshes.
+  postiz-temporal-es:
+    image: elasticsearch:7.17.27
+    environment:
+      - cluster.routing.allocation.disk.threshold_enabled=true
+      - cluster.routing.allocation.disk.watermark.low=512mb
+      - cluster.routing.allocation.disk.watermark.high=256mb
+      - cluster.routing.allocation.disk.watermark.flood_stage=128mb
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms256m -Xmx256m
+      - xpack.security.enabled=false
+    volumes:
+      - postiz-temporal-es-data:/usr/share/elasticsearch/data
+    networks:
+      - postiz
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS \"http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s\" || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  postiz-temporal-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: ${POSTIZ_TEMPORAL_DB_PASSWORD:?set POSTIZ_TEMPORAL_DB_PASSWORD in .env}
+    volumes:
+      - postiz-temporal-pgdata:/var/lib/postgresql/data
+    networks:
+      - postiz
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U temporal"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  postiz-temporal:
+    image: temporalio/auto-setup:1.28.1
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=${POSTIZ_TEMPORAL_DB_PASSWORD}
+      - POSTGRES_SEEDS=postiz-temporal-db
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+      - ENABLE_ES=true
+      - ES_SEEDS=postiz-temporal-es
+      - ES_VERSION=v7
+      - TEMPORAL_NAMESPACE=default
+    volumes:
+      - ./docker/postiz/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    networks:
+      - postiz
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "postiz-temporal:7233"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    depends_on:
+      postiz-temporal-db:
+        condition: service_healthy
+      postiz-temporal-es:
+        condition: service_healthy
+
+networks:
+  postiz:
+
+volumes:
+  postiz-config:
+  postiz-uploads:
+  postiz-pgdata:
+  postiz-redis-data:
+  postiz-temporal-es-data:
+  postiz-temporal-pgdata:
