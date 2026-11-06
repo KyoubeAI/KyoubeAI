@@ -48,11 +48,16 @@ export function isTypingTarget(target: unknown): boolean {
 export type ChartKeyAction = "clear-selection" | "leave-present" | "toggle" | "next" | "prev";
 
 /**
- * What a keydown means to the chart. Nothing when someone else handled it or it was typed into a field.
+ * What a keydown means to the chart. Nothing when someone else handled it, it was typed into a field,
+ * it came with Alt, Ctrl or Cmd (Alt+← is the browser's Back), or it is a held key repeating.
  * In presentation Esc only leaves, Space pauses and the arrows step; otherwise Esc clears a selection.
  */
-export function chartKeyAction(e: { key: string; defaultPrevented: boolean; target: unknown }, ctx: { present: boolean; hasSelection: boolean }): ChartKeyAction | null {
+export function chartKeyAction(
+  e: { key: string; defaultPrevented: boolean; target: unknown; altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; repeat?: boolean },
+  ctx: { present: boolean; hasSelection: boolean },
+): ChartKeyAction | null {
   if (e.defaultPrevented || isTypingTarget(e.target)) return null;
+  if (e.altKey || e.ctrlKey || e.metaKey || e.repeat) return null;
   if (ctx.present) {
     switch (e.key) {
       case "Escape": return "leave-present";

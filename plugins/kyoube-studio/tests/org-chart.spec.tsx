@@ -207,6 +207,26 @@ describe("OrgChart", () => {
     expect(chartKeyAction({ ...key(" "), target: { tagName: "TEXTAREA" } }, presenting)).toBeNull();
   });
 
+  it("chartKeyAction: modifier combos and held keys pass through to the browser", () => {
+    const key = (k: string, more: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; repeat?: boolean } = {}) => ({ key: k, defaultPrevented: false, target: null, ...more });
+    const presenting = { present: true, hasSelection: false };
+    // Alt+Left is the browser's Back; Ctrl/Cmd combos are the browser's and the system's shortcuts.
+    expect(chartKeyAction(key("ArrowLeft", { altKey: true }), presenting)).toBeNull();
+    expect(chartKeyAction(key("ArrowRight", { altKey: true }), presenting)).toBeNull();
+    expect(chartKeyAction(key("ArrowRight", { ctrlKey: true }), presenting)).toBeNull();
+    expect(chartKeyAction(key("ArrowLeft", { metaKey: true }), presenting)).toBeNull();
+    expect(chartKeyAction(key(" ", { ctrlKey: true }), presenting)).toBeNull();
+    expect(chartKeyAction(key("Escape", { metaKey: true }), presenting)).toBeNull();
+    // Holding Space (or an arrow) toggles or steps once, not on every repeat.
+    expect(chartKeyAction(key(" ", { repeat: true }), presenting)).toBeNull();
+    expect(chartKeyAction(key("ArrowRight", { repeat: true }), presenting)).toBeNull();
+    expect(chartKeyAction(key("Escape", { altKey: true }), { present: false, hasSelection: true })).toBeNull();
+    // Without modifiers Esc still leaves or clears, and Space still toggles.
+    expect(chartKeyAction(key("Escape"), presenting)).toBe("leave-present");
+    expect(chartKeyAction(key("Escape"), { present: false, hasSelection: true })).toBe("clear-selection");
+    expect(chartKeyAction(key(" ", { altKey: false, ctrlKey: false, metaKey: false, repeat: false }), presenting)).toBe("toggle");
+  });
+
   it("tourRefit: glide to each new stop, hold still while someone pans, and return when the tour resumes", () => {
     const v = { x: 1, y: 2, scale: 1 };
     const w = { x: 5, y: 2, scale: 1 };
