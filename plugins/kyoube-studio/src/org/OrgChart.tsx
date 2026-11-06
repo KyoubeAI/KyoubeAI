@@ -6,7 +6,7 @@ import { boxStyle, cardLabel, chartKeyAction, chipText, effectiveCollapsed, play
 import { momentSnapshot, type Moment, type MomentSnapshot } from "./org-moments.js";
 import { clampTourIndex, tourStops } from "./org-tour.js";
 import type { OrgAgent, OrgPanel } from "./org-types.js";
-import { defaultCollapsed, fitView, readCollapsed, writeCollapsed, zoomAt, type View } from "./org-view.js";
+import { defaultCollapsed, fitView, readCollapsed, tourView, writeCollapsed, zoomAt, type View } from "./org-view.js";
 import { ensureOrgStyles } from "./org-styles.js";
 import { usePresentation } from "./use-presentation.js";
 
@@ -180,7 +180,7 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
       lastFrame.current = null;
       return;
     }
-    const frame = { index: stopIndex, manual: show.manual, view: fitView(stop.rect, size) };
+    const frame = { index: stopIndex, manual: show.manual, view: tourView(stop.rect, size) };
     const prev = lastFrame.current;
     const refit = tourRefit(prev, frame);
     lastFrame.current = refit || !prev ? frame : { ...frame, view: prev.view };

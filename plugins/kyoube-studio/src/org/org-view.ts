@@ -21,6 +21,14 @@ export function fitView(bounds: Rect, viewport: { w: number; h: number }, margin
   };
 }
 
+/** Room the presentation caption takes at the bottom: 32 px below it, and up to two lines of it. */
+export const CAPTION_ROOM = 112;
+
+/** A tour stop's view: the stop fitted above the caption, so the caption never covers it. */
+export function tourView(rect: Rect, viewport: { w: number; h: number }): View {
+  return fitView(rect, { w: viewport.w, h: Math.max(1, viewport.h - CAPTION_ROOM) });
+}
+
 export function zoomAt(view: View, point: { x: number; y: number }, factor: number): View {
   const scale = clampScale(view.scale * factor);
   const k = scale / view.scale;

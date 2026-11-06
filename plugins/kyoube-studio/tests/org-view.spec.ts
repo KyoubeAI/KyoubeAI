@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildOrgTree } from "../src/org/org-tree.js";
-import { collapsedKey, defaultCollapsed, fitView, readCollapsed, writeCollapsed, zoomAt } from "../src/org/org-view.js";
+import { CAPTION_ROOM, collapsedKey, defaultCollapsed, fitView, readCollapsed, tourView, writeCollapsed, zoomAt } from "../src/org/org-view.js";
 import { FIVE_ROOTS } from "./org-fixtures.js";
 
 describe("fitView", () => {
@@ -18,6 +18,19 @@ describe("fitView", () => {
     expect(v.scale).toBe(2);
     expect((b.x + b.w / 2) * v.scale + v.x).toBeCloseTo(500, 5);
     expect((b.y + b.h / 2) * v.scale + v.y).toBeCloseTo(300, 5);
+  });
+});
+
+describe("tourView", () => {
+  it("keeps a stop clear of the caption band at the bottom", () => {
+    // A tall team stop, like Kyoube Industrial Systems' Director of Product with eleven agents.
+    const stop = { x: 400, y: 156, w: 276, h: 840 };
+    for (const viewport of [{ w: 1440, h: 900 }, { w: 390, h: 844 }, { w: 1920, h: 1080 }]) {
+      const v = tourView(stop, viewport);
+      expect(stop.y * v.scale + v.y).toBeGreaterThanOrEqual(0);
+      expect((stop.y + stop.h) * v.scale + v.y).toBeLessThanOrEqual(viewport.h - CAPTION_ROOM + 0.001);
+      expect((stop.x + stop.w / 2) * v.scale + v.x).toBeCloseTo(viewport.w / 2, 5);
+    }
   });
 });
 
