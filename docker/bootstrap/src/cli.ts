@@ -60,7 +60,6 @@ Commands:
   harness install <name>  Install a harness with its official installer (claude, codex, hermes, pi, gemini, opencode, kimi)
   harness which <name>  Print where a harness CLI is (exit 1 when it is not installed)
   harness missing <adapterType...>  Print the harnesses those adapter types need that are not installed
-  connect claude        Finish a Claude subscription sign-in from Connections with a one-year token
   write-config          (internal) Render /kyoubeai/kyoube/config.json from the environment
 `;
 
