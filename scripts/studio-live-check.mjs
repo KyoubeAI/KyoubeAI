@@ -27,9 +27,9 @@
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { Cdp, Page, launchChrome, signIn } from "./lib/cdp.mjs";
 import { findChrome } from "./lib/headless-chrome.mjs";
+import { teamTrial } from "./lib/team-trial.mjs";
 
 const [baseArg, email, password, prefix, boardToken] = process.argv.slice(2);
 const base = (baseArg ?? "").replace(/\/+$/, "");
@@ -86,20 +86,6 @@ function expectAll(label, facts, expectations, problems) {
     const ok = typeof want === "function" ? want(got) : got === want;
     if (!ok) problems.push(`${label}: ${key} is ${JSON.stringify(got)}`);
   }
-}
-
-/**
- * Three live agents to rewire into a standalone team, so the chart must draw `team:<lead>` and
- * the lead's two lines whatever the company's shape. All three are agents nobody reports to, by
- * name: the lead is made top-level (a lead deep in a team would only be indented there) and the
- * other two report to it. `patches` holds only the managers that change. Null with fewer than three.
- */
-export function teamTrial(agents) {
-  const managers = new Set(agents.map((a) => a.reportsTo).filter(Boolean));
-  const [lead, ...members] = agents.filter((a) => !managers.has(a.id)).sort((a, b) => String(a.name).localeCompare(String(b.name))).slice(0, 3);
-  if (members.length < 2) return null;
-  const wanted = [[lead, null], ...members.map((m) => [m, lead.id])];
-  return { lead, members, patches: wanted.filter(([a, to]) => (a.reportsTo ?? null) !== to).map(([a, to]) => ({ id: a.id, reportsTo: to })) };
 }
 
 async function api(pathname, method = "GET", body) {
@@ -372,4 +358,4 @@ async function main() {
   return 1;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) process.exitCode = await main();
+process.exitCode = await main();

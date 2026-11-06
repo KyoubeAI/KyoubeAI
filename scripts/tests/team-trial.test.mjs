@@ -1,7 +1,7 @@
-// scripts/tests/studio-live-check.test.mjs
+// scripts/tests/team-trial.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { teamTrial } from "../studio-live-check.mjs";
+import { teamTrial } from "../lib/team-trial.mjs";
 
 const agent = (id, name, reportsTo = null) => ({ id, name, reportsTo });
 
