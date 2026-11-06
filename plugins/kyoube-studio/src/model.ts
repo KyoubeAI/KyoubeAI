@@ -22,6 +22,8 @@ export interface AgentLike {
   /** Set when the core's last lifecycle step failed; the core retries it every minute. */
   lifecycleError?: string | null;
   errorReason?: string | null;
+  /** The agent's manager (core `reportsTo`), when it has one. */
+  reportsTo?: string | null;
   lastHeartbeatAt?: Date | string | null;
   updatedAt?: Date | string | null;
 }
@@ -60,6 +62,7 @@ export interface ApprovalLike {
 }
 
 export interface TaskRef {
+  id: string;
   identifier: string;
   title: string;
   href: string;
@@ -77,6 +80,8 @@ export interface TeamMember {
   /** For idle agents, when they last ran (ISO), so the UI can say "2h ago". */
   lastActiveAt: string | null;
   task: TaskRef | null;
+  /** The agent's manager's id, or null when it has none. */
+  reportsTo: string | null;
 }
 
 export type NeedKind = "approval" | "review" | "blocked" | "agent";
@@ -158,7 +163,7 @@ function newestFirst<T extends { updatedAt?: Date | string | null }>(rows: T[]):
 }
 
 function taskRef(issue: IssueLike): TaskRef {
-  return { identifier: issue.identifier ?? "", title: issue.title, href: issueHref(issue) };
+  return { id: issue.id, identifier: issue.identifier ?? "", title: issue.title, href: issueHref(issue) };
 }
 
 const STATE_RANK: Record<AgentState, number> = { working: 0, attention: 1, waiting: 2, paused: 3, idle: 4 };
@@ -215,6 +220,7 @@ export function summarizeTeam(agents: AgentLike[], issues: IssueLike[]): TeamSna
       detail,
       lastActiveAt: toIso(agent.lastHeartbeatAt),
       task: task ? taskRef(task) : null,
+      reportsTo: agent.reportsTo ?? null,
     };
   });
   members.sort((a, b) => STATE_RANK[a.state] - STATE_RANK[b.state] || (toMs(b.lastActiveAt) ?? 0) - (toMs(a.lastActiveAt) ?? 0) || a.name.localeCompare(b.name));

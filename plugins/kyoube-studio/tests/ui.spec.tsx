@@ -286,7 +286,7 @@ describe("helpers", () => {
 
   it("says when an idle agent last worked", () => {
     const now = Date.parse("2026-09-24T12:00:00Z");
-    const idle: TeamMember = { id: "a1", name: "Agent 1", title: null, icon: "rocket", href: "/team/agent-1", state: "idle", detail: "Idle", lastActiveAt: "2026-09-24T11:40:00Z", task: null };
+    const idle: TeamMember = { id: "a1", name: "Agent 1", title: null, icon: "rocket", href: "/team/agent-1", state: "idle", detail: "Idle", lastActiveAt: "2026-09-24T11:40:00Z", task: null, reportsTo: null };
     expect(timeAgo("2026-09-24T10:00:00Z", now)).toBe("2h ago");
     expect(timeAgo("2026-09-23T10:00:00Z", now)).toBe("yesterday");
     expect(timeAgo("2026-09-24T11:59:30Z", now)).toBe("just now");

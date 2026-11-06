@@ -39,6 +39,17 @@ describe("summarizeTeam", () => {
     expect(team.waiting).toBe(1);
   });
 
+  it("carries each agent's manager and the current task's id", () => {
+    const team = summarizeTeam(
+      [{ id: "m", name: "Ava", status: "idle" }, { id: "a", name: "Kai", status: "running", reportsTo: "m" }],
+      [{ id: "i1", identifier: "CUBE-12", title: "Ship it", status: "in_progress", assigneeAgentId: "a", executionRunId: "r1" }],
+    );
+    const kai = team.members.find((m) => m.id === "a")!;
+    expect(kai.reportsTo).toBe("m");
+    expect(kai.task).toMatchObject({ id: "i1", identifier: "CUBE-12" });
+    expect(team.members.find((m) => m.id === "m")!.reportsTo).toBeNull();
+  });
+
   it("orders working, then needs attention, then waiting, then paused, then idle", () => {
     expect(team.members.map((m) => m.state)).toEqual(["working", "attention", "waiting", "paused", "idle"]);
   });
@@ -46,7 +57,7 @@ describe("summarizeTeam", () => {
   it("says what a working agent is doing and what a waiting one waits on", () => {
     const writer = team.members.find((m) => m.id === "a-writer")!;
     expect(writer.detail).toBe("Three posts for the launch");
-    expect(writer.task).toEqual({ identifier: "BAP-45", title: "Three posts for the launch", href: "/issues/BAP-45" });
+    expect(writer.task).toEqual({ id: "i2", identifier: "BAP-45", title: "Three posts for the launch", href: "/issues/BAP-45" });
     const pm = team.members.find((m) => m.id === "a-pm")!;
     expect(pm.detail).toBe("Waiting on you · BAP-38");
     expect(pm.href).toBe("/team/ai-project-manager");
