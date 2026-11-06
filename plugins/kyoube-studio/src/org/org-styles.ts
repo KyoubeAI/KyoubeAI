@@ -20,7 +20,7 @@ const tile = (t: string) => `var(--kyoube-tile-${t}, ${TILES[t]})`;
 const tintRules = Object.keys(TILES)
   .map((t) => [
     `.ko-face[data-tint="${t}"] { background: ${tile(t)}; }`,
-    `.ko-panel[data-tint="${t}"] { background: color-mix(in oklab, ${tile(t)} 55%, transparent); border-color: color-mix(in oklab, ${tile(t)} 100%, ${BORDER}); }`,
+    `.ko-panel[data-tint="${t}"] { background: color-mix(in oklab, ${tile(t)} 55%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, ${tile(t)} 100%, ${BORDER}); }`,
   ].join("\n"))
   .join("\n");
 
@@ -68,7 +68,7 @@ const CSS = String.raw`
 .ko-line[data-state="attention"] { stroke: ${DANGER}; stroke-dasharray: 4 4; }
 .ko-line[data-state="paused"] { opacity: .4; }
 
-.ko-panel { position: absolute; box-sizing: border-box; border-radius: 16px; border: 1px solid ${BORDER}; transition: opacity .2s; }
+.ko-panel { position: absolute; box-sizing: border-box; border-radius: 16px; box-shadow: inset 0 0 0 1px ${BORDER}; transition: opacity .2s; }
 ${tintRules}
 .ko-panel-head { display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 12px 0 6px; box-sizing: border-box; min-width: 0; }
 .ko-chev { flex: none; display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 6px; border: 0; border-radius: 7px; background: transparent; color: ${FG}; font: inherit; cursor: pointer; }
@@ -101,10 +101,20 @@ ${tintRules}
   .ko-line[data-state="working"] { animation: ko-flow 1.6s linear infinite; }
   .ko-line[data-state="attention"] { animation: ko-flow .6s linear infinite; }
   .ko-side { animation: ko-slide-in .2s ease-out; }
+  @media (max-width: 639px) { .ko-side { animation-name: ko-slide-up; } }
+  .ko-card[data-moment="finished"]::after { content: ""; position: absolute; left: 50%; top: 50%; width: 100%; aspect-ratio: 1; border-radius: 50%; pointer-events: none; background: radial-gradient(circle, color-mix(in oklab, ${WORKING} 55%, transparent) 0%, transparent 70%); transform: translate(-50%, -50%) scale(.2); opacity: 0; animation: ko-burst 1.2s ease-out; }
+  .ko-card[data-moment="handover"] { animation: ko-pulse .6s ease-out .4s; }
+  .ko-line[data-moment="handover"] { stroke: ${WORKING}; stroke-width: 3; stroke-dasharray: 10 400; animation: ko-ripple 1s ease-in; }
+  .ko-card[data-moment="problem"] { animation: ko-shake .5s ease-in-out 1; }
+  @keyframes ko-burst { 0% { transform: translate(-50%, -50%) scale(.2); opacity: .9; } 100% { transform: translate(-50%, -50%) scale(1.8); opacity: 0; } }
+  @keyframes ko-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in oklab, ${WORKING} 45%, transparent); } 100% { box-shadow: 0 0 0 10px color-mix(in oklab, ${WORKING} 0%, transparent); } }
+  @keyframes ko-ripple { from { stroke-dashoffset: 410; } to { stroke-dashoffset: 0; } }
+  @keyframes ko-shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-5px); } 40% { transform: translateX(5px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(3px); } }
   @keyframes ko-breathe { 0%, 100% { box-shadow: 0 0 0 2px color-mix(in oklab, ${WORKING} 45%, transparent); } 50% { box-shadow: 0 0 0 6px color-mix(in oklab, ${WORKING} 0%, transparent); } }
   @keyframes ko-alarm { 0%, 100% { box-shadow: 0 0 0 2px ${DANGER}; } 50% { box-shadow: 0 0 0 6px color-mix(in oklab, ${DANGER} 0%, transparent); } }
   @keyframes ko-flow { to { stroke-dashoffset: -24; } }
   @keyframes ko-slide-in { from { transform: translateX(24px); opacity: 0; } }
+  @keyframes ko-slide-up { from { transform: translateY(24px); opacity: 0; } }
 }
 @media (prefers-reduced-motion: reduce) {
   .ko-org *, .ko-org *::before, .ko-org *::after { animation: none !important; transition: none !important; }

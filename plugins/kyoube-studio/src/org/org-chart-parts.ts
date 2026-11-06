@@ -1,4 +1,5 @@
 /** Pure helpers for OrgChart.tsx. */
+import { diffMoments, type Moment, type MomentSnapshot } from "./org-moments.js";
 import type { Rect } from "./org-layout.js";
 import type { OrgAgent, OrgPanel } from "./org-types.js";
 
@@ -29,3 +30,8 @@ export const safeStorage = (): Storage | null => {
     return null;
   }
 };
+
+/** The moments worth playing now: none while the page is hidden or the person asked for less motion. */
+export function playableMoments(previous: MomentSnapshot | null, next: MomentSnapshot, env: { hidden: boolean; reducedMotion: boolean }): Moment[] {
+  return env.hidden || env.reducedMotion ? [] : diffMoments(previous, next);
+}

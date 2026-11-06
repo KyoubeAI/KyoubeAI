@@ -3,7 +3,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { buildOrgTree, focusIds } from "../src/org/org-tree.js";
-import { effectiveCollapsed, OrgChart, type OrgChartProps } from "../src/org/OrgChart.js";
+import { effectiveCollapsed, OrgChart, playableMoments, type OrgChartProps } from "../src/org/OrgChart.js";
+import { momentSnapshot } from "../src/org/org-moments.js";
 import type { OrgAgent } from "../src/org/org-types.js";
 import { FLAT, INDUSTRIAL, org } from "./org-fixtures.js";
 
@@ -128,6 +129,21 @@ describe("OrgChart", () => {
     expect(count(html, "data-org-card=")).toBe(solo.length);
     expect(count(html, "data-org-panel=")).toBe(0);
     expect(count(html, "data-org-line=")).toBe(0);
+  });
+
+  it("playableMoments plays nothing while hidden or with reduced motion", () => {
+    const before = momentSnapshot(org([["a", "A", null, "working"]]), []);
+    const after = momentSnapshot(org([["a", "A", null, "attention"]]), []);
+    expect(playableMoments(before, after, { hidden: true, reducedMotion: false })).toEqual([]);
+    expect(playableMoments(before, after, { hidden: false, reducedMotion: true })).toEqual([]);
+  });
+
+  it("playableMoments passes diffMoments through otherwise", () => {
+    const before = momentSnapshot(org([["a", "A", null, "working"]]), []);
+    const after = momentSnapshot(org([["a", "A", null, "attention"]]), []);
+    const env = { hidden: false, reducedMotion: false };
+    expect(playableMoments(before, after, env)).toEqual([{ kind: "problem", agentId: "a" }]);
+    expect(playableMoments(null, after, env)).toEqual([]);
   });
 
   it("src/org imports only react and characters", () => {

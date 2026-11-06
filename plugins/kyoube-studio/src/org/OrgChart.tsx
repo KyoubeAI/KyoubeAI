@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboa
 import { characterFor } from "../characters.js";
 import { layoutOrg, type CardBox } from "./org-layout.js";
 import { buildOrgTree, focusIds, panelOf, tallyText } from "./org-tree.js";
-import { boxStyle, cardLabel, chipText, effectiveCollapsed, safeStorage } from "./org-chart-parts.js";
+import { boxStyle, cardLabel, chipText, effectiveCollapsed, playableMoments, safeStorage } from "./org-chart-parts.js";
+import { momentSnapshot, type Moment, type MomentSnapshot } from "./org-moments.js";
 import type { OrgAgent, OrgPanel } from "./org-types.js";
 import { defaultCollapsed, fitView, readCollapsed, writeCollapsed, zoomAt, type View } from "./org-view.js";
 import { ensureOrgStyles } from "./org-styles.js";
 
-export { effectiveCollapsed };
+export { effectiveCollapsed, playableMoments };
 
 export interface OrgPanelContext { manager: OrgAgent | null; reports: OrgAgent[]; select: (id: string | null) => void }
 export interface OrgChartProps {
@@ -25,12 +26,17 @@ export interface OrgChartProps {
 const INITIAL_SIZE = { w: 1200, h: 800 };
 /** A press that moves less than this is a click, not a drag. */
 const DRAG_THRESHOLD = 4;
+/** How long a live moment stays on its card. */
+const MOMENT_MS = 1200;
+
+/** What is playing now, by agent id: the card's moment and whether the incoming line ripples. */
+type Playing = Record<string, { kind: Moment["kind"]; line: boolean }>;
 
 const Chevron = () => (
   <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
 );
 
-function Card({ agent, box, origin, dim, selected, onSelect }: { agent: OrgAgent; box: CardBox; origin?: { x: number; y: number }; dim: boolean; selected: boolean; onSelect: (id: string) => void }) {
+function Card({ agent, box, origin, dim, selected, moment, onSelect }: { agent: OrgAgent; box: CardBox; origin?: { x: number; y: number }; dim: boolean; selected: boolean; moment?: Moment["kind"]; onSelect: (id: string) => void }) {
   const face = useMemo(() => characterFor(agent.icon, agent.name), [agent.icon, agent.name]);
   return (
     <button
@@ -41,6 +47,7 @@ function Card({ agent, box, origin, dim, selected, onSelect }: { agent: OrgAgent
       data-size={box.size === "head" ? "head" : undefined}
       data-dim={dim ? "" : undefined}
       data-selected={selected ? "" : undefined}
+      data-moment={moment}
       aria-label={cardLabel(agent)}
       style={boxStyle(box, origin)}
       onClick={() => onSelect(agent.id)}
@@ -58,7 +65,7 @@ function Card({ agent, box, origin, dim, selected, onSelect }: { agent: OrgAgent
   );
 }
 
-export function OrgChart({ agents, selectedId, onSelect, renderPanel, onPresentChange, storageKey }: OrgChartProps): JSX.Element {
+export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPanel, onPresentChange, storageKey }: OrgChartProps): JSX.Element {
   ensureOrgStyles();
   const tree = useMemo(() => buildOrgTree(agents), [agents]);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => defaultCollapsed(tree, agents.length));
@@ -75,6 +82,41 @@ export function OrgChart({ agents, selectedId, onSelect, renderPanel, onPresentC
   const [view, setView] = useState<View>(() => fitView(layout.bounds, INITIAL_SIZE));
   const boundsRef = useRef(layout.bounds);
   boundsRef.current = layout.bounds;
+
+  // Compare each poll with the last and play the small moments, for MOMENT_MS each.
+  const [playing, setPlaying] = useState<Playing>({});
+  const lastSnapshot = useRef<MomentSnapshot | null>(null);
+  const momentTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  useEffect(() => {
+    const next = momentSnapshot(agents, doneTaskIds);
+    const moments = playableMoments(lastSnapshot.current, next, {
+      hidden: typeof document !== "undefined" && document.visibilityState === "hidden",
+      reducedMotion: typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches,
+    });
+    lastSnapshot.current = next;
+    if (moments.length === 0) return;
+    // One agent can have two moments; the card shows the later, the handover still marks its line.
+    const batch: Playing = {};
+    for (const m of moments) batch[m.agentId] = { kind: m.kind, line: m.kind === "handover" || (batch[m.agentId]?.line ?? false) };
+    setPlaying((p) => ({ ...p, ...batch }));
+    for (const id of Object.keys(batch)) {
+      clearTimeout(momentTimers.current.get(id));
+      momentTimers.current.set(id, setTimeout(() => {
+        momentTimers.current.delete(id);
+        setPlaying((p) => {
+          const { [id]: _done, ...rest } = p;
+          return rest;
+        });
+      }, MOMENT_MS));
+    }
+  }, [agents, doneTaskIds]);
+  useEffect(() => {
+    const timers = momentTimers.current;
+    return () => {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
 
   // Swap in what this person folded last time, once storage is reachable.
   useEffect(() => {
@@ -222,7 +264,7 @@ export function OrgChart({ agents, selectedId, onSelect, renderPanel, onPresentC
   const isDim = (id: string) => focus !== null && !focus.has(id);
   const card = (box: CardBox, origin?: { x: number; y: number }) => {
     const agent = tree.byId.get(box.id);
-    return agent ? <Card key={box.id} agent={agent} box={box} origin={origin} dim={isDim(box.id)} selected={box.id === selected?.id} onSelect={onSelect} /> : null;
+    return agent ? <Card key={box.id} agent={agent} box={box} origin={origin} dim={isDim(box.id)} selected={box.id === selected?.id} moment={playing[box.id]?.kind} onSelect={onSelect} /> : null;
   };
 
   const panel = (p: OrgPanel) => {
@@ -289,6 +331,7 @@ export function OrgChart({ agents, selectedId, onSelect, renderPanel, onPresentC
                 className="ko-line"
                 data-org-line={`${c.from}:${c.to}`}
                 data-state={tree.byId.get(c.to)?.state}
+                data-moment={playing[c.to]?.line ? "handover" : undefined}
                 data-dim={focus !== null && !(focus.has(c.from) && focus.has(c.to)) ? "" : undefined}
                 d={c.path}
               />
