@@ -12,12 +12,14 @@
  * It also opens an agent through the core's own URLs and checks that the
  * Studio profile answers, that the core's agent views show the agent's
  * character and display-face name, and that `?classic=1` keeps the core's
- * overview, that the roster's org icon opens the agent list on its org chart,
- * and that every filter tab of the agent list stays on the list (naming any tab
- * a core bump adds, which Studio must learn). With a board token
- * it disables kyoube.studio, checks that the stock sidebar comes back, and
- * enables it again. Screenshots of Home (dark and light), an agent profile and
- * the Workspace page are written to STUDIO_SHOTS_DIR when that is set, for a
+ * overview, that the roster's org icon opens Studio's org chart at /team, which
+ * draws every agent, its reporting lines and team panels, opens the side panel
+ * and enters presentation mode, and that every filter tab of the agent list
+ * stays on the list (naming any tab a core bump adds, which Studio must learn).
+ * With a board token it disables kyoube.studio, checks that the stock sidebar
+ * comes back, and enables it again. Screenshots of Home (dark and light), an
+ * agent profile, the Workspace page and the org chart (team-dark.png,
+ * team-light.png, team-phone.png) are written to STUDIO_SHOTS_DIR when that is set, for a
  * person to look at after a core bump; nothing compares pixels.
  *
  * Exit 0 on pass, 1 on failure, 2 when no Chrome is installed (scripts/smoke.sh
@@ -79,8 +81,8 @@ function expectAll(label, facts, expectations, problems) {
   }
 }
 
-async function api(pathname, method = "GET") {
-  const response = await fetch(`${base}${pathname}`, { method, headers: { Authorization: `Bearer ${boardToken}`, "Content-Type": "application/json", Origin: base }, body: method === "POST" ? "{}" : undefined });
+async function api(pathname, method = "GET", body) {
+  const response = await fetch(`${base}${pathname}`, { method, headers: { Authorization: `Bearer ${boardToken}`, "Content-Type": "application/json", Origin: base }, body: method === "POST" || method === "PATCH" ? JSON.stringify(body ?? {}) : undefined });
   if (!response.ok) throw new Error(`${method} ${pathname}: ${response.status} ${(await response.text()).slice(0, 200)}`);
   return response.json();
 }
@@ -180,20 +182,21 @@ async function main() {
       if (!(await page.evaluate(`location.pathname.endsWith("/overview")`))) problems.push("profile: ?classic=1 did not keep the core's own agent overview");
     }
 
-    // The agent list: the roster's org icon opens it on the org chart, and every
+    // The agent list: the roster's org icon opens Studio's org chart, and every
     // filter tab the core draws stays on the list. Studio keeps its own copy of
     // the core's tab names (agent-route.ts) so it never takes a tab for an agent;
     // a tab added by a core bump shows up here by name.
+    const orgIcon = `[data-kyoube-studio="team"] a[aria-label="Org chart"]`;
     await page.goto(`${base}/${prefix}/dashboard`);
-    await page.waitForFunction(`!!document.querySelector('[data-kyoube-studio="team"] a[aria-label="All agents and the org chart"]')`, { timeoutMs: 30_000 });
-    await page.evaluate(`document.querySelector('[data-kyoube-studio="team"] a[aria-label="All agents and the org chart"]').click()`);
+    await page.waitForFunction(`!!document.querySelector('${orgIcon}')`, { timeoutMs: 30_000 });
+    await page.evaluate(`document.querySelector('${orgIcon}').click()`);
     try {
-      await page.waitForFunction(`/\\/agents\\/all\\/?$/.test(location.pathname) && document.querySelector('button[aria-label="Org chart view"]')?.getAttribute("aria-pressed") === "true"`, { timeoutMs: 15_000 });
-      await sleep(1500);
-      if ((await page.evaluate(`document.querySelector('button[aria-label="Org chart view"]')?.getAttribute("aria-pressed")`)) !== "true") problems.push("agent list: the org chart did not stay chosen after the roster's org icon opened the list");
+      await page.waitForFunction(`/\\/team\\/?$/.test(location.pathname) && !!document.querySelector("[data-kyoube-org]")`, { timeoutMs: 15_000 });
     } catch {
-      problems.push(`agent list: the roster's org icon did not open the list on its org chart (at ${await page.evaluate("location.pathname")}; the core's "Org chart view" toggle may have changed)`);
+      problems.push(`agent list: the roster's org icon did not open the org chart at /team (at ${await page.evaluate("location.pathname")})`);
     }
+    await page.goto(`${base}/${prefix}/agents/all`);
+    await page.waitForFunction(`document.querySelectorAll('main [role="tab"]').length > 0`, { timeoutMs: 15_000 }).catch(() => {});
     const knownTabs = ["all", "active", "paused", "error", "builtin"];
     const tabCount = await page.evaluate(`document.querySelectorAll('main [role="tab"]').length`);
     if (tabCount === 0) problems.push("agent list: no filter tabs found");
@@ -213,6 +216,91 @@ async function main() {
       if (!tab) problems.push(`agent list: the "${label}" tab left the list (at ${at})`);
       else if (!knownTabs.includes(tab)) problems.push(`agent list: the core has a new filter tab "${tab}"; add it to AGENT_LIST_TABS in plugins/kyoube-studio/src/ui/agent-route.ts`);
       else if (await page.evaluate(`!!document.querySelector('[data-kyoube-page="team"]')`)) problems.push(`agent list: the "${label}" tab opened a Studio profile`);
+    }
+
+    // Studio's org chart at /team. With a board token the first agent becomes the
+    // lead of a team with the next two (their managers are put back afterwards),
+    // so the lines and the team panel are known; without one, only that cards are drawn.
+    const teamUrl = `${base}/${prefix}/team`;
+    const restore = [];
+    let live = [];
+    try {
+      if (boardToken) {
+        try {
+          const company = (await api("/api/companies")).find((c) => c.issuePrefix === prefix);
+          if (!company) problems.push(`team: no company has the prefix ${prefix}`);
+          else live = (await api(`/api/companies/${company.id}/agents`)).filter((a) => a.status !== "terminated").sort((a, b) => String(a.name).localeCompare(String(b.name)));
+        } catch (error) {
+          problems.push(`team: could not list the agents (${error instanceof Error ? error.message : error})`);
+        }
+      }
+      const [lead, second, third] = live;
+      const structured = live.length >= 3;
+      if (boardToken && !structured) problems.push(`team: only ${live.length} live agent(s), need 3 to check reporting lines and a team panel`);
+      if (structured) {
+        for (const agent of [second, third]) {
+          restore.push({ id: agent.id, reportsTo: agent.reportsTo ?? null });
+          await api(`/api/agents/${agent.id}`, "PATCH", { reportsTo: lead.id });
+        }
+      }
+      await page.goto(teamUrl);
+      try {
+        await page.waitForFunction(boardToken && live.length > 0 ? `document.querySelectorAll("[data-org-card]").length === ${live.length}` : `document.querySelectorAll("[data-org-card]").length >= 1`, { timeoutMs: 30_000 });
+      } catch {
+        const drawn = await page.evaluate(`document.querySelectorAll("[data-org-card]").length`);
+        problems.push(`team: ${drawn} agent card(s) drawn at /team, expected ${boardToken && live.length > 0 ? live.length : "at least 1"}`);
+      }
+      if (structured) {
+        const found = await page.evaluate(`(() => ({
+          panel: !!document.querySelector('[data-org-panel="team:${lead.id}"]'),
+          lineSecond: !!document.querySelector('[data-org-line="${lead.id}:${second.id}"]'),
+          lineThird: !!document.querySelector('[data-org-line="${lead.id}:${third.id}"]'),
+        }))()`);
+        if (!found.panel) problems.push(`team: no team panel for the lead (data-org-panel="team:${lead.id}")`);
+        if (!found.lineSecond) problems.push(`team: no reporting line from the lead to ${second.name} (data-org-line="${lead.id}:${second.id}")`);
+        if (!found.lineThird) problems.push(`team: no reporting line from the lead to ${third.name} (data-org-line="${lead.id}:${third.id}")`);
+      }
+
+      // Opening a card shows the side panel.
+      await page.evaluate(`document.querySelector("[data-org-card]")?.click()`);
+      try {
+        await page.waitForFunction(`!!document.querySelector("[data-org-side]")`, { timeoutMs: 10_000 });
+      } catch {
+        problems.push("team: clicking a card did not open the side panel (data-org-side)");
+      }
+      if (shotsDir) {
+        await writeFile(path.join(shotsDir, "team-dark.png"), await page.screenshot());
+        await page.evaluate(`localStorage.setItem("paperclip.theme", "light")`);
+        await page.goto(teamUrl);
+        await page.waitForFunction(`!!document.querySelector("[data-kyoube-org]")`, { timeoutMs: 30_000 }).catch(() => problems.push("team: the chart did not draw after switching to the light theme"));
+        await writeFile(path.join(shotsDir, "team-light.png"), await page.screenshot());
+        await page.evaluate(`localStorage.removeItem("paperclip.theme")`);
+      }
+
+      // A phone-sized window.
+      const phone = await Page.open(cdp, { width: 390, height: 844 });
+      await phone.setCookie({ ...cookie, url: base });
+      await phone.goto(teamUrl);
+      await phone.waitForFunction(`document.querySelectorAll("[data-org-card]").length >= 1`, { timeoutMs: 30_000 }).catch(() => problems.push("team: no agent card drawn in a 390 px wide window"));
+      if (shotsDir) await writeFile(path.join(shotsDir, "team-phone.png"), await phone.screenshot());
+
+      // Presentation mode.
+      await page.goto(`${teamUrl}?present=1`);
+      try {
+        await page.waitForFunction(`!!document.querySelector('[data-org-present="true"]')`, { timeoutMs: 15_000 });
+      } catch {
+        problems.push("team: /team?present=1 did not enter presentation mode (data-org-present=\"true\")");
+      }
+    } catch (error) {
+      problems.push(`team: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      for (const original of restore) {
+        try {
+          await api(`/api/agents/${original.id}`, "PATCH", { reportsTo: original.reportsTo });
+        } catch (error) {
+          problems.push(`team: could not restore the manager of agent ${original.id} (${error instanceof Error ? error.message : error})`);
+        }
+      }
     }
 
     // Secondary sidebars (company settings) are <aside><nav> too; the skin must leave them whole.
