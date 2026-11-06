@@ -58,6 +58,48 @@ describe("the org layout", () => {
     });
   }
 
+  it("keeps connector lines out of every panel but the one they enter", () => {
+    const rows: Parameters<typeof org>[0] = [["boss", "Boss", null]];
+    for (let i = 0; i < 14; i++) {
+      rows.push([`lead${i}`, `Lead ${i}`, "boss"], [`aide${i}`, `Aide ${i}`, `lead${i}`]);
+    }
+    rows.push(["desk", "Desk", "boss"]);
+    const cases = [...Object.values(FIXTURES), org(rows)];
+    let wrapped = false;
+    for (const agents of cases) {
+      const layout = layoutOrg(buildOrgTree(agents), new Set());
+      const ys = new Set([...layout.panels.values()].map((p) => p.y));
+      if (agents === cases[cases.length - 1]) wrapped = ys.size >= 3;
+      for (const c of layout.connectors) {
+        const own = layout.cards.get(c.to)!.panelId;
+        const pts = points(c.path);
+        for (let i = 1; i < pts.length; i++) {
+          const [ax, ay] = pts[i - 1]!;
+          const [bx, by] = pts[i]!;
+          const seg = { x: Math.min(ax, bx), y: Math.min(ay, by), w: Math.abs(ax - bx), h: Math.abs(ay - by) };
+          for (const p of layout.panels.values()) {
+            if (p.id === own) continue;
+            const hit = seg.x < p.x + p.w && p.x < seg.x + seg.w && seg.y < p.y + p.h && p.y < seg.y + seg.h;
+            expect(hit, `${c.from}:${c.to} crosses ${p.id}`).toBe(false);
+          }
+        }
+      }
+    }
+    expect(wrapped).toBe(true);
+  });
+
+  it("puts the shelf below collapsed standalone chips, with room for its heading", () => {
+    const tree = buildOrgTree(FIVE_ROOTS);
+    const allTeams = new Set(tree.teams.map((t) => t.id));
+    expect(allTeams.size).toBeGreaterThan(0);
+    const layout = layoutOrg(tree, allTeams);
+    expect(layout.shelf).not.toBeNull();
+    const shelfOnly = layoutOrg(buildOrgTree(org([["a", "A", null], ["b", "B", null]])), new Set());
+    expect(shelfOnly.shelf!.y).toBe(0);
+    for (const p of layout.panels.values()) expect(overlaps(p, layout.shelf!)).toBe(false);
+    for (const a of tree.shelf) expect(layout.cards.get(a.id)!.y).toBeGreaterThanOrEqual(layout.shelf!.y + SIZES.header);
+  });
+
   it("lays the shelf agents out as cards without connectors", () => {
     const tree = buildOrgTree(FLAT);
     const layout = layoutOrg(tree, new Set());

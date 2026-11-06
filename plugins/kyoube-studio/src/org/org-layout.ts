@@ -126,25 +126,33 @@ export function layoutOrg(tree: OrgTree, collapsed: ReadonlySet<string>): OrgLay
     const { rows, bottom: groupBottom } = flow(h.panels, cursorX + shift, head.h + tierGap);
     const hx = headBox.x + head.w / 2;
     const hb = headBox.y + head.h;
+    const groupRight = Math.max(headBox.x + head.w, ...rows.flat().map((b) => b.x + b.w));
+    // Lines to wrapped rows run down the clear channel just right of the group, then along the gap above their row.
+    const channelX = groupRight + panelGap / 2;
+    const firstGapY = head.h + tierGap / 2;
+    const rowOf = (id: string) => rows.findIndex((r) => r.some((b) => b.id === id));
+    const drop = (id: string, box: PanelBox, tx: number): [number, number][] => {
+      const midY = box.y - tierGap / 2;
+      const lead: [number, number][] = rowOf(id) <= 0 ? [[hx, hb], [hx, midY]] : [[hx, hb], [hx, firstGapY], [channelX, firstGapY], [channelX, midY]];
+      return [...lead, [tx, midY]];
+    };
     for (const p of h.panels) {
       const box = panels.get(p.id)!;
-      const midY = box.y - tierGap / 2;
       if (p.kind === "team") {
         const owner = cards.get(p.owner.id);
         if (!owner) continue;
         const ox = owner.x + owner.w / 2;
-        connectors.push({ from: h.agent.id, to: owner.id, path: pathOf([[hx, hb], [hx, midY], [ox, midY], [ox, owner.y]]) });
+        connectors.push({ from: h.agent.id, to: owner.id, path: pathOf([...drop(p.id, box, ox), [ox, owner.y]]) });
       } else {
         for (const n of p.members) {
           const c = cards.get(n.agent.id);
           if (!c) continue;
           const railX = box.x + RAIL;
           const cy = c.y + c.h / 2;
-          connectors.push({ from: h.agent.id, to: c.id, path: pathOf([[hx, hb], [hx, midY], [railX, midY], [railX, cy], [c.x, cy]]) });
+          connectors.push({ from: h.agent.id, to: c.id, path: pathOf([...drop(p.id, box, railX), [railX, cy], [c.x, cy]]) });
         }
       }
     }
-    const groupRight = Math.max(headBox.x + head.w, ...rows.flat().map((b) => b.x + b.w));
     cursorX = groupRight + panelGap;
     bottom = Math.max(bottom, groupBottom);
   }
@@ -156,16 +164,16 @@ export function layoutOrg(tree: OrgTree, collapsed: ReadonlySet<string>): OrgLay
 
   let shelf: Rect | null = null;
   if (tree.shelf.length > 0) {
-    const y0 = cards.size > 0 ? bottom + tierGap : 0;
+    const y0 = cards.size > 0 || panels.size > 0 ? bottom + tierGap : 0;
     const cols = Math.max(1, Math.floor((maxRowWidth + rowGap) / (team.w + rowGap)));
     tree.shelf.forEach((a, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);
-      cards.set(a.id, { id: a.id, x: col * (team.w + rowGap), y: y0 + row * (team.h + rowGap), w: team.w, h: team.h, size: "team", indent: 0, panelId: null });
+      cards.set(a.id, { id: a.id, x: col * (team.w + rowGap), y: y0 + header + row * (team.h + rowGap), w: team.w, h: team.h, size: "team", indent: 0, panelId: null });
     });
     const usedCols = Math.min(cols, tree.shelf.length);
     const rowsN = Math.ceil(tree.shelf.length / cols);
-    shelf = { x: 0, y: y0, w: usedCols * team.w + (usedCols - 1) * rowGap, h: rowsN * team.h + (rowsN - 1) * rowGap };
+    shelf = { x: 0, y: y0, w: usedCols * team.w + (usedCols - 1) * rowGap, h: header + rowsN * team.h + (rowsN - 1) * rowGap };
   }
 
   const boxes: Rect[] = [...cards.values(), ...panels.values(), ...(shelf ? [shelf] : [])];
