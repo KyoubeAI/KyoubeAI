@@ -14,12 +14,19 @@
  * character and display-face name, and that `?classic=1` keeps the core's
  * overview, that the roster's org icon opens Studio's org chart at /team, which
  * draws every agent, its reporting lines and team panels, opens the side panel
- * and enters presentation mode, and that every filter tab of the agent list
- * stays on the list (naming any tab a core bump adds, which Studio must learn).
+ * and enters presentation mode (from `?present=1` and from the Present button,
+ * leaving with Esc), and that every filter tab of the agent list stays on the
+ * list (naming any tab a core bump adds, which Studio must learn).
  * With a board token it disables kyoube.studio, checks that the stock sidebar
- * comes back, and enables it again. Screenshots of Home (dark and light), an
+ * comes back, and enables it again.
+ *
+ * With a board token it also changes data for a while: it points two agents at
+ * a third as their manager (and makes the third top-level) so the chart has a
+ * known team, and puts all three managers back at the end. A killed process
+ * leaves them changed, so run it against throwaway stacks, not a company people
+ * use. Screenshots of Home (dark and light), an
  * agent profile, the Workspace page and the org chart (team-dark.png,
- * team-light.png, team-phone.png) are written to STUDIO_SHOTS_DIR when that is set, for a
+ * team-light.png, team-phone.png, team-present.png) are written to STUDIO_SHOTS_DIR when that is set, for a
  * person to look at after a core bump; nothing compares pixels.
  *
  * Exit 0 on pass, 1 on failure, 2 when no Chrome is installed (scripts/smoke.sh
@@ -96,6 +103,39 @@ const CHART_FIT = `(() => {
     scrollerOverflow: scroller ? scroller.scrollHeight - scroller.clientHeight : 0,
   };
 })()`;
+
+/** Runs in the page at /team: which presentation markers are there. */
+const PRESENT_MARKERS = `(() => ({
+  root: !!document.querySelector('[data-org-present="true"]'),
+  caption: !!document.querySelector("[data-kyoube-org] [data-org-caption]"),
+  toolbar: !!document.querySelector('[data-kyoube-org] [role="toolbar"]'),
+  query: location.search,
+}))()`;
+
+/** Names what is missing when `how` should have entered presentation mode. */
+async function checkPresenting(page, how, problems) {
+  try {
+    await page.waitForFunction(`!!document.querySelector('[data-org-present="true"]')`, { timeoutMs: 15_000 });
+  } catch {
+    problems.push(`team: ${how} did not enter presentation mode (data-org-present="true")`);
+    return false;
+  }
+  const marks = await page.evaluate(PRESENT_MARKERS);
+  if (!marks.caption) problems.push(`team: presentation from ${how} shows no tour caption (data-org-caption)`);
+  if (marks.toolbar) problems.push(`team: presentation from ${how} still shows the chart's toolbar`);
+  return true;
+}
+
+/** Presses Esc in the page as a person would, and names what is left when it does not leave presentation. */
+async function leaveWithEsc(page, how, problems) {
+  await page.send("Page.bringToFront");
+  for (const type of ["keyDown", "keyUp"]) await page.send("Input.dispatchKeyEvent", { type, key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+  try {
+    await page.waitForFunction(`!document.querySelector("[data-org-present]") && !!document.querySelector('[data-kyoube-org] [role="toolbar"]') && !/present=1/.test(location.search)`, { timeoutMs: 10_000 });
+  } catch {
+    problems.push(`team: Esc did not leave the presentation entered from ${how} (${JSON.stringify(await page.evaluate(PRESENT_MARKERS))})`);
+  }
+}
 
 /** Names a /team page that scrolls, or a chart shorter than its 520 px minimum, at `size`. */
 async function checkChartFit(page, size, problems) {
@@ -322,12 +362,21 @@ async function main() {
       await checkChartFit(phone, "390x844", problems);
       if (shotsDir) await writeFile(path.join(shotsDir, "team-phone.png"), await phone.screenshot());
 
-      // Presentation mode.
+      // Presentation mode, from the URL and from the toolbar's Present button; Esc leaves both.
       await page.goto(`${teamUrl}?present=1`);
-      try {
-        await page.waitForFunction(`!!document.querySelector('[data-org-present="true"]')`, { timeoutMs: 15_000 });
-      } catch {
-        problems.push("team: /team?present=1 did not enter presentation mode (data-org-present=\"true\")");
+      if (await checkPresenting(page, "/team?present=1", problems)) await leaveWithEsc(page, "/team?present=1", problems);
+      await page.goto(teamUrl);
+      const present = `[...document.querySelectorAll('[data-kyoube-org] [role="toolbar"] button')].find((b) => b.textContent.trim() === "Present")`;
+      if (!(await page.evaluate(`!!${present}`))) problems.push("team: the chart's toolbar has no Present button");
+      else {
+        await page.evaluate(`${present}.click()`);
+        if (await checkPresenting(page, "the Present button", problems)) {
+          if (shotsDir) {
+            await sleep(1000); // The view glides to the overview.
+            await writeFile(path.join(shotsDir, "team-present.png"), await page.screenshot());
+          }
+          await leaveWithEsc(page, "the Present button", problems);
+        }
       }
     } catch (error) {
       problems.push(`team: ${error instanceof Error ? error.message : String(error)}`);
