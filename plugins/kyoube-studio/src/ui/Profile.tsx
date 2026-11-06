@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import type { PluginPageProps } from "@paperclipai/plugin-sdk/ui";
 import { useHostContext, useHostLocation, useHostNavigation, usePluginAction, usePluginToast } from "@paperclipai/plugin-sdk/ui";
 import type { AskLevel } from "../ask-levels.js";
-import { summarizeTeam } from "../model.js";
 import { buildProfile, type AgentProfile, type ProfileAgentLike, type ProfileTask } from "../profile.js";
 import { useIssueComments, useTeamData } from "./board-data.js";
 import { AssignForm, DutySwitch } from "./agent-actions.js";
@@ -10,6 +9,7 @@ import { Icon } from "./icons.js";
 import { Avatar, usePolledData } from "./shared.js";
 import { ensureStyles } from "./styles.js";
 import { timeAgo } from "./time.js";
+import { TeamOrg } from "./TeamOrg.js";
 
 const PROFILE_POLL_MS = 15_000;
 
@@ -399,40 +399,11 @@ function Profile({ agentRef, view }: { agentRef: string; view: "overview" | "tas
   );
 }
 
-const STATE_WORD = { working: "Working", waiting: "Waiting on you", attention: "Needs attention", paused: "Paused", idle: "Idle" } as const;
-
-function TeamIndex() {
-  const navigation = useHostNavigation();
-  const source = useTeamData(PROFILE_POLL_MS);
-  const team = useMemo(() => (source.agents && source.board ? summarizeTeam(source.agents, source.board.issues) : null), [source.agents, source.board]);
-  const members = team?.members ?? [];
-  return (
-    <div className="ks-ws" data-kyoube-page="team">
-      <header className="ks-ws-head"><h1>Team</h1><p>Everyone who works here, and what they are doing now.</p></header>
-      <div className="ks-cards">
-        {members.map((member) => (
-          <a key={member.id} {...navigation.linkProps(member.href)} className="ks-card ks-member">
-            <Avatar icon={member.icon} name={member.name} size={48} state={member.state} />
-            <span className="ks-card-title">{member.name}</span>
-            <p>{member.title ?? ""}</p>
-            <span className="ks-state" data-state={member.state}><i />{STATE_WORD[member.state]}</span>
-          </a>
-        ))}
-        <a {...navigation.linkProps("/agents/new")} className="ks-card ks-member ks-hire">
-          <span className="ks-hire-ph" aria-hidden="true"><Icon name="userPlus" size={18} /></span>
-          <span className="ks-card-title">Hire an agent</span>
-          <p>Pick a role and a model.</p>
-        </a>
-      </div>
-    </div>
-  );
-}
-
 /** `/<company>/team` (the team) and `/<company>/team/<agent>[/tasks]` (an agent's profile). */
 export function AgentProfilePage(_props: PluginPageProps) {
   ensureStyles();
   const location = useHostLocation();
   const { ref, view } = parseTeamPath(location.pathname);
-  return ref ? <Profile key={ref} agentRef={ref} view={view} /> : <TeamIndex />;
+  return ref ? <Profile key={ref} agentRef={ref} view={view} /> : <TeamOrg />;
 }
 

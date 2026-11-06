@@ -141,6 +141,14 @@ a.ks-step:hover { border-color: color-mix(in oklab, var(--kyoube-accent, #0f766e
 .ks-ws { display: flex; flex-direction: column; gap: 22px; max-width: 1180px; container: ks-ws / inline-size; color: var(--foreground, #18181b); }
 .ks-ws-head h1 { margin: 0; font-family: var(--kyoube-font-display, Georgia, serif); font-weight: 400; font-size: 40px; line-height: 1; letter-spacing: -.01em; }
 .ks-ws-head p { margin: 8px 0 0; font-size: 13.5px; color: var(--muted-foreground, #71717a); }
+[data-kyoube-page="org"] { max-width: none; }
+[data-kyoube-page="org"] .ks-ws-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ko-head-links { display: flex; gap: 8px; }
+.ko-panel-body { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.ko-panel-body p { margin: 0; font-size: 13px; }
+.ko-panel-who { display: flex; gap: 12px; align-items: center; }
+.ko-panel-who p { color: var(--muted-foreground, #71717a); }
+.ko-panel-links { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--muted-foreground, #71717a); }
 .ks-ws-group { display: flex; flex-direction: column; gap: 10px; }
 .ks-ws-group h2 { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--muted-foreground, #71717a); }
 .ks-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }

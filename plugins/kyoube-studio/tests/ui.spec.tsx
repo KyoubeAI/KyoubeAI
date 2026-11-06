@@ -9,6 +9,7 @@ import { askLevelStep, parseTeamPath } from "../src/ui/Profile.js";
 import { headline } from "../src/ui/Home.js";
 import { AssignForm, DutySwitch } from "../src/ui/agent-actions.js";
 import { memberDetail } from "../src/ui/nav.js";
+import { TeamOrg, toOrgAgent } from "../src/ui/TeamOrg.js";
 import { isActivePath } from "../src/ui/shared.js";
 import { ensureStyles, STUDIO_CSS } from "../src/ui/styles.js";
 import { greeting, timeAgo } from "../src/ui/time.js";
@@ -42,11 +43,11 @@ function stubFetch(board: Board) {
   }) as typeof fetch;
 }
 
-function installBridge(data: Record<string, unknown>, pathname = "/BAP/dashboard", board: Board = EMPTY_BOARD, host: typeof context = context) {
+function installBridge(data: Record<string, unknown>, pathname = "/BAP/dashboard", board: Board = EMPTY_BOARD, host: typeof context = context, search = "") {
   (globalThis as BridgeGlobal).__paperclipPluginBridge__ = {
     sdkUi: {
       useHostContext: () => host,
-      useHostLocation: () => ({ pathname, search: "", hash: "" }),
+      useHostLocation: () => ({ pathname, search, hash: "" }),
       useHostNavigation: () => ({ resolveHref: (to: string) => `/BAP${to}`, navigate: () => {}, linkProps: (to: string) => ({ href: `/BAP${to}`, onClick: () => {} }) }),
       usePluginData: (key: string) => (key in data ? { data: data[key], loading: false, error: null, refresh: () => {} } : { data: null, loading: true, error: null, refresh: () => {} }),
       usePluginToast: () => () => null,
@@ -499,5 +500,58 @@ describe("shared agent actions", () => {
     const assign = render(AssignForm, { agent, onDone: () => {}, idPrefix: "ko-assign" });
     expect(assign).toContain('id="ko-assign-title"');
     expect(assign).toContain("What should Kai do?");
+  });
+});
+
+describe("team page", () => {
+  it("/team draws the org chart, not the old grid", async () => {
+    installBridge({ agents: agents([WRITER, MANAGER]) }, "/BAP/team", BOARD);
+    await loadBoard();
+    const html = render(AgentProfilePage);
+    expect(html).toContain('data-kyoube-page="org"');
+    expect(html).toContain('data-org-card="a1"');
+    expect(html).toContain('data-org-line="m1:a1"');
+    expect(html).toMatch(/href="\/BAP\/agents\/all"[^>]*>List</);
+    expect(html).toContain('href="/BAP/agents/new"');
+    expect(html).not.toContain("ks-member");
+  });
+
+  it("/team?present=1 opens presentation mode", async () => {
+    installBridge({ agents: agents([WRITER, MANAGER]) }, "/BAP/team", BOARD, context, "?present=1");
+    await loadBoard();
+    expect(render(AgentProfilePage)).toContain('data-org-present="true"');
+  });
+
+  it("/team says it is retrying when the first reads fail", () => {
+    (globalThis as BridgeGlobal).__paperclipPluginBridge__ = {
+      sdkUi: {
+        useHostContext: () => context,
+        useHostLocation: () => ({ pathname: "/BAP/team", search: "", hash: "" }),
+        useHostNavigation: () => ({ resolveHref: (to: string) => `/BAP${to}`, navigate: () => {}, linkProps: (to: string) => ({ href: `/BAP${to}`, onClick: () => {} }) }),
+        usePluginData: () => ({ data: null, loading: false, error: { code: "WORKER_UNAVAILABLE", message: "down" }, refresh: () => {} }),
+        usePluginToast: () => () => null,
+        usePluginAction: () => async () => ({}),
+      },
+    };
+    const html = render(TeamOrg);
+    expect(html).toContain("Couldn’t load the team. Retrying…");
+    expect(html).not.toContain("No agents yet");
+  });
+
+  it("/team with no agents offers the first hire", async () => {
+    installBridge({ agents: agents([]) }, "/BAP/team", BOARD);
+    await loadBoard();
+    const html = render(TeamOrg);
+    expect(html).toContain("No agents yet.");
+    expect(html).toMatch(/href="\/BAP\/agents\/new"[^>]*>Hire your first</);
+    expect(html).not.toContain("data-kyoube-org");
+  });
+
+  it("toOrgAgent uses the roster's wording", () => {
+    const now = Date.now();
+    const member: TeamMember = { id: "a9", name: "Nine", title: "Helper", icon: null, href: "/team/nine", state: "idle", detail: "Idle", lastActiveAt: new Date(now - 5 * 60_000).toISOString(), task: null, reportsTo: "m1" };
+    const agent = toOrgAgent(member, now);
+    expect(agent.detail).toBe("Idle · 5 min ago");
+    expect(agent).toMatchObject({ id: "a9", reportsTo: "m1", href: "/team/nine", task: null });
   });
 });
