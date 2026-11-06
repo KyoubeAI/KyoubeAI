@@ -32,11 +32,11 @@ function flatten(nodes: OrgNode[]): OrgAgent[] {
 
 export function buildOrgTree(agents: OrgAgent[]): OrgTree {
   const byId = new Map(agents.map((a) => [a.id, a]));
-  const index = new Map(agents.map((a, i) => [a.id, i]));
   const managerOf = new Map<string, string | null>();
   for (const a of agents) managerOf.set(a.id, a.reportsTo && a.reportsTo !== a.id && byId.has(a.reportsTo) ? a.reportsTo : null);
 
-  // Break loops: in each cycle the member that comes first in the list becomes top-level.
+  // Break loops: in each cycle the member with the smallest id becomes top-level. Not the list's order,
+  // which follows state and heartbeat, so the chart does not jump between polls.
   for (const a of agents) {
     const path: string[] = [];
     const seen = new Set<string>();
@@ -48,7 +48,7 @@ export function buildOrgTree(agents: OrgAgent[]): OrgTree {
     }
     if (cur) {
       const cycle = path.slice(path.indexOf(cur));
-      const first = cycle.reduce((best, id) => (index.get(id)! < index.get(best)! ? id : best));
+      const first = cycle.reduce((best, id) => (id < best ? id : best));
       managerOf.set(first, null);
     }
   }

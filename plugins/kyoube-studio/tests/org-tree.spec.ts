@@ -44,12 +44,24 @@ describe("the org tree", () => {
     expect(tree.shelf.length).toBe(28);
   });
 
-  it("breaks a reportsTo loop at the first agent in the list", () => {
+  it("breaks a reportsTo loop at the agent with the smallest id", () => {
     const tree = buildOrgTree(org([["a", "A", "b"], ["b", "B", "a"], ["c", "C", "a"]]));
     expect(tree.managerOf.get("a")).toBeNull();
     expect(tree.managerOf.get("b")).toBe("a");
     expect(tree.teams.map((t) => t.id)).toEqual(["team:a"]);
     expect(tree.teams[0]!.members.map((m) => m.agent.name)).toEqual(["B", "C"]);
+  });
+
+  it("breaks a loop at the same agent whatever order the list comes in", () => {
+    const rows: Array<[string, string, string | null]> = [["m", "Mia", "k"], ["k", "Kai", "z"], ["z", "Zed", "m"], ["x", "Xi", "k"]];
+    const orders = [rows, [...rows].reverse(), [rows[2]!, rows[0]!, rows[3]!, rows[1]!]];
+    for (const order of orders) {
+      const tree = buildOrgTree(org(order));
+      expect(tree.managerOf.get("k")).toBeNull();
+      expect(tree.managerOf.get("m")).toBe("k");
+      expect(tree.managerOf.get("z")).toBe("m");
+      expect(tree.heads.map((h) => h.agent.id)).toEqual(["k"]);
+    }
   });
 
   it("an unknown manager makes the agent top-level", () => {
