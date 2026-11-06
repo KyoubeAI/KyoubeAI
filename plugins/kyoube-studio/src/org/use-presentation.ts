@@ -4,12 +4,10 @@
  */
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { chartKeyAction } from "./org-chart-parts.js";
-import { tourStep, type TourEvent, type TourState, type TourStop } from "./org-tour.js";
+import { startTour, tourStep, type TourEvent, type TourStop } from "./org-tour.js";
 
 /** How often the tour checks whether a stop's time is up. */
 const TICK_MS = 250;
-
-const startTour = (now: number): TourState => ({ index: 0, paused: false, manualAt: null, stopStartedAt: now });
 
 export interface Presentation {
   /** The tour's stop. It can run past the end of shrunk stops until the next tick clamps it. */
@@ -42,12 +40,16 @@ export function usePresentation({ present, onPresentChange, rootRef, stops }: {
     if (presentRef.current) send("manual");
   }, [send]);
 
-  // Each presentation starts at the overview, then the timer moves it on.
+  // Each presentation starts at the overview, then the timer moves it on. Leaving resets the tour too,
+  // so the first frame of the next presentation is the overview, not the stop this one ended on.
   useEffect(() => {
     if (!present) return;
     setTour(startTour(Date.now()));
     const id = setInterval(() => send("tick"), TICK_MS);
-    return () => clearInterval(id);
+    return () => {
+      clearInterval(id);
+      setTour(startTour(Date.now()));
+    };
   }, [present, send]);
 
   // Space pauses, the arrows step, Esc leaves and does nothing else.

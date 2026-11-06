@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEve
 import { characterFor } from "../characters.js";
 import { layoutOrg, type CardBox } from "./org-layout.js";
 import { buildOrgTree, focusIds, panelOf, tallyText } from "./org-tree.js";
-import { boxStyle, cardLabel, chartKeyAction, chipText, effectiveCollapsed, playableMoments, safeStorage, tourRefit, type TourFrame } from "./org-chart-parts.js";
+import { boxStyle, cardLabel, chartKeyAction, chipText, effectiveCollapsed, playableMoments, refitOnLeave, safeStorage, tourRefit, type TourFrame } from "./org-chart-parts.js";
 import { momentSnapshot, type Moment, type MomentSnapshot } from "./org-moments.js";
 import { clampTourIndex, tourStops } from "./org-tour.js";
 import type { OrgAgent, OrgPanel } from "./org-types.js";
@@ -176,9 +176,12 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
     changeCollapsed(next);
   };
 
-  // The viewport's real size; the first report re-fits the chart once. With fillWindow the chart's
-  // height is measured first (before paint, so that first fit already has it) and on every window resize.
+  // The viewport's real size; the first report re-fits the chart once, and so does the first after a
+  // presentation (the chart shrinks back from the screen and would keep the last stop's view). With
+  // fillWindow the chart's height is measured first (before paint, so that first fit already has it) and
+  // on every window resize.
   const [filledHeight, setFilledHeight] = useState<number | null>(null);
+  const refitPending = useRef(false);
   useLayoutEffect(() => {
     const el = rootRef.current;
     if (!el) return;
@@ -196,8 +199,9 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
       const next = { w: entry.contentRect.width, h: entry.contentRect.height };
       if (next.w === 0 || next.h === 0) return;
       setSize(next);
-      if (!fitted) {
+      if (!fitted || refitPending.current) {
         fitted = true;
+        refitPending.current = false;
         setView(fitView(boundsRef.current, next));
       }
     });
@@ -207,9 +211,15 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
       stopFill();
     };
   }, [fillWindow]);
-  // Measure again once a presentation ends, in case the window changed while it ran.
+  // Once a presentation ends, fit the chart on the next size report, and measure again in case the
+  // window changed while it ran.
+  const wasPresent = useRef(present);
   useLayoutEffect(() => {
-    if (fillWindow && !present && rootRef.current) setFilledHeight(measureFillHeight(rootRef.current));
+    if (refitOnLeave(wasPresent.current, present)) refitPending.current = true;
+    wasPresent.current = present;
+    // Still in full screen until exitFullscreen settles; the window's resize measures then.
+    const el = rootRef.current;
+    if (fillWindow && !present && el && document.fullscreenElement !== el) setFilledHeight(measureFillHeight(el));
   }, [fillWindow, present]);
 
   // The tour moves the view to each stop; the stage's transition glides it, and reduced motion cuts.

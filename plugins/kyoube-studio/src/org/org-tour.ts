@@ -67,6 +67,9 @@ export type TourEvent =
   | { type: "next" | "prev"; now: number }
   | { type: "manual"; now: number };
 
+/** A tour at its overview, playing, with no pan, timed from `now`: how a presentation starts, and the state it leaves behind. */
+export const startTour = (now: number): TourState => ({ index: 0, paused: false, manualAt: null, stopStartedAt: now });
+
 /** `index` kept inside `0..n - 1`, for when stops shrink (an agent leaves mid-tour). 0 when there are none. */
 export const clampTourIndex = (index: number, n: number): number => Math.max(0, Math.min(index, n - 1));
 

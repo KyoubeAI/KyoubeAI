@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { buildOrgTree, focusIds } from "../src/org/org-tree.js";
 import { effectiveCollapsed, OrgChart, playableMoments, type OrgChartProps } from "../src/org/OrgChart.js";
-import { chartKeyAction, isTypingTarget, tourRefit } from "../src/org/org-chart-parts.js";
+import { chartKeyAction, isTypingTarget, refitOnLeave, tourRefit } from "../src/org/org-chart-parts.js";
 import { momentSnapshot } from "../src/org/org-moments.js";
 import { ORG_CSS } from "../src/org/org-styles.js";
 import type { OrgAgent } from "../src/org/org-types.js";
@@ -235,6 +235,13 @@ describe("OrgChart", () => {
     expect(chartKeyAction(key("Escape"), presenting)).toBe("leave-present");
     expect(chartKeyAction(key("Escape"), { present: false, hasSelection: true })).toBe("clear-selection");
     expect(chartKeyAction(key(" ", { altKey: false, ctrlKey: false, metaKey: false, repeat: false }), presenting)).toBe("toggle");
+  });
+
+  it("refitOnLeave: only leaving presentation fits the chart to the page again", () => {
+    expect(refitOnLeave(true, false)).toBe(true);
+    expect(refitOnLeave(false, true)).toBe(false);
+    expect(refitOnLeave(true, true)).toBe(false);
+    expect(refitOnLeave(false, false)).toBe(false);
   });
 
   it("tourRefit: glide to each new stop, hold still while someone pans, and return when the tour resumes", () => {

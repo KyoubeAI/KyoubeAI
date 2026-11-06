@@ -83,3 +83,8 @@ export function tourRefit(prev: TourFrame | null, next: TourFrame): boolean {
   if (prev.manual) return true;
   return next.view.x !== prev.view.x || next.view.y !== prev.view.y || next.view.scale !== prev.view.scale;
 }
+
+/** Whether the chart should fit itself to the page on its next size report: when a presentation just ended. */
+export function refitOnLeave(wasPresent: boolean, present: boolean): boolean {
+  return wasPresent && !present;
+}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildOrgTree } from "../src/org/org-tree.js";
 import { layoutOrg } from "../src/org/org-layout.js";
-import { tourStep, tourStops, type TourState } from "../src/org/org-tour.js";
+import { startTour, tourStep, tourStops, type TourState } from "../src/org/org-tour.js";
 import { FIVE_ROOTS, FLAT, INDUSTRIAL } from "./org-fixtures.js";
 
 const stopsFor = (agents: typeof FIVE_ROOTS, collapsed: ReadonlySet<string> = new Set()) => {
@@ -79,6 +79,12 @@ describe("tourStops", () => {
   it("a one-agent overview says 1 agent", () => {
     const { stops } = stopsFor(FIVE_ROOTS.filter((a) => a.id === "zed"));
     expect(stops[0]!.caption).toBe("1 agent");
+  });
+});
+
+describe("startTour", () => {
+  it("is the overview, playing, with no pan, timed from now (what a presentation starts and leaves with)", () => {
+    expect(startTour(5000)).toEqual({ index: 0, paused: false, manualAt: null, stopStartedAt: 5000 });
   });
 });
 
