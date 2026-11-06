@@ -427,6 +427,7 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
                 data-org-line={`${c.from}:${c.to}`}
                 data-state={tree.byId.get(c.to)?.state}
                 data-moment={playing[c.to]?.line ? "handover" : undefined}
+                pathLength={playing[c.to]?.line ? 100 : undefined}
                 data-dim={focus !== null && !(focus.has(c.from) && focus.has(c.to)) ? "" : undefined}
                 d={c.path}
               />

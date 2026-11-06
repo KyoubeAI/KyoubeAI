@@ -217,6 +217,12 @@ describe("OrgChart", () => {
     }
   });
 
+  it("the handover ripple is one dash per line: its dash and travel are in pathLength units (100)", () => {
+    expect(ORG_CSS).toMatch(/\.ko-line\[data-moment="handover"\] \{[^}]*stroke-dasharray: 10 100;/);
+    // The dash enters before the line's start and leaves past its end (100), so none shows before or after.
+    expect(ORG_CSS).toMatch(/@keyframes ko-ripple \{ from \{ stroke-dashoffset: 10; \} to \{ stroke-dashoffset: -100; \} \}/);
+  });
+
   it("chartKeyAction: modifier combos and held keys pass through to the browser", () => {
     const key = (k: string, more: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; repeat?: boolean } = {}) => ({ key: k, defaultPrevented: false, target: null, ...more });
     const presenting = { present: true, hasSelection: false };

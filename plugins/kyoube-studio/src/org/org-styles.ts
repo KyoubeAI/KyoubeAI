@@ -115,11 +115,12 @@ ${tintRules}
   @media (max-width: 639px) { .ko-side { animation-name: ko-slide-up; } }
   .ko-card[data-moment="finished"]::after { content: ""; position: absolute; left: 50%; top: 50%; width: 100%; aspect-ratio: 1; border-radius: 50%; pointer-events: none; background: radial-gradient(circle, color-mix(in oklab, ${WORKING} 55%, transparent) 0%, transparent 70%); transform: translate(-50%, -50%) scale(.2); opacity: 0; animation: ko-burst 1.2s ease-out; }
   .ko-card[data-moment="handover"] { animation: ko-pulse .6s ease-out .4s; }
-  .ko-line[data-moment="handover"] { stroke: ${WORKING}; stroke-width: 3; stroke-dasharray: 10 400; animation: ko-ripple 1s ease-in; }
+  /* A rippling line has pathLength="100" (OrgChart), so one 10-unit dash runs its whole length, however long. */
+  .ko-line[data-moment="handover"] { stroke: ${WORKING}; stroke-width: 3; stroke-dasharray: 10 100; animation: ko-ripple 1s ease-in forwards; }
   .ko-card[data-moment="problem"] { animation: ko-shake .5s ease-in-out 1; }
   @keyframes ko-burst { 0% { transform: translate(-50%, -50%) scale(.2); opacity: .9; } 100% { transform: translate(-50%, -50%) scale(1.8); opacity: 0; } }
   @keyframes ko-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in oklab, ${WORKING} 45%, transparent); } 100% { box-shadow: 0 0 0 10px color-mix(in oklab, ${WORKING} 0%, transparent); } }
-  @keyframes ko-ripple { from { stroke-dashoffset: 410; } to { stroke-dashoffset: 0; } }
+  @keyframes ko-ripple { from { stroke-dashoffset: 10; } to { stroke-dashoffset: -100; } }
   @keyframes ko-shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-5px); } 40% { transform: translateX(5px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(3px); } }
   @keyframes ko-breathe { 0%, 100% { box-shadow: 0 0 0 2px color-mix(in oklab, ${WORKING} 45%, transparent); } 50% { box-shadow: 0 0 0 6px color-mix(in oklab, ${WORKING} 0%, transparent); } }
   @keyframes ko-alarm { 0%, 100% { box-shadow: 0 0 0 2px ${DANGER}; } 50% { box-shadow: 0 0 0 6px color-mix(in oklab, ${DANGER} 0%, transparent); } }
