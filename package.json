@@ -14,7 +14,7 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "smoke": "bash scripts/smoke.sh",
-    "test:sh": "bats docker/system/tests scripts/tests"
+    "test:sh": "bats docker/system/tests scripts/tests && node --test scripts/tests/*.test.mjs"
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",
