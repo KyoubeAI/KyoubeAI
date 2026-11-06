@@ -700,6 +700,15 @@ async function writeFullCore(root) {
   await writeFile(path.join(root, "packages/adapters/hermes/src/server/execute.ts"), HERMES_QUIET_2026_916_1);
   await mkdir(path.join(root, "packages", "adapter-utils", "src"), { recursive: true });
   await writeFile(path.join(root, "packages/adapter-utils/src/server-utils.ts"), CHILD_STDIN_2026_1023_0);
+  // The Claude sign-in files the setup-token-* patches change, verbatim (tests/setup-token.spec.mjs).
+  await mkdir(path.join(root, "packages", "adapters", "claude-local", "src", "server"), { recursive: true });
+  for (const [name, target] of [
+    ["setup-token-parse-2026.1023.0.ts", "packages/adapters/claude-local/src/server/setup-token-parse.ts"],
+    ["setup-token-runner-2026.1023.0.ts", "packages/adapters/claude-local/src/server/setup-token-runner.ts"],
+    ["local-ai-browser-login-2026.1023.0.js", "server/dist/services/local-ai-browser-login.js"],
+  ]) {
+    await writeFile(path.join(root, target), await readFile(path.join(HERE, "fixtures", name), "utf8"));
+  }
 }
 
 const licenseImportPatch = patch("license-seat-limit-import");
@@ -1171,7 +1180,7 @@ describe("agent-questions-ask-level", () => {
 
   it("is shipped and checked by the Dockerfile", async () => {
     const dockerfile = await readFile(DOCKERFILE, "utf8");
-    expect(dockerfile).toMatch(/^COPY docker\/core-patches\/apply\.mjs docker\/core-patches\/lib\.mjs docker\/core-patches\/patches\.mjs docker\/core-patches\/ask-level\.mjs \/opt\/kyoube\/core-patches\/$/m);
+    expect(dockerfile).toMatch(/^COPY docker\/core-patches\/apply\.mjs docker\/core-patches\/lib\.mjs docker\/core-patches\/patches\.mjs docker\/core-patches\/ask-level\.mjs docker\/core-patches\/setup-token-screen\.mjs \/opt\/kyoube\/core-patches\/$/m);
     expect(dockerfile).toContain("grep -q 'kyoube-ask-level' /app/server/dist/services/issue-thread-interactions.js");
     expect(dockerfile).toContain('import("/opt/kyoube/core-patches/ask-level.mjs")');
   });

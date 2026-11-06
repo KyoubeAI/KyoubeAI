@@ -45,6 +45,7 @@ export const CORE_VERSION = "2026.1023.0";
 export const SKIP_HARNESS_LABEL = "Skip for now and connect the harness later from the Terminal page";
 
 import { MESSAGES as ASK_MESSAGES } from "./ask-level.mjs";
+import { renderTerminalScreen } from "./setup-token-screen.mjs";
 
 /**
  * What the `visibility-create-*` entries add after a create route's own assignment check: when the
@@ -188,6 +189,110 @@ export const PATCHES = [
       'onLogError(err, runId, "failed to write child process stdin"); }); // KyoubeAI core patch child-stdin-closed-early\n$3$4',
     expect: 1,
     upstreamFix: /stdin\.on\("error", handleStdinFailure\);/g,
+  },
+  // Claude subscription sign-in (Connections → Claude subscription), upstream issue #17868. The
+  // server runs `claude setup-token` in a PTY and reads its screen twice: for the sign-in link,
+  // then, after the person pastes the code, for the token. With the Claude Code the image ships
+  // (2.1.306) both reads fail on 2026.1023.0, so the link never appears ("Preparing browser
+  // sign-in…" for ever) and, once it does, the pasted code ends in "Sign-in ended before the
+  // account was connected". The `setup-token-*` entries fix it, each upstream's own change:
+  //
+  // `setup-token-copy-hint`: Claude prints "Hold Shift while selecting to use your terminal's
+  // native copy" between the link and "Paste code here if prompted", and the prompt parser
+  // accepted nothing in between. Upstream PR #15550 (merged 2026-11-02, after 1023.0) skips that
+  // exact line.
+  {
+    id: "setup-token-copy-hint",
+    title: "Claude sign-in: the link appears although Claude prints a copy hint before the code prompt",
+    upstream: "https://github.com/paperclipai/paperclip/pull/15550",
+    files: ["packages/adapters/claude-local/src/server/setup-token-parse.ts"],
+    // Not again after itself, nor after upstream's own skip.
+    pattern: /(\n( *)if \(trimmed\.replace\(TRAILING_PUNCTUATION_RE, ""\) === url\) continue;\n)(?! *if \((?:COPY_HINT_LINE_RE|\/\^Hold))/g,
+    replacement:
+      "$1$2if (/^Hold\\s+Shift\\s+while\\s+selecting\\s+to\\s+use\\s+your\\s+terminal['’]s\\s+native\\s+copy\\.?$/i.test(trimmed)) continue; // KyoubeAI core patch setup-token-copy-hint\n",
+    expect: 1,
+    upstreamFix: /if \(COPY_HINT_LINE_RE\.test\(trimmed\)\) continue;/g,
+  },
+  // `setup-token-rendered-screen` and the four `-runner-*` entries: Claude redraws its
+  // success screen by difference, so the raw stream never holds the token's anchor lines whole.
+  // The runner now also keeps the whole sign-in stream (bounded like its own buffers, dropped once
+  // the token binds) and, when the raw parse finds no token, parses the screen that stream draws
+  // (setup-token-screen.mjs). Upstream PR #17276 (open).
+  {
+    id: "setup-token-rendered-screen",
+    title: "Claude sign-in: the core can read the token from Claude's redrawn success screen",
+    upstream: "https://github.com/paperclipai/paperclip/pull/17276",
+    files: ["packages/adapters/claude-local/src/server/setup-token-parse.ts"],
+    // Only in a file that has no renderTerminalScreen yet (ours or upstream's).
+    pattern: /(?<!export function renderTerminalScreen\([\s\S]*)(\nexport function parseSetupTokenCredential\(text: string\): string \| null \{\n)(?![\s\S]*export function renderTerminalScreen\()/g,
+    replacement: `\n// KyoubeAI core patch setup-token-rendered-screen (docker/core-patches/setup-token-screen.mjs)\nexport ${renderTerminalScreen.toString()}\n$1`,
+    expect: 1,
+    upstreamFix: /\nexport function renderTerminalScreen\(text: string\): string \{\n/g,
+  },
+  {
+    id: "setup-token-rendered-runner-import",
+    title: "Claude sign-in: the runner imports the screen renderer",
+    upstream: "https://github.com/paperclipai/paperclip/pull/17276",
+    files: ["packages/adapters/claude-local/src/server/setup-token-runner.ts"],
+    pattern: /(\n( *)parseSetupTokenPrompt,\n)( *type SetupTokenPrompt,\n\} from "\.\/setup-token-parse\.js";)/g,
+    replacement: "$1$2renderTerminalScreen, // KyoubeAI core patch setup-token-rendered-runner-import\n$3",
+    expect: 1,
+    upstreamFix: /\n *renderTerminalScreen,\n *type SetupTokenPrompt,\n\} from "\.\/setup-token-parse\.js";/g,
+  },
+  {
+    id: "setup-token-rendered-runner-capture",
+    title: "Claude sign-in: the runner parses the drawn screen when the raw stream holds no token",
+    upstream: "https://github.com/paperclipai/paperclip/pull/17276",
+    files: ["packages/adapters/claude-local/src/server/setup-token-runner.ts"],
+    pattern:
+      /(\n( *)const token = )parseSetupTokenCredential\(tokenBuffer\);(\n *if \(!token\) return;\n *tokenBytes = Buffer\.from\(token, "utf8"\);\n *tokenBuffer = "";\n)/g,
+    replacement:
+      "$1parseSetupTokenCredential(tokenBuffer) ?? parseSetupTokenCredential(renderTerminalScreen(kyoubeTranscript)); // KyoubeAI core patch setup-token-rendered-runner-capture$3" +
+      '$2kyoubeTranscript = "";\n',
+    expect: 1,
+    upstreamFix: /parseSetupTokenCredential\(renderTerminalScreen\(transcript\)\)/g,
+  },
+  {
+    id: "setup-token-rendered-runner-transcript",
+    title: "Claude sign-in: the runner keeps the whole sign-in stream until the token binds",
+    upstream: "https://github.com/paperclipai/paperclip/pull/17276",
+    files: ["packages/adapters/claude-local/src/server/setup-token-runner.ts"],
+    // Not again after itself, nor where upstream's onData already keeps its transcript.
+    pattern: /(\n( *)const onData = \(chunk: string\): void => \{\n)(?! *(?:\/\/ KyoubeAI core patch setup-token-rendered-runner-transcript|if \(onCredential && !tokenBytes\) \{\n *transcript \+= chunk;))/g,
+    replacement:
+      "$1$2  // KyoubeAI core patch setup-token-rendered-runner-transcript: the whole stream, for the drawn screen.\n" +
+      "$2  if (onCredential && !tokenBytes) {\n" +
+      "$2    kyoubeTranscript += chunk;\n" +
+      "$2    if (kyoubeTranscript.length > CLAUDE_SETUP_TOKEN_MAX_BUFFER_CHARS) kyoubeTranscript = kyoubeTranscript.slice(kyoubeTranscript.length - CLAUDE_SETUP_TOKEN_MAX_BUFFER_CHARS);\n" +
+      "$2  }\n",
+    expect: 1,
+    upstreamFix: /\n *transcript \+= chunk;\n/g,
+  },
+  {
+    id: "setup-token-rendered-runner-declare",
+    title: "Claude sign-in: the runner declares the stream it keeps for the drawn screen",
+    upstream: "https://github.com/paperclipai/paperclip/pull/17276",
+    files: ["packages/adapters/claude-local/src/server/setup-token-runner.ts"],
+    // Not again after itself, nor next to upstream's own `transcript`.
+    pattern: /(\n( *)let tokenBuffer = "";\n)(?! *let (?:kyoubeTranscript|transcript) = "";)/g,
+    replacement: '$1$2let kyoubeTranscript = ""; // KyoubeAI core patch setup-token-rendered-runner-declare\n',
+    expect: 1,
+    upstreamFix: /\n *let tokenBuffer = "";\n *let transcript = "";\n/g,
+  },
+  // `setup-token-pty-window`: the PTY bridge gave Claude a 0×0 terminal, so Ink wrapped the link
+  // and the token at 80 columns and left cells of the link next to the token. A 50×1000 window,
+  // set in the child before it runs the CLI, keeps both on one line. Upstream PR #17276 (open).
+  {
+    id: "setup-token-pty-window",
+    title: "Claude and Codex sign-in: the sign-in terminal has a real window size",
+    upstream: "https://github.com/paperclipai/paperclip/pull/17276",
+    files: ["server/dist/services/local-ai-browser-login.js"],
+    pattern: /\nimport errno, os, pty, select, signal, sys\npid, master = pty\.fork\(\)\nif pid == 0:\n( *)(os\.execvpe\(sys\.argv\[1\], sys\.argv\[1:\], os\.environ\))/g,
+    replacement:
+      "\nimport errno, fcntl, os, pty, select, signal, struct, sys, termios\npid, master = pty.fork()\nif pid == 0:\n" +
+      '$1fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 1000, 0, 0))  # KyoubeAI core patch setup-token-pty-window\n$1$2',
+    expect: 1,
+    upstreamFix: /\n *fcntl\.ioctl\(0, termios\.TIOCSWINSZ, struct\.pack\("HHHH", \d+, \d+, 0, 0\)\)\n/g,
   },
   // The Hermes transcript parser made every stdout line its own agent
   // message, so a reply's paragraphs, list items and table rows became

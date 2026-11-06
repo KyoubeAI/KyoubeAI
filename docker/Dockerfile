@@ -133,7 +133,7 @@ ENV PATH=/kyoubeai/.local/bin:${PATH} \
 # earlier release), a failure says so before naming the patch.
 # ---------------------------------------------------------------------------
 ARG KYOUBE_CORE_VERSION
-COPY docker/core-patches/apply.mjs docker/core-patches/lib.mjs docker/core-patches/patches.mjs docker/core-patches/ask-level.mjs /opt/kyoube/core-patches/
+COPY docker/core-patches/apply.mjs docker/core-patches/lib.mjs docker/core-patches/patches.mjs docker/core-patches/ask-level.mjs docker/core-patches/setup-token-screen.mjs /opt/kyoube/core-patches/
 RUN gosu node node /opt/kyoube/core-patches/apply.mjs --root /app --report --core-version "${KYOUBE_CORE_VERSION}"
 # The licensing hook (a standing core patch above) imports Better Auth's APIError.
 # Check the hook marker is in the served auth module, that the module has exactly
