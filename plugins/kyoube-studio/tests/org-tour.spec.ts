@@ -120,6 +120,32 @@ describe("tourStep", () => {
     expect(resumed.manualAt).toBeNull();
   });
 
+  it("resuming starts a fresh dwell", () => {
+    // Paused far longer than the stop's 4 s: unpausing must not jump on at the next tick.
+    const paused = tourStep(start, { type: "toggle", now: 2000 }, stops);
+    const resumed = tourStep(paused, { type: "toggle", now: 60000 }, stops);
+    expect(resumed).toMatchObject({ paused: false, index: 0, stopStartedAt: 60000 });
+    expect(tourStep(resumed, { type: "tick", now: 60250 }, stops).index).toBe(0);
+    expect(tourStep(resumed, { type: "tick", now: 64000 }, stops).index).toBe(1);
+
+    // The same after a manual move: 15 s of no input resumes with a whole stop ahead.
+    const moved = tourStep(start, { type: "manual", now: 2000 }, stops);
+    const back = tourStep(moved, { type: "tick", now: 17000 }, stops);
+    expect(back).toMatchObject({ paused: false, manualAt: null, index: 0, stopStartedAt: 17000 });
+    expect(tourStep(back, { type: "tick", now: 17250 }, stops).index).toBe(0);
+  });
+
+  it("an index past the end is clamped when stops shrink", () => {
+    const shrunk = stops.slice(0, 3);
+    const s: TourState = { ...start, index: 7 };
+    expect(tourStep(s, { type: "tick", now: 1001 }, shrunk).index).toBe(2);
+    expect(tourStep(s, { type: "tick", now: 1000 + shrunk[2]!.ms }, shrunk).index).toBe(0);
+    expect(tourStep(s, { type: "next", now: 2000 }, shrunk).index).toBe(0);
+    expect(tourStep(s, { type: "prev", now: 2000 }, shrunk).index).toBe(1);
+    expect(tourStep(s, { type: "toggle", now: 2000 }, shrunk).index).toBe(2);
+    expect(tourStep(s, { type: "tick", now: 1001 }, stops.slice(0, 1)).index).toBe(0);
+  });
+
   it("copes with no stops", () => {
     expect(tourStep(start, { type: "tick", now: 99999 }, [])).toEqual(start);
     expect(tourStep(start, { type: "next", now: 99999 }, [])).toEqual(start);

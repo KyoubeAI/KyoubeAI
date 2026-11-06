@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboa
 import { characterFor } from "../characters.js";
 import { layoutOrg, type CardBox } from "./org-layout.js";
 import { buildOrgTree, focusIds, panelOf, tallyText } from "./org-tree.js";
-import { boxStyle, cardLabel, chipText, effectiveCollapsed, playableMoments, safeStorage } from "./org-chart-parts.js";
+import { boxStyle, cardLabel, chartKeyAction, chipText, effectiveCollapsed, playableMoments, safeStorage, tourRefit, type TourFrame } from "./org-chart-parts.js";
 import { momentSnapshot, type Moment, type MomentSnapshot } from "./org-moments.js";
+import { clampTourIndex, tourStops } from "./org-tour.js";
 import type { OrgAgent, OrgPanel } from "./org-types.js";
 import { defaultCollapsed, fitView, readCollapsed, writeCollapsed, zoomAt, type View } from "./org-view.js";
 import { ensureOrgStyles } from "./org-styles.js";
+import { usePresentation } from "./use-presentation.js";
 
 export { effectiveCollapsed, playableMoments };
 
@@ -65,18 +67,30 @@ function Card({ agent, box, origin, dim, selected, moment, onSelect }: { agent: 
   );
 }
 
-export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPanel, onPresentChange, storageKey }: OrgChartProps): JSX.Element {
+export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPanel, present, onPresentChange, storageKey }: OrgChartProps): JSX.Element {
   ensureOrgStyles();
   const tree = useMemo(() => buildOrgTree(agents), [agents]);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => defaultCollapsed(tree, agents.length));
 
-  const selected = selectedId !== null ? tree.byId.get(selectedId) ?? null : null;
+  // The tour shows the whole org, so a selection waits (no side panel, no dimming) until it ends.
+  const selected = !present && selectedId !== null ? tree.byId.get(selectedId) ?? null : null;
   const focus = useMemo(() => (selected ? focusIds(tree, selected.id) : null), [tree, selected]);
   const keepOpen = useMemo(() => new Set(focus ? [...focus].map((id) => panelOf(tree, id)) : []), [tree, focus]);
-  const drawn = useMemo(() => effectiveCollapsed(collapsed, keepOpen), [collapsed, keepOpen]);
-  const layout = useMemo(() => layoutOrg(tree, drawn), [tree, drawn]);
+  const folded = useMemo(() => effectiveCollapsed(collapsed, keepOpen), [collapsed, keepOpen]);
+  const foldedLayout = useMemo(() => layoutOrg(tree, folded), [tree, folded]);
 
   const rootRef = useRef<HTMLDivElement>(null);
+  // The stops' order, times and panels do not depend on what is folded, so the folded layout's stops drive the tour.
+  const foldedStops = useMemo(() => (present ? tourStops(tree, foldedLayout) : []), [present, tree, foldedLayout]);
+  const show = usePresentation({ present, onPresentChange, rootRef, stops: foldedStops });
+  // A folded team opens for its stop and folds again afterwards.
+  const tourPanel = foldedStops[clampTourIndex(show.index, foldedStops.length)]?.panelId ?? null;
+  const drawn = useMemo(() => (tourPanel !== null && folded.has(tourPanel) ? effectiveCollapsed(folded, [tourPanel]) : folded), [folded, tourPanel]);
+  const layout = useMemo(() => (drawn === folded ? foldedLayout : layoutOrg(tree, drawn)), [tree, drawn, folded, foldedLayout]);
+  const stops = useMemo(() => (layout === foldedLayout ? foldedStops : tourStops(tree, layout)), [tree, layout, foldedLayout, foldedStops]);
+  const stopIndex = clampTourIndex(show.index, stops.length);
+  const stop = stops[stopIndex] ?? null;
+
   const viewportRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState(INITIAL_SIZE);
   const [view, setView] = useState<View>(() => fitView(layout.bounds, INITIAL_SIZE));
@@ -159,7 +173,22 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
     return () => ro.disconnect();
   }, []);
 
+  // The tour moves the view to each stop; the stage's transition glides it, and reduced motion cuts.
+  const lastFrame = useRef<TourFrame | null>(null);
+  useEffect(() => {
+    if (!stop) {
+      lastFrame.current = null;
+      return;
+    }
+    const frame = { index: stopIndex, manual: show.manual, view: fitView(stop.rect, size) };
+    const prev = lastFrame.current;
+    const refit = tourRefit(prev, frame);
+    lastFrame.current = refit || !prev ? frame : { ...frame, view: prev.view };
+    if (refit) setView(frame.view);
+  }, [stop, stopIndex, show.manual, size]);
+
   // Wheel zoom needs a non-passive listener so the page does not scroll.
+  const { noteManual } = show;
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
@@ -168,23 +197,26 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
       const r = el.getBoundingClientRect();
       const point = { x: e.clientX - r.left, y: e.clientY - r.top };
       setView((v) => zoomAt(v, point, Math.exp(-e.deltaY / 500)));
+      noteManual();
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, []);
+  }, [noteManual]);
 
-  // Esc anywhere on the page clears the selection while something is selected.
+  // Esc anywhere on the page clears the selection, unless something else handled it or it was typed into a field.
+  // In presentation the selection is set aside and use-presentation's Esc leaves instead.
+  const hasSelection = selected !== null;
   useEffect(() => {
-    if (selectedId === null) return;
+    if (!hasSelection || typeof document === "undefined") return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || rootRef.current?.contains(e.target as Node)) return;
-      onSelect(null);
+      if (rootRef.current?.contains(e.target as Node)) return; // onRootKey has it.
+      if (chartKeyAction(e, { present, hasSelection }) === "clear-selection") onSelect(null);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [selectedId, onSelect]);
+  }, [hasSelection, present, onSelect]);
   const onRootKey = (e: ReactKeyboardEvent) => {
-    if (e.key === "Escape" && selectedId !== null) onSelect(null);
+    if (chartKeyAction(e.nativeEvent, { present, hasSelection }) === "clear-selection") onSelect(null);
   };
 
   // Pan with one pointer, pinch with two. Capture starts only past the drag threshold, so a click still reaches its card.
@@ -228,6 +260,7 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
       const dx = (cur.x - prev.x) / 2;
       const dy = (cur.y - prev.y) / 2;
       setView((v) => zoomAt({ ...v, x: v.x + dx, y: v.y + dy }, midAfter, before > 0 ? after / before : 1));
+      noteManual();
       return;
     }
     if (!g.moved) {
@@ -238,6 +271,7 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
     }
     pointers.current.set(e.pointerId, cur);
     setView((v) => ({ ...v, x: v.x + cur.x - prev.x, y: v.y + cur.y - prev.y }));
+    noteManual();
   };
   const onPointerEnd = (e: ReactPointerEvent) => {
     if (!pointers.current.delete(e.pointerId)) return;
@@ -311,7 +345,7 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
     : null;
 
   return (
-    <div className="ko-org" data-kyoube-org="" ref={rootRef} onKeyDown={onRootKey}>
+    <div className={present && show.fill ? "ko-org ko-fill" : "ko-org"} data-kyoube-org="" data-org-present={present ? "true" : undefined} ref={rootRef} onKeyDown={onRootKey}>
       <div
         className="ko-viewport"
         ref={viewportRef}
@@ -323,7 +357,7 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
         onClickCapture={onClickCapture}
         onClick={onStageClick}
       >
-        <div className="ko-stage" style={{ width: bounds.w, height: bounds.h, transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
+        <div className="ko-stage" data-glide={present && !show.manual && !dragging ? "" : undefined} style={{ width: bounds.w, height: bounds.h, transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
           <svg className="ko-lines" style={boxStyle(bounds)} viewBox={`${bounds.x} ${bounds.y} ${Math.max(1, bounds.w)} ${Math.max(1, bounds.h)}`} aria-hidden="true">
             {layout.connectors.map((c) => (
               <path
@@ -350,12 +384,16 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
           ) : null}
         </div>
       </div>
-      <div className="ko-toolbar" role="toolbar" aria-label="Org chart">
-        <button type="button" onClick={() => setView(fitView(bounds, size))}>Fit</button>
-        <button type="button" onClick={() => changeCollapsed(new Set(layout.panels.keys()))}>Collapse all</button>
-        <button type="button" onClick={() => changeCollapsed(new Set())}>Expand all</button>
-        <button type="button" onClick={() => onPresentChange(true)}>Present</button>
-      </div>
+      {present ? (
+        stop ? <p className="ko-caption" data-org-caption="" aria-live="polite">{stop.caption}</p> : null
+      ) : (
+        <div className="ko-toolbar" role="toolbar" aria-label="Org chart">
+          <button type="button" onClick={() => setView(fitView(bounds, size))}>Fit</button>
+          <button type="button" onClick={() => changeCollapsed(new Set(layout.panels.keys()))}>Collapse all</button>
+          <button type="button" onClick={() => changeCollapsed(new Set())}>Expand all</button>
+          <button type="button" onClick={() => onPresentChange(true)}>Present</button>
+        </div>
+      )}
       {selected && panelCtx && renderPanel ? (
         <aside className="ko-side" data-org-side="" aria-label={selected.name}>
           <button type="button" className="ko-close" aria-label="Close" title="Close" onClick={() => onSelect(null)}>

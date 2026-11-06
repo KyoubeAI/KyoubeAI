@@ -4,9 +4,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { buildOrgTree, focusIds } from "../src/org/org-tree.js";
 import { effectiveCollapsed, OrgChart, playableMoments, type OrgChartProps } from "../src/org/OrgChart.js";
+import { chartKeyAction, isTypingTarget, tourRefit } from "../src/org/org-chart-parts.js";
 import { momentSnapshot } from "../src/org/org-moments.js";
 import type { OrgAgent } from "../src/org/org-types.js";
-import { FLAT, INDUSTRIAL, org } from "./org-fixtures.js";
+import { FIVE_ROOTS, FLAT, INDUSTRIAL, org } from "./org-fixtures.js";
 
 const render = (agents: OrgAgent[], extra: Partial<OrgChartProps> = {}) =>
   renderToStaticMarkup(
@@ -144,6 +145,82 @@ describe("OrgChart", () => {
     const env = { hidden: false, reducedMotion: false };
     expect(playableMoments(before, after, env)).toEqual([{ kind: "problem", agentId: "a" }]);
     expect(playableMoments(null, after, env)).toEqual([]);
+  });
+
+  it("present renders the tour root and the first caption, and no toolbar or side panel", () => {
+    expect(FIVE_ROOTS).toHaveLength(14);
+    const html = render(FIVE_ROOTS, { present: true, selectedId: "ava", renderPanel: (a) => createElement("b", null, a.name) });
+    expect(html).toContain('data-org-present="true"');
+    expect(html).toMatch(/<p[^>]*data-org-caption[^>]*>14 agents<\/p>/);
+    expect(html).not.toContain("Collapse all");
+    expect(html).not.toContain('role="toolbar"');
+    expect(html).not.toContain("data-org-side");
+    // The tour shows the whole org, so a selection does not dim anyone.
+    expect(html).not.toContain("data-dim");
+  });
+
+  it("present with every panel collapsed still renders", () => {
+    const html = render(bigOrg(), { present: true });
+    expect(count(html, "data-org-chip=")).toBe(10);
+    expect(html).toContain('data-org-present="true"');
+    expect(html).toMatch(/<p[^>]*data-org-caption[^>]*>61 agents<\/p>/);
+  });
+
+  it("without present there is no tour root or caption, and the toolbar shows", () => {
+    const html = render(FIVE_ROOTS);
+    expect(html).not.toContain("data-org-present");
+    expect(html).not.toContain("data-org-caption");
+    expect(html).toContain(">Present</button>");
+  });
+
+  it("isTypingTarget spots form fields and editable text", () => {
+    expect(isTypingTarget({ tagName: "INPUT" })).toBe(true);
+    expect(isTypingTarget({ tagName: "textarea" })).toBe(true);
+    expect(isTypingTarget({ tagName: "SELECT" })).toBe(true);
+    expect(isTypingTarget({ tagName: "DIV", isContentEditable: true })).toBe(true);
+    expect(isTypingTarget({ tagName: "BUTTON", isContentEditable: false })).toBe(false);
+    expect(isTypingTarget(null)).toBe(false);
+    expect(isTypingTarget(undefined)).toBe(false);
+  });
+
+  it("chartKeyAction: Esc clears a selection, except when handled or typed into", () => {
+    const key = (k: string, more: { defaultPrevented?: boolean; target?: unknown } = {}) => ({ key: k, defaultPrevented: false, target: { tagName: "BUTTON" }, ...more });
+    const picked = { present: false, hasSelection: true };
+    expect(chartKeyAction(key("Escape"), picked)).toBe("clear-selection");
+    expect(chartKeyAction(key("Escape"), { present: false, hasSelection: false })).toBeNull();
+    expect(chartKeyAction(key("Escape", { defaultPrevented: true }), picked)).toBeNull();
+    expect(chartKeyAction(key("Escape", { target: { tagName: "INPUT" } }), picked)).toBeNull();
+    expect(chartKeyAction(key("Escape", { target: { tagName: "DIV", isContentEditable: true } }), picked)).toBeNull();
+    expect(chartKeyAction(key(" "), picked)).toBeNull();
+    expect(chartKeyAction(key("ArrowRight"), picked)).toBeNull();
+  });
+
+  it("chartKeyAction: in presentation Esc only leaves, and Space and the arrows drive the tour", () => {
+    const key = (k: string) => ({ key: k, defaultPrevented: false, target: null });
+    const presenting = { present: true, hasSelection: true };
+    expect(chartKeyAction(key("Escape"), presenting)).toBe("leave-present");
+    expect(chartKeyAction(key(" "), presenting)).toBe("toggle");
+    expect(chartKeyAction(key("ArrowRight"), presenting)).toBe("next");
+    expect(chartKeyAction(key("ArrowLeft"), presenting)).toBe("prev");
+    expect(chartKeyAction(key("a"), presenting)).toBeNull();
+    expect(chartKeyAction({ ...key("Escape"), defaultPrevented: true }, presenting)).toBeNull();
+    expect(chartKeyAction({ ...key(" "), target: { tagName: "TEXTAREA" } }, presenting)).toBeNull();
+  });
+
+  it("tourRefit: glide to each new stop, hold still while someone pans, and return when the tour resumes", () => {
+    const v = { x: 1, y: 2, scale: 1 };
+    const w = { x: 5, y: 2, scale: 1 };
+    expect(tourRefit(null, { index: 0, manual: false, view: v })).toBe(true);
+    expect(tourRefit({ index: 0, manual: false, view: v }, { index: 0, manual: false, view: { ...v } })).toBe(false);
+    // The stop's rect moved (live data) while the tour runs.
+    expect(tourRefit({ index: 0, manual: false, view: v }, { index: 0, manual: false, view: w })).toBe(true);
+    // Panning: the stop's rect may move, but the view stays where the person put it.
+    expect(tourRefit({ index: 0, manual: false, view: v }, { index: 0, manual: true, view: w })).toBe(false);
+    expect(tourRefit({ index: 0, manual: true, view: v }, { index: 0, manual: true, view: w })).toBe(false);
+    // An arrow key while panned still moves to the next stop.
+    expect(tourRefit({ index: 0, manual: true, view: v }, { index: 1, manual: true, view: w })).toBe(true);
+    // The tour resumes after 15 s: back to the stop, even when its target is unchanged.
+    expect(tourRefit({ index: 0, manual: true, view: v }, { index: 0, manual: false, view: v })).toBe(true);
   });
 
   it("src/org imports only react and characters", () => {

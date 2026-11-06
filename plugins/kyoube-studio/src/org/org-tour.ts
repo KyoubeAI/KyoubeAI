@@ -67,22 +67,27 @@ export type TourEvent =
   | { type: "next" | "prev"; now: number }
   | { type: "manual"; now: number };
 
+/** `index` kept inside `0..n - 1`, for when stops shrink (an agent leaves mid-tour). 0 when there are none. */
+export const clampTourIndex = (index: number, n: number): number => Math.max(0, Math.min(index, n - 1));
+
 export function tourStep(state: TourState, event: TourEvent, stops: TourStop[]): TourState {
   const n = stops.length;
+  const at = n > 0 && state.index >= n ? { ...state, index: clampTourIndex(state.index, n) } : state;
   const move = (by: number): TourState =>
-    n === 0 ? state : { ...state, index: (((state.index + by) % n) + n) % n, stopStartedAt: event.now };
+    n === 0 ? at : { ...at, index: (((at.index + by) % n) + n) % n, stopStartedAt: event.now };
   switch (event.type) {
     case "toggle":
-      return { ...state, paused: !state.paused, manualAt: null };
+      // Resuming starts a whole dwell, so a long pause does not jump on at once.
+      return at.paused ? { ...at, paused: false, manualAt: null, stopStartedAt: event.now } : { ...at, paused: true, manualAt: null };
     case "manual":
-      return { ...state, paused: true, manualAt: event.now };
+      return { ...at, paused: true, manualAt: event.now };
     case "next":
       return move(1);
     case "prev":
       return move(-1);
     case "tick": {
-      let s = state;
-      if (s.manualAt !== null && event.now - s.manualAt >= RESUME_AFTER_MS) s = { ...s, manualAt: null, paused: false };
+      let s = at;
+      if (s.manualAt !== null && event.now - s.manualAt >= RESUME_AFTER_MS) s = { ...s, manualAt: null, paused: false, stopStartedAt: event.now };
       const stop = stops[s.index];
       if (!s.paused && stop && event.now - s.stopStartedAt >= stop.ms) {
         return { ...s, index: (s.index + 1) % n, stopStartedAt: event.now };

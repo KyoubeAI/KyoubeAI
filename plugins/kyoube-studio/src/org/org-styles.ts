@@ -91,6 +91,11 @@ ${tintRules}
 .ko-side { position: absolute; z-index: 4; top: 0; right: 0; bottom: 0; width: 360px; box-sizing: border-box; padding: 16px; overflow-y: auto; background: ${CARD}; border-left: 1px solid ${BORDER}; box-shadow: -8px 0 24px rgb(0 0 0 / .06); }
 .ko-close { position: absolute; top: 10px; right: 10px; display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: ${MUTED}; cursor: pointer; }
 .ko-close:hover { background: color-mix(in oklab, ${MUTED} 12%, transparent); color: ${FG}; }
+/* Presentation: full screen, or the whole window (ko-fill) above the host's own layers when full screen is refused. */
+.ko-org[data-org-present] { background: var(--background, #fff); }
+.ko-org.ko-fill { position: fixed; inset: 0; z-index: 2147483000; width: auto; height: auto; min-height: 0; }
+.ko-caption { position: absolute; z-index: 3; left: 50%; bottom: 32px; transform: translateX(-50%); max-width: calc(100% - 32px); box-sizing: border-box; margin: 0; padding: 10px 20px; border-radius: 999px; background: ${CARD}; border: 1px solid ${BORDER}; box-shadow: 0 4px 16px rgb(0 0 0 / .08); font-family: var(--kyoube-font-display, Georgia, serif); font-size: 20px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 @media (max-width: 639px) {
   .ko-side { top: auto; left: 0; width: auto; max-height: 65%; border-left: 0; border-top: 1px solid ${BORDER}; border-radius: 16px 16px 0 0; box-shadow: 0 -8px 24px rgb(0 0 0 / .08); }
 }
@@ -101,6 +106,7 @@ ${tintRules}
   .ko-line[data-state="working"] { animation: ko-flow 1.6s linear infinite; }
   .ko-line[data-state="attention"] { animation: ko-flow .6s linear infinite; }
   .ko-side { animation: ko-slide-in .2s ease-out; }
+  .ko-stage[data-glide] { transition: transform .9s ease-in-out; }
   @media (max-width: 639px) { .ko-side { animation-name: ko-slide-up; } }
   .ko-card[data-moment="finished"]::after { content: ""; position: absolute; left: 50%; top: 50%; width: 100%; aspect-ratio: 1; border-radius: 50%; pointer-events: none; background: radial-gradient(circle, color-mix(in oklab, ${WORKING} 55%, transparent) 0%, transparent 70%); transform: translate(-50%, -50%) scale(.2); opacity: 0; animation: ko-burst 1.2s ease-out; }
   .ko-card[data-moment="handover"] { animation: ko-pulse .6s ease-out .4s; }

@@ -2,6 +2,7 @@
 import { diffMoments, type Moment, type MomentSnapshot } from "./org-moments.js";
 import type { Rect } from "./org-layout.js";
 import type { OrgAgent, OrgPanel } from "./org-types.js";
+import type { View } from "./org-view.js";
 
 /** The panels actually drawn folded: `collapsed` without the `keepOpen` ids. Returns a new set. */
 export function effectiveCollapsed(collapsed: ReadonlySet<string>, keepOpen: Iterable<string | null>): Set<string> {
@@ -34,4 +35,46 @@ export const safeStorage = (): Storage | null => {
 /** The moments worth playing now: none while the page is hidden or the person asked for less motion. */
 export function playableMoments(previous: MomentSnapshot | null, next: MomentSnapshot, env: { hidden: boolean; reducedMotion: boolean }): Moment[] {
   return env.hidden || env.reducedMotion ? [] : diffMoments(previous, next);
+}
+
+/** Whether a key event's target is somewhere people type: a form field or editable text. */
+export function isTypingTarget(target: unknown): boolean {
+  if (typeof target !== "object" || target === null) return false;
+  const t = target as { tagName?: unknown; isContentEditable?: unknown };
+  if (t.isContentEditable === true) return true;
+  return typeof t.tagName === "string" && ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName.toUpperCase());
+}
+
+export type ChartKeyAction = "clear-selection" | "leave-present" | "toggle" | "next" | "prev";
+
+/**
+ * What a keydown means to the chart. Nothing when someone else handled it or it was typed into a field.
+ * In presentation Esc only leaves, Space pauses and the arrows step; otherwise Esc clears a selection.
+ */
+export function chartKeyAction(e: { key: string; defaultPrevented: boolean; target: unknown }, ctx: { present: boolean; hasSelection: boolean }): ChartKeyAction | null {
+  if (e.defaultPrevented || isTypingTarget(e.target)) return null;
+  if (ctx.present) {
+    switch (e.key) {
+      case "Escape": return "leave-present";
+      case " ": return "toggle";
+      case "ArrowRight": return "next";
+      case "ArrowLeft": return "prev";
+      default: return null;
+    }
+  }
+  return e.key === "Escape" && ctx.hasSelection ? "clear-selection" : null;
+}
+
+/** One look at the tour's view: the stop shown, whether someone is panning, and the view that fits the stop. */
+export interface TourFrame { index: number; manual: boolean; view: View }
+
+/**
+ * Whether the tour should move the view to `next.view`: on a new stop, when it resumes after panning,
+ * or when the stop's fit changed while no one is panning.
+ */
+export function tourRefit(prev: TourFrame | null, next: TourFrame): boolean {
+  if (prev === null || next.index !== prev.index) return true;
+  if (next.manual) return false;
+  if (prev.manual) return true;
+  return next.view.x !== prev.view.x || next.view.y !== prev.view.y || next.view.scale !== prev.view.scale;
 }
