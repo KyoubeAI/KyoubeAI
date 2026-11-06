@@ -1094,7 +1094,10 @@ else
   as_op GET "/api/companies/$COMPANY_ID/approvals"
   [[ "$HTTP_STATUS" == 403 ]] || { echo "the restricted operator read the company's approvals: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1; }
 
-  # Live events: the admin's socket carries a new task's title, the operator's only what to refresh.
+  # Live events: the admin's socket names a new task in the hidden project. The operator's carries
+  # nothing about it (from core 2026.1023.0 the core's own privacy check drops it) and, for a visible
+  # task, only the type and ids the screen needs to refresh. From 1023 the core sends no task titles
+  # in live events to anyone, so a title in the operator's frames would be a regression either way.
   cookie_header() { # cookie-jar -> the Cookie header curl would send
     sed -n 's/^#HttpOnly_//; /^#/d; p' "$1" | awk -F'\t' 'NF >= 7 { printf "%s%s=%s", (n++ ? "; " : ""), $6, $7 }'
   }
@@ -1121,19 +1124,24 @@ else
     sleep 1
     [[ $i -eq 10 ]] && { echo "the live-events sockets did not open (operator: $([[ -e "$TMP/live-op.jsonl.open" ]] && echo open || echo closed), admin: $([[ -e "$TMP/live-admin.jsonl.open" ]] && echo open || echo closed))" >&2; exit 1; }
   done
+  # The hidden task first: the admin's socket stops at it, the operator's (which never sees it) at the
+  # visible one, and a socket delivers in order, so the operator's file holds whatever it got about both.
   LIVE_TASK_ID="$(admin_task ws-secret-title "$P_SEC")"
+  LIVE_PUBLIC_ID="$(admin_task ws-public-title "$P_PUB")"
   wait "$OP_LIVE" || { echo "the operator's live-events socket failed" >&2; exit 1; }
   wait "$ADMIN_LIVE" || { echo "the admin's live-events socket failed" >&2; exit 1; }
-  live_frame() { jq -sc --arg id "$LIVE_TASK_ID" 'map(select(.type == "activity.logged" and .payload.entityId == $id)) | .[0] // empty' "$1"; }
-  OP_FRAME="$(live_frame "$TMP/live-op.jsonl")"
-  if [[ "$OP_FRAME" != *'"entityType":"issue"'* ]] || grep -q ws-secret-title "$TMP/live-op.jsonl"; then
-    echo "the operator's live events do not name the new task, or carry its title: $(cat "$TMP/live-op.jsonl")" >&2; exit 1
+  live_frame() { jq -sc --arg id "$2" 'map(select(.type == "activity.logged" and .payload.entityId == $id)) | .[0] // empty' "$1"; }
+  if [[ "$(live_frame "$TMP/live-op.jsonl" "$LIVE_PUBLIC_ID")" != *'"entityType":"issue"'* ]]; then
+    echo "the operator's live events do not name the new visible task: $(cat "$TMP/live-op.jsonl")" >&2; exit 1
   fi
-  [[ "$(live_frame "$TMP/live-admin.jsonl")" == *ws-secret-title* ]] \
-    || { echo "the admin's live event for the new task does not carry its title: $(cat "$TMP/live-admin.jsonl")" >&2; exit 1; }
+  if grep -q -e ws-secret-title -e ws-public-title -e "$LIVE_TASK_ID" "$TMP/live-op.jsonl"; then
+    echo "the operator's live events carry a task title, or name the task in the hidden project: $(cat "$TMP/live-op.jsonl")" >&2; exit 1
+  fi
+  [[ "$(live_frame "$TMP/live-admin.jsonl" "$LIVE_TASK_ID")" == *'"entityType":"issue"'* ]] \
+    || { echo "the admin's live events do not name the new task in the hidden project: $(cat "$TMP/live-admin.jsonl")" >&2; exit 1; }
   echo "    need-to-know: the operator lists op-child, op-own and visible-in-public and the Public project only; hidden tasks answer 403/404;"
   echo "    search leaves the secret project and task out; creating in a hidden project or under a hidden task is refused; approvals 403;"
-  echo "    their live events carry no titles"
+  echo "    their live events carry no titles and nothing about a task in a hidden project"
 
   curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/companies/$COMPANY_ID/issues" \
     | jq -e --arg s "$SECRET_TASK_ID" '(.issues? // .) | length >= 8 and (map(.id) | index($s) != null)' >/dev/null \
