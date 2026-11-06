@@ -40,6 +40,26 @@ describe("the org layout", () => {
       }
     });
 
+    it(`${name}: lines from different managers never share a rail`, () => {
+      // A vertical run is [x, top, bottom]; two managers' runs on one x that overlap would read as one line.
+      const runs = layout.connectors.map((c) => {
+        const pts = points(c.path);
+        const out: [number, number, number][] = [];
+        for (let i = 1; i < pts.length; i++) if (pts[i]![0] === pts[i - 1]![0] && pts[i]![1] !== pts[i - 1]![1]) out.push([pts[i]![0], Math.min(pts[i]![1], pts[i - 1]![1]), Math.max(pts[i]![1], pts[i - 1]![1])]);
+        return { from: c.from, to: c.to, runs: out };
+      });
+      for (let i = 0; i < runs.length; i++) {
+        for (let j = i + 1; j < runs.length; j++) {
+          if (runs[i]!.from === runs[j]!.from) continue;
+          for (const [ax, a1, a2] of runs[i]!.runs) {
+            for (const [bx, b1, b2] of runs[j]!.runs) {
+              expect(ax === bx && a1 < b2 && b1 < a2, `${runs[i]!.from}:${runs[i]!.to} and ${runs[j]!.from}:${runs[j]!.to} share x=${ax}`).toBe(false);
+            }
+          }
+        }
+      }
+    });
+
     it(`${name}: one connector per laid-out agent with a laid-out manager`, () => {
       const expected = [...layout.cards.keys()].filter((id) => {
         const m = tree.managerOf.get(id);

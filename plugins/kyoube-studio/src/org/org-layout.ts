@@ -71,8 +71,15 @@ export function layoutOrg(tree: OrgTree, collapsed: ReadonlySet<string>): OrgLay
       if (!r.managerId) continue;
       const from = cards.get(r.managerId)!;
       const to = cards.get(r.id)!;
-      const railX = from.x - RAIL;
-      connectors.push({ from: from.id, to: to.id, path: pathOf([[from.x, from.y + from.h / 2], [railX, from.y + from.h / 2], [railX, to.y + to.h / 2], [to.x, to.y + to.h / 2]]) });
+      const toY = to.y + to.h / 2;
+      if (to.indent > from.indent) {
+        // An indented report hangs from its manager's own card, on a rail in the indent, so it never runs along the lead's rail.
+        const railX = from.x + SIZES.indent / 2;
+        connectors.push({ from: from.id, to: to.id, path: pathOf([[railX, from.y + from.h], [railX, toY], [to.x, toY]]) });
+      } else {
+        const railX = from.x - RAIL;
+        connectors.push({ from: from.id, to: to.id, path: pathOf([[from.x, from.y + from.h / 2], [railX, from.y + from.h / 2], [railX, toY], [to.x, toY]]) });
+      }
     }
     return box;
   };
