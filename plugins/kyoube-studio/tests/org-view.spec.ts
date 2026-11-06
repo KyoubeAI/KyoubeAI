@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildOrgTree } from "../src/org/org-tree.js";
-import { CAPTION_ROOM, collapsedKey, defaultCollapsed, fitView, readCollapsed, tourView, writeCollapsed, zoomAt } from "../src/org/org-view.js";
+import { CAPTION_ROOM, bottomInsetOf, collapsedKey, defaultCollapsed, fillHeight, fitView, readCollapsed, tourView, writeCollapsed, zoomAt } from "../src/org/org-view.js";
 import { FIVE_ROOTS } from "./org-fixtures.js";
 
 describe("fitView", () => {
@@ -31,6 +31,34 @@ describe("tourView", () => {
       expect((stop.y + stop.h) * v.scale + v.y).toBeLessThanOrEqual(viewport.h - CAPTION_ROOM + 0.001);
       expect((stop.x + stop.w / 2) * v.scale + v.x).toBeCloseTo(viewport.w / 2, 5);
     }
+  });
+});
+
+describe("filling the window", () => {
+  const box = (tag: string, overflowY: string, paddingBottom: string) => ({ tag, overflowY, paddingBottom });
+
+  it("takes the bottom padding of the nearest scrolling ancestor", () => {
+    // The core on a desktop: <main> scrolls, with 24 px of padding under the page.
+    expect(bottomInsetOf([box("div", "visible", "0px"), box("div", "visible", "0px"), box("main", "auto", "24px"), box("div", "visible", "0px")])).toBe(24);
+    expect(bottomInsetOf([box("div", "scroll", "12.5px"), box("main", "auto", "24px")])).toBe(12.5);
+  });
+
+  it("stops at <main> when the document scrolls, so a phone's tab-bar padding counts", () => {
+    // The core on a phone: <main> does not scroll, and its 80 px padding keeps the page clear of the tab bar.
+    expect(bottomInsetOf([box("div", "visible", "0px"), box("main", "visible", "80px"), box("body", "visible", "0px")])).toBe(80);
+  });
+
+  it("is zero on a plain page with no scroller or <main>", () => {
+    expect(bottomInsetOf([box("div", "visible", "0px"), box("body", "visible", "8px")])).toBe(0);
+    expect(bottomInsetOf([])).toBe(0);
+    expect(bottomInsetOf([box("main", "auto", "")])).toBe(0);
+  });
+
+  it("fills the window below the chart's top, never under 520 px", () => {
+    expect(fillHeight({ windowHeight: 900, top: 146, bottomInset: 24 })).toBe(730);
+    expect(fillHeight({ windowHeight: 844, top: 138, bottomInset: 80 })).toBe(626);
+    expect(fillHeight({ windowHeight: 600.6, top: 30.2, bottomInset: 10 })).toBe(560);
+    expect(fillHeight({ windowHeight: 500, top: 146, bottomInset: 24 })).toBe(520);
   });
 });
 

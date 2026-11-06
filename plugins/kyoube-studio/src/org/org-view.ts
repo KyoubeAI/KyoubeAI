@@ -21,6 +21,28 @@ export function fitView(bounds: Rect, viewport: { w: number; h: number }, margin
   };
 }
 
+/** The chart's smallest height, as in org-styles' `.ko-org { min-height }`. */
+export const MIN_CHART_HEIGHT = 520;
+
+/** One ancestor of the chart, nearest first: its tag and the computed styles the fill needs. */
+export interface AncestorBox { tag: string; overflowY: string; paddingBottom: string }
+
+/**
+ * The space to leave under the chart: the bottom padding of the nearest ancestor that scrolls, or of
+ * the nearest <main> when the document scrolls instead (as on the core's phone layout, whose <main>
+ * padding keeps the page clear of the tab bar). Zero when there is neither.
+ */
+export function bottomInsetOf(ancestors: readonly AncestorBox[]): number {
+  const box = ancestors.find((a) => a.overflowY === "auto" || a.overflowY === "scroll" || a.tag.toLowerCase() === "main");
+  const px = box ? Number.parseFloat(box.paddingBottom) : 0;
+  return Number.isFinite(px) ? px : 0;
+}
+
+/** The chart's height when it fills the window below its own top, whole pixels, never under MIN_CHART_HEIGHT. */
+export function fillHeight({ windowHeight, top, bottomInset }: { windowHeight: number; top: number; bottomInset: number }): number {
+  return Math.max(MIN_CHART_HEIGHT, Math.floor(windowHeight - top - bottomInset));
+}
+
 /** Room the presentation caption takes at the bottom: 32 px below it, and up to two lines of it. */
 export const CAPTION_ROOM = 112;
 

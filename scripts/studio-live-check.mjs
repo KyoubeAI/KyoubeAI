@@ -80,6 +80,31 @@ const INSPECT = `(() => {
   };
 })()`;
 
+/**
+ * Runs in the page at /team: the chart's height, and how far the document and the chart's nearest
+ * scrolling ancestor (the core's <main> on a desktop) overflow. Studio sizes the chart to the window
+ * by measuring, so any overflow means the core's layout moved under it.
+ */
+const CHART_FIT = `(() => {
+  const chart = document.querySelector("[data-kyoube-org]");
+  let scroller = chart ? chart.parentElement : null;
+  while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement;
+  const doc = document.scrollingElement;
+  return {
+    chartHeight: chart ? Math.round(chart.getBoundingClientRect().height) : 0,
+    pageOverflow: doc ? doc.scrollHeight - innerHeight : 0,
+    scrollerOverflow: scroller ? scroller.scrollHeight - scroller.clientHeight : 0,
+  };
+})()`;
+
+/** Names a /team page that scrolls, or a chart shorter than its 520 px minimum, at `size`. */
+async function checkChartFit(page, size, problems) {
+  const fit = await page.evaluate(CHART_FIT);
+  if (fit.pageOverflow > 1) problems.push(`team: the page scrolls by ${fit.pageOverflow}px at ${size} (the org chart no longer fits the window; check its height against the core's layout)`);
+  if (fit.scrollerOverflow > 1) problems.push(`team: the main content scrolls by ${fit.scrollerOverflow}px at ${size} (the org chart no longer fits the window; check its height against the core's layout)`);
+  if (fit.chartHeight < 520) problems.push(`team: the org chart is ${fit.chartHeight}px tall at ${size}, shorter than its 520px minimum`);
+}
+
 function expectAll(label, facts, expectations, problems) {
   for (const [key, want] of Object.entries(expectations)) {
     const got = facts[key];
@@ -260,6 +285,7 @@ async function main() {
         const drawn = await page.evaluate(`document.querySelectorAll("[data-org-card]").length`);
         problems.push(`team: ${drawn} agent card(s) drawn at /team, expected ${boardToken && live.length > 0 ? live.length : "at least 1"}`);
       }
+      await checkChartFit(page, "1440x900", problems);
       if (structured) {
         const found = await page.evaluate(`(() => ({
           panel: !!document.querySelector('[data-org-panel="team:${lead.id}"]'),
@@ -293,6 +319,7 @@ async function main() {
       await phone.setCookie({ ...cookie, url: base });
       await phone.goto(teamUrl);
       await phone.waitForFunction(`document.querySelectorAll("[data-org-card]").length >= 1`, { timeoutMs: 30_000 }).catch(() => problems.push("team: no agent card drawn in a 390 px wide window"));
+      await checkChartFit(phone, "390x844", problems);
       if (shotsDir) await writeFile(path.join(shotsDir, "team-phone.png"), await phone.screenshot());
 
       // Presentation mode.

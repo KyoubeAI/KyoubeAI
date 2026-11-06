@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type JSX, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type JSX, type ReactNode } from "react";
 import { characterFor } from "../characters.js";
 import { layoutOrg, type CardBox } from "./org-layout.js";
 import { buildOrgTree, focusIds, panelOf, tallyText } from "./org-tree.js";
@@ -6,7 +6,7 @@ import { boxStyle, cardLabel, chartKeyAction, chipText, effectiveCollapsed, play
 import { momentSnapshot, type Moment, type MomentSnapshot } from "./org-moments.js";
 import { clampTourIndex, tourStops } from "./org-tour.js";
 import type { OrgAgent, OrgPanel } from "./org-types.js";
-import { defaultCollapsed, fitView, readCollapsed, tourView, writeCollapsed, zoomAt, type View } from "./org-view.js";
+import { bottomInsetOf, defaultCollapsed, fillHeight, fitView, readCollapsed, tourView, writeCollapsed, zoomAt, type AncestorBox, type View } from "./org-view.js";
 import { ensureOrgStyles } from "./org-styles.js";
 import { usePresentation } from "./use-presentation.js";
 
@@ -22,6 +22,8 @@ export interface OrgChartProps {
   present: boolean;
   onPresentChange: (present: boolean) => void;
   storageKey: string | null;
+  /** Take the window's height below the chart's top (at least 520 px), measured on mount and on every resize. */
+  fillWindow?: boolean;
 }
 
 /** Before the ResizeObserver reports, so the server render has a stable view. */
@@ -33,6 +35,16 @@ const MOMENT_MS = 1200;
 
 /** What is playing now, by agent id: the card's moment and whether the incoming line ripples. */
 type Playing = Record<string, { kind: Moment["kind"]; line: boolean }>;
+
+/** The height that fills the window below `el`, leaving its nearest scroller's (or <main>'s) bottom padding. */
+function measureFillHeight(el: HTMLElement): number {
+  const ancestors: AncestorBox[] = [];
+  for (let a = el.parentElement; a; a = a.parentElement) {
+    const cs = getComputedStyle(a);
+    ancestors.push({ tag: a.tagName, overflowY: cs.overflowY, paddingBottom: cs.paddingBottom });
+  }
+  return fillHeight({ windowHeight: window.innerHeight, top: el.getBoundingClientRect().top, bottomInset: bottomInsetOf(ancestors) });
+}
 
 const Chevron = () => (
   <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -67,7 +79,7 @@ function Card({ agent, box, origin, dim, selected, moment, onSelect }: { agent: 
   );
 }
 
-export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPanel, present, onPresentChange, storageKey }: OrgChartProps): JSX.Element {
+export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPanel, present, onPresentChange, storageKey, fillWindow = false }: OrgChartProps): JSX.Element {
   ensureOrgStyles();
   const tree = useMemo(() => buildOrgTree(agents), [agents]);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => defaultCollapsed(tree, agents.length));
@@ -154,10 +166,20 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
     changeCollapsed(next);
   };
 
-  // The viewport's real size; the first report re-fits the chart once.
-  useEffect(() => {
+  // The viewport's real size; the first report re-fits the chart once. With fillWindow the chart's
+  // height is measured first (before paint, so that first fit already has it) and on every window resize.
+  const [filledHeight, setFilledHeight] = useState<number | null>(null);
+  useLayoutEffect(() => {
     const el = rootRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
+    if (!el) return;
+    // While presenting, the chart covers the window or the screen, so there is nothing to measure.
+    const fill = () => { if (!el.classList.contains("ko-fill") && document.fullscreenElement !== el) setFilledHeight(measureFillHeight(el)); };
+    if (fillWindow) {
+      fill();
+      window.addEventListener("resize", fill);
+    }
+    const stopFill = () => { if (fillWindow) window.removeEventListener("resize", fill); };
+    if (typeof ResizeObserver === "undefined") return stopFill;
     let fitted = false;
     const ro = new ResizeObserver(([entry]) => {
       if (!entry) return;
@@ -170,8 +192,15 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
       }
     });
     ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+    return () => {
+      ro.disconnect();
+      stopFill();
+    };
+  }, [fillWindow]);
+  // Measure again once a presentation ends, in case the window changed while it ran.
+  useLayoutEffect(() => {
+    if (fillWindow && !present && rootRef.current) setFilledHeight(measureFillHeight(rootRef.current));
+  }, [fillWindow, present]);
 
   // The tour moves the view to each stop; the stage's transition glides it, and reduced motion cuts.
   const lastFrame = useRef<TourFrame | null>(null);
@@ -347,7 +376,7 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
     : null;
 
   return (
-    <div className={present && show.fill ? "ko-org ko-fill" : "ko-org"} data-kyoube-org="" data-org-present={present ? "true" : undefined} ref={rootRef} onKeyDown={onRootKey}>
+    <div className={present && show.fill ? "ko-org ko-fill" : "ko-org"} data-kyoube-org="" data-org-present={present ? "true" : undefined} ref={rootRef} onKeyDown={onRootKey} style={filledHeight !== null && !(present && show.fill) ? { height: filledHeight } : undefined}>
       <div
         className="ko-viewport"
         ref={viewportRef}

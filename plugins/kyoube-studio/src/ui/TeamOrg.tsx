@@ -108,6 +108,7 @@ export function TeamOrg() {
             present={present}
             onPresentChange={(next) => navigation.navigate(next ? "/team?present=1" : "/team", { replace: true })}
             storageKey={storageKey}
+            fillWindow
           />
         </>
       )}
