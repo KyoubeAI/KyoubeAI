@@ -57,6 +57,24 @@ export function zoomAt(view: View, point: { x: number; y: number }, factor: numb
   return { scale, x: point.x - (point.x - view.x) * k, y: point.y - (point.y - view.y) * k };
 }
 
+/** How far one axis must move to show [start, start + length) inside [margin, size - margin]; too long aligns its start. */
+function panAxis(start: number, length: number, size: number, margin: number): number {
+  if (length + margin * 2 > size || start < margin) return margin - start;
+  if (start + length > size - margin) return size - margin - (start + length);
+  return 0;
+}
+
+/**
+ * The view moved (never zoomed) just enough to show `rect`, in content units, wholly inside the viewport
+ * with `margin` to spare; the same view object when it already shows. A rect bigger than the viewport
+ * gets its top-left at the margin. For keyboard focus, which must not leave a card off-screen.
+ */
+export function panIntoView(view: View, rect: Rect, viewport: { w: number; h: number }, margin = 16): View {
+  const dx = panAxis(rect.x * view.scale + view.x, rect.w * view.scale, viewport.w, margin);
+  const dy = panAxis(rect.y * view.scale + view.y, rect.h * view.scale, viewport.h, margin);
+  return dx === 0 && dy === 0 ? view : { ...view, x: view.x + dx, y: view.y + dy };
+}
+
 /** Big companies open folded: every panel id above 60 agents, none otherwise. */
 export function defaultCollapsed(tree: OrgTree, agentCount: number): Set<string> {
   if (agentCount <= AUTO_COLLAPSE_ABOVE) return new Set();

@@ -6,6 +6,7 @@ import { buildOrgTree, focusIds } from "../src/org/org-tree.js";
 import { effectiveCollapsed, OrgChart, playableMoments, type OrgChartProps } from "../src/org/OrgChart.js";
 import { chartKeyAction, isTypingTarget, tourRefit } from "../src/org/org-chart-parts.js";
 import { momentSnapshot } from "../src/org/org-moments.js";
+import { ORG_CSS } from "../src/org/org-styles.js";
 import type { OrgAgent } from "../src/org/org-types.js";
 import { FIVE_ROOTS, FLAT, INDUSTRIAL, org } from "./org-fixtures.js";
 
@@ -205,6 +206,15 @@ describe("OrgChart", () => {
     expect(chartKeyAction(key("a"), presenting)).toBeNull();
     expect(chartKeyAction({ ...key("Escape"), defaultPrevented: true }, presenting)).toBeNull();
     expect(chartKeyAction({ ...key(" "), target: { tagName: "TEXTAREA" } }, presenting)).toBeNull();
+  });
+
+  it("the chart and its viewport clip instead of scrolling, so focus and find-in-page cannot offset the chart", () => {
+    for (const sel of [".ko-org", ".ko-viewport"]) {
+      const rule = new RegExp(`^\\${sel} \\{([^}]*)\\}`, "m").exec(ORG_CSS)?.[1] ?? "";
+      expect(rule, sel).toMatch(/overflow: clip;/);
+      // A browser without clip keeps the hidden fallback, which comes first.
+      expect(rule.indexOf("overflow: hidden;"), sel).toBeLessThan(rule.indexOf("overflow: clip;"));
+    }
   });
 
   it("chartKeyAction: modifier combos and held keys pass through to the browser", () => {

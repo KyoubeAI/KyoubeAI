@@ -6,7 +6,7 @@ import { boxStyle, cardLabel, chartKeyAction, chipText, effectiveCollapsed, play
 import { momentSnapshot, type Moment, type MomentSnapshot } from "./org-moments.js";
 import { clampTourIndex, tourStops } from "./org-tour.js";
 import type { OrgAgent, OrgPanel } from "./org-types.js";
-import { bottomInsetOf, defaultCollapsed, fillHeight, fitView, readCollapsed, tourView, writeCollapsed, zoomAt, type AncestorBox, type View } from "./org-view.js";
+import { bottomInsetOf, defaultCollapsed, fillHeight, fitView, panIntoView, readCollapsed, tourView, writeCollapsed, zoomAt, type AncestorBox, type View } from "./org-view.js";
 import { ensureOrgStyles } from "./org-styles.js";
 import { usePresentation } from "./use-presentation.js";
 
@@ -46,11 +46,20 @@ function measureFillHeight(el: HTMLElement): number {
   return fillHeight({ windowHeight: window.innerHeight, top: el.getBoundingClientRect().top, bottomInset: bottomInsetOf(ancestors) });
 }
 
+/** Whether focus came from the keyboard; a click focuses its card too, and that must not pan. */
+function focusFromKeyboard(el: Element): boolean {
+  try {
+    return el.matches(":focus-visible");
+  } catch {
+    return true;
+  }
+}
+
 const Chevron = () => (
   <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
 );
 
-function Card({ agent, box, origin, dim, selected, moment, onSelect }: { agent: OrgAgent; box: CardBox; origin?: { x: number; y: number }; dim: boolean; selected: boolean; moment?: Moment["kind"]; onSelect: (id: string) => void }) {
+function Card({ agent, box, origin, dim, selected, moment, onSelect, onFocus }: { agent: OrgAgent; box: CardBox; origin?: { x: number; y: number }; dim: boolean; selected: boolean; moment?: Moment["kind"]; onSelect: (id: string) => void; onFocus: (box: CardBox, el: HTMLElement) => void }) {
   const face = useMemo(() => characterFor(agent.icon, agent.name), [agent.icon, agent.name]);
   return (
     <button
@@ -65,6 +74,7 @@ function Card({ agent, box, origin, dim, selected, moment, onSelect }: { agent: 
       aria-label={cardLabel(agent)}
       style={boxStyle(box, origin)}
       onClick={() => onSelect(agent.id)}
+      onFocus={(e) => onFocus(box, e.currentTarget)}
     >
       <span className="ko-face" data-tint={face.tint}>
         <span className="ko-face-art" dangerouslySetInnerHTML={{ __html: face.svg }} />
@@ -325,9 +335,17 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
     return out;
   }, [layout]);
   const isDim = (id: string) => focus !== null && !focus.has(id);
+  // Tabbing to a card off the edge pans the chart (at the same zoom) until the card is in view.
+  const onCardFocus = (box: CardBox, el: HTMLElement) => {
+    if (!focusFromKeyboard(el)) return;
+    const next = panIntoView(view, box, size);
+    if (next === view) return;
+    setView(next);
+    noteManual();
+  };
   const card = (box: CardBox, origin?: { x: number; y: number }) => {
     const agent = tree.byId.get(box.id);
-    return agent ? <Card key={box.id} agent={agent} box={box} origin={origin} dim={isDim(box.id)} selected={box.id === selected?.id} moment={playing[box.id]?.kind} onSelect={onSelect} /> : null;
+    return agent ? <Card key={box.id} agent={agent} box={box} origin={origin} dim={isDim(box.id)} selected={box.id === selected?.id} moment={playing[box.id]?.kind} onSelect={onSelect} onFocus={onCardFocus} /> : null;
   };
 
   const panel = (p: OrgPanel) => {

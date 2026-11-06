@@ -25,8 +25,9 @@ const tintRules = Object.keys(TILES)
   .join("\n");
 
 const CSS = String.raw`
-.ko-org { position: relative; width: 100%; height: 100%; min-height: 520px; overflow: hidden; color: ${FG}; font-size: 13px; }
-.ko-viewport { position: absolute; inset: 0; overflow: hidden; touch-action: none; user-select: none; cursor: grab; }
+/* clip, not hidden: a hidden box still scrolls for focus and find-in-page, which the view's maths would not see. */
+.ko-org { position: relative; width: 100%; height: 100%; min-height: 520px; overflow: hidden; overflow: clip; color: ${FG}; font-size: 13px; }
+.ko-viewport { position: absolute; inset: 0; overflow: hidden; overflow: clip; touch-action: none; user-select: none; cursor: grab; }
 .ko-viewport[data-dragging] { cursor: grabbing; }
 .ko-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 .ko-lines { position: absolute; overflow: visible; pointer-events: none; }

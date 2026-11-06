@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildOrgTree } from "../src/org/org-tree.js";
-import { CAPTION_ROOM, bottomInsetOf, collapsedKey, defaultCollapsed, fillHeight, fitView, readCollapsed, tourView, writeCollapsed, zoomAt } from "../src/org/org-view.js";
+import { CAPTION_ROOM, bottomInsetOf, collapsedKey, defaultCollapsed, fillHeight, fitView, panIntoView, readCollapsed, tourView, writeCollapsed, zoomAt } from "../src/org/org-view.js";
 import { FIVE_ROOTS } from "./org-fixtures.js";
 
 describe("fitView", () => {
@@ -74,6 +74,42 @@ describe("zoomAt", () => {
       expect(content.x * v.scale + v.x).toBeCloseTo(p.x, 2);
       expect(content.y * v.scale + v.y).toBeCloseTo(p.y, 2);
     }
+  });
+});
+
+describe("panIntoView", () => {
+  // At scale 2 a 100 x 50 card at content (100, 100) sits at screen (200 + x, 200 + y), 200 x 100.
+  const card = { x: 100, y: 100, w: 100, h: 50 };
+  const viewport = { w: 800, h: 600 };
+  const at = (x: number, y: number) => ({ x, y, scale: 2 });
+
+  it("leaves the view alone when the card is already inside, margin included", () => {
+    const v = at(0, 0);
+    expect(panIntoView(v, card, viewport, 16)).toBe(v);
+    expect(panIntoView(at(-184, -184), card, viewport, 16)).toEqual(at(-184, -184));
+    expect(panIntoView(at(384, 284), card, viewport, 16)).toEqual(at(384, 284));
+  });
+
+  it("pans just enough when the card is off the right or the bottom, and keeps the zoom", () => {
+    // Right edge at 200 + 700 + 200 = 1100; it has to end at 800 - 16.
+    expect(panIntoView(at(700, 0), card, viewport, 16)).toEqual(at(384, 0));
+    // Bottom edge at 200 + 500 + 100 = 800; it has to end at 600 - 16.
+    expect(panIntoView(at(0, 500), card, viewport, 16)).toEqual(at(0, 284));
+    expect(panIntoView(at(700, 500), card, viewport, 16)).toEqual(at(384, 284));
+  });
+
+  it("pans just enough when the card is off the left or the top", () => {
+    expect(panIntoView(at(-600, 0), card, viewport, 16)).toEqual(at(-184, 0));
+    expect(panIntoView(at(0, -400), card, viewport, 16)).toEqual(at(0, -184));
+  });
+
+  it("aligns the card's top-left with the margin when it is bigger than the viewport", () => {
+    const big = { x: 100, y: 100, w: 500, h: 400 }; // 1000 x 800 on screen
+    expect(panIntoView(at(300, 300), big, viewport, 16)).toEqual(at(-184, -184));
+    expect(panIntoView(at(-900, -900), big, viewport, 16)).toEqual(at(-184, -184));
+    // Too wide only: x aligns, y pans as usual.
+    const wide = { x: 100, y: 100, w: 500, h: 50 };
+    expect(panIntoView(at(0, 0), wide, viewport, 16)).toEqual(at(-184, 0));
   });
 });
 
