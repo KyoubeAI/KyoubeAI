@@ -36,7 +36,7 @@
  * it with the core a build actually uses, so a patch that fails on a different
  * core says that first.
  */
-export const CORE_VERSION = "2026.1012.0";
+export const CORE_VERSION = "2026.1023.0";
 
 /**
  * The label of the control the `onboarding-skip-harness-*` patches add under
@@ -170,6 +170,25 @@ export const PATCHES = [
     expect: 1,
     upstreamFix: /const useQuiet = cfgBoolean\(config\.quiet\) !== false;/g,
   },
+  // runChildProcess writes a run's prompt to the harness CLI's stdin with no `error` listener on
+  // that stream, so a CLI that exits or closes stdin before reading it (a broken or empty
+  // install, a crash at start) raises an unhandled EPIPE that kills the whole server; since
+  // 2026.1023 the agent lifecycle retries a failed hello probe every minute, so it crashes again
+  // each minute. The listener ignores the closed pipe, as upstream PR #14057 does, and logs any
+  // other stdin failure for the run; the run's result still comes from the child's exit.
+  {
+    id: "child-stdin-closed-early",
+    title: "Harness runs: a CLI that closes its stdin early no longer crashes the server",
+    upstream: "https://github.com/paperclipai/paperclip/pull/14057",
+    files: ["packages/adapter-utils/src/server-utils.ts"],
+    pattern: /(\n( *)if \(opts\.stdin != null && stdin\) \{\n)( *)(void spawnPersistPromise\.finally\(\(\) => \{\n *if \(child\.killed \|\| stdin\.destroyed\) return;\n *stdin\.write\(opts\.stdin as string\);)/g,
+    replacement:
+      '$1$3stdin.on("error", (err) => { const code = (err as NodeJS.ErrnoException)?.code; ' +
+      'if (code === "EPIPE" || code === "ERR_STREAM_DESTROYED") return; ' +
+      'onLogError(err, runId, "failed to write child process stdin"); }); // KyoubeAI core patch child-stdin-closed-early\n$3$4',
+    expect: 1,
+    upstreamFix: /stdin\.on\("error", handleStdinFailure\);/g,
+  },
   // The Hermes transcript parser made every stdout line its own agent
   // message, so a reply's paragraphs, list items and table rows became
   // separate bubbles (a wrapped line starting "6." even became a numbered
@@ -250,23 +269,6 @@ export const PATCHES = [
       '$1&&(0,$2.jsx)("div",{className:"mt-3",children:(0,$2.jsx)("p",{className:"text-xs text-destructive",children:$1})}),' +
       `$5===4&&$1&&(0,$2.jsx)("div",{className:"mt-2",children:(0,$2.jsx)("button",{type:"button",className:"text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors",disabled:$7,onClick:()=>$8(!0),children:${JSON.stringify(SKIP_HARNESS_LABEL)}})}),` +
       "$3",
-    expect: 1,
-  },
-  // ── Connections: a Claude subscription that lasts a year ────────────────
-  // The server-host sign-in runs `claude auth login` in a folder per attempt,
-  // keeps only claudeAiOauth.accessToken (an 8-hour token) and deletes the
-  // folder with the refresh token, so every managed Claude run fails ~8 hours
-  // after connecting. `kyoube connect claude` (docker/bootstrap) runs
-  // `claude setup-token` in that same folder and writes the one-year token
-  // where the Connect step reads it. Upstream's own sandbox sign-in already
-  // stores setup-tokens as this credential (routes/agents.ts, setupTokenLogin).
-  {
-    id: "anthropic-signin-setup-token",
-    title: "Connections: the Claude subscription sign-in command produces a one-year setup-token",
-    upstream: "https://github.com/paperclipai/paperclip (server/src/services/local-ai-login.ts presentAttempt, local-ai-credentials.ts; issue pending)",
-    files: ["server/dist/services/local-ai-login.js"],
-    pattern: /mkdir -p "\$CLAUDE_CONFIG_DIR" && claude auth login\)/g,
-    replacement: 'mkdir -p "$CLAUDE_CONFIG_DIR" && kyoube connect claude)',
     expect: 1,
   },
   // ── Licensing: KyoubeAI's user limit (standing: never deleted) ───────────
@@ -413,22 +415,26 @@ export const PATCHES = [
     title: "work-object visibility: a restricted person's live events carry no titles or details",
     standing: "KyoubeAI work-object visibility: need-to-know companies",
     files: ["server/dist/realtime/live-events-ws.js"],
-    // `const unsubscribe = subscribeCompanyLiveEvents(context.companyId, (event) => {` occurs once in
-    // live-events-ws.js (2026.1012.0): the connection handler's listener, which sends every company
-    // event to an open socket. Once patched, the listener comes from the marker's closure, so a
-    // second apply matches nothing.
-    pattern: /(\n( *)const unsubscribe = subscribeCompanyLiveEvents\(context\.companyId, )\(event\) => \{\n( *)if \(socket\.readyState !== WebSocket\.OPEN\)\n *return;\n *socket\.send\(JSON\.stringify\(event\)\);\n( *)\}\);/g,
+    // `const visible = await visibleEvent(event);` occurs once in live-events-ws.js (2026.1023.0),
+    // inside the connection handler's listener: the core's own privacy check (visibleEvent) has
+    // already dropped events for tasks, projects and runs the person may not read, and trims what
+    // it sends. The core still passes plugin events whole and run events in full, so a restricted
+    // person's events go on through our filter as well. The filter is set up once per socket, just
+    // before the core subscribes (`const unsubscribe = subscribeCompanyLiveEvents(...)`); the match
+    // stops at the first `});` so it cannot run past the listener. A filter failure lands in the
+    // core's own `.catch`, which logs it and sends nothing. Once patched, `const visible =` takes
+    // the filtered event, so a second apply matches nothing.
+    pattern: /\n( *)(const unsubscribe = subscribeCompanyLiveEvents\(context\.companyId, \(event\) => \{\n(?:(?!\n *\}\);)[\s\S])*?\n)( *)const visible = await visibleEvent\(event\);/g,
     replacement:
-      "$1/* kyoube-visibility (docs/groups.md) */ (() => { " +
+      "\n$1/* kyoube-visibility (docs/groups.md) */ " +
       'const kyoubeFilter = context.actorType === "board" ? import("/opt/kyoube/visibility/decide.mjs").then(' +
       "(m) => m.liveEventFilter({ companyId: context.companyId, userId: context.actorId, lookupPerson: async () => { " +
       'const [kyoubeRoleRow, kyoubeMembership] = await Promise.all([db.select({ id: instanceUserRoles.id }).from(instanceUserRoles).where(and(eq(instanceUserRoles.userId, context.actorId), eq(instanceUserRoles.role, "instance_admin"))).then((rows) => rows[0] ?? null), ' +
       'db.select({ role: companyMemberships.membershipRole }).from(companyMemberships).where(and(eq(companyMemberships.companyId, context.companyId), eq(companyMemberships.principalType, "user"), eq(companyMemberships.principalId, context.actorId), eq(companyMemberships.status, "active"))).then((rows) => rows[0] ?? null)]); ' +
       "return { instanceAdmin: Boolean(kyoubeRoleRow), role: kyoubeMembership?.role ?? null }; } }), " +
-      '(error) => { console.error("[kyoube] visibility module unavailable", error); return async (event) => ({ type: event.type, companyId: event.companyId, createdAt: event.createdAt, payload: {} }); }) : null; ' +
-      // The listener is async now, and the core exits on an unhandled rejection, so a failed send
-      // (or filter) is logged the way the core logs a socket error and never escapes.
-      "return async (event) => {\n$3try {\n$3    if (socket.readyState !== WebSocket.OPEN)\n$3        return;\n$3    const kyoubeEvent = kyoubeFilter ? await (await kyoubeFilter)(event) : event;\n$3    if (kyoubeEvent && socket.readyState === WebSocket.OPEN)\n$3        socket.send(JSON.stringify(kyoubeEvent));\n$3}\n$3catch (error) {\n$3    logger.warn({ err: error, companyId: context.companyId }, \"live websocket send failed\");\n$3}\n$4}; })());",
+      '(error) => { console.error("[kyoube] visibility module unavailable", error); return async (event) => ({ type: event.type, companyId: event.companyId, createdAt: event.createdAt, payload: {} }); }) : null;' +
+      "\n$1$2$3const kyoubeVisible = await visibleEvent(event);" +
+      "\n$3const visible = kyoubeVisible && kyoubeFilter ? await (await kyoubeFilter)(kyoubeVisible) : kyoubeVisible;",
     expect: 1,
   },
   {
@@ -452,12 +458,13 @@ export const PATCHES = [
     title: "work-object visibility: company search answers a restricted person with what they may see",
     standing: "KyoubeAI work-object visibility: need-to-know companies",
     files: ["server/dist/routes/issues.js"],
-    // `const result = await getSearchService().search(companyId, query);` followed by
-    // `res.json(result);` occurs once in routes/issues.js (2026.1012.0), at the end of the company
-    // search route (search/extract calls `.extract(...)`). A denied company scope reaches it only for
+    // `const result = await getSearchService().search(companyId, query, { issueReadCondition, projectReadCondition })`
+    // followed by `res.json(result);` occurs once in routes/issues.js (2026.1023.0), at the end of
+    // the company search route (search/extract calls `.extract(...)`). The core's own read
+    // conditions already leave out private tasks and projects; ours goes further for need-to-know. A denied company scope reaches it only for
     // a visibility denial (visibility-search-scope), and only then is the result filtered. Once
     // patched, `res.json(` is followed by the marker, so a second apply matches nothing.
-    pattern: /(\n( *)const result = await getSearchService\(\)\.search\(companyId, query\);\n *)res\.json\(result\);/g,
+    pattern: /(\n( *)const result = await getSearchService\(\)\.search\(companyId, query, \{\n *issueReadCondition: await issueReadSqlCondition\(db, req\.actor\),\n *projectReadCondition: await projectReadSqlCondition\(db, req\.actor\),\n *\}\);\n *)res\.json\(result\);/g,
     replacement:
       "$1/* kyoube-visibility (docs/groups.md) */ res.json(" +
       'companyScopeDecision.reason === "deny_kyoube_visibility" ? await import("/opt/kyoube/visibility/decide.mjs").then(' +

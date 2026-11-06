@@ -96,6 +96,12 @@ export function isCodeFile(relToRoot) {
  * - `feature-map` (2026.1012): upstream's recipes for reproducing and verifying
  *   each feature, written for its own developers and agents; the product never
  *   reads them.
+ * - `doc/connections/verified-mcp-qualification-2026-10-08.json` (2026.1023):
+ *   upstream's record of which MCP connectors passed its browser action tests;
+ *   nothing in the image reads it.
+ * - `server/scripts` (2026.1023): upstream's development scripts (seed data,
+ *   its Dot runner labs, build stamps), run with tsx from a source checkout;
+ *   the CMD runs `server/dist/index.js` and nothing in `server/dist` reads them.
  * - `integrations/assistant-plugins` (2026.1012): the source of upstream's own
  *   Claude and OpenAI (ChatGPT/Codex) plugins for its "Assistant connections
  *   (MCP)" feature, built and published upstream. Nothing in the image reads
@@ -115,6 +121,7 @@ export const SWEEP_ALLOWLIST = [
   "cli",
   "design",
   "doc/connections/tool-method-permission-reviews.json",
+  "doc/connections/verified-mcp-qualification-2026-10-08.json",
   "doc/plans",
   "docker",
   "docs/docs.json",
@@ -128,6 +135,7 @@ export const SWEEP_ALLOWLIST = [
   "report",
   "screenshots",
   "scripts",
+  "server/scripts",
   "server/src",
   "tests",
   "tools",
@@ -152,6 +160,18 @@ export const SWEEP_KNOWN_RESIDUALS = [
     pattern: /^packages\/db\/src\/migrations\/[^/]+\.sql$/,
     reason:
       "a shipped migration: packages/db/src/client.ts resolves which migrations are already applied by hashing these files and matching the hashes against drizzle.__drizzle_migrations (loadAppliedMigrations), so editing one would make an upgraded install replay it. 0105_instance_scoped_environments.sql is the one that seeds display text (the default environment's description); the rest are SQL comments",
+  },
+  {
+    // 2026.1023: the vendored runner (server/dist/vendor) and its package copy.
+    pattern: /^(?:server\/dist\/vendor\/paperclip-runner|packages\/paperclip-runner\/dist)\/cli\/pi-provision-inputs\/[^/]+$/,
+    reason:
+      "a pi provisioning input: the runner's provision-pi applies pi-acp.patch to the pi-acp package with git apply and refuses the result unless it matches pinned sha256 values (PI_DISTRIBUTION_PINS, \"Pi wrapper patch does not match its qualified source\"), and installs pi-runtime-extension.ts beside it, so editing them would stop pi from provisioning. Their messages only reach someone running the pi harness, which the image does not ship",
+  },
+  {
+    // 2026.1023: the license notices of upstream's bundled skills.
+    pattern: /^skills\/[^/]+\/LICENSE$/,
+    reason:
+      "a skill's license notice: its attribution names upstream's adaptations, and rewriting an attribution would be a licensing problem, not a branding fix (the same reason the root LICENSE is allowlisted)",
   },
 ];
 

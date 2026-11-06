@@ -57,6 +57,13 @@ for (const [start, end] of regions) {
   if (previous && start <= previous[1]) previous[1] = Math.max(previous[1], end);
   else merged.push([start, end]);
 }
+// The Sidebar's region goes first. The fixture is one file, but the core
+// splits its UI into chunks and theme.mjs scans each on its own: a region
+// from an earlier chunk (one also says "New Task", and since 2026.1023 the
+// agent list's "See all agents" link sits before the Sidebar) must not land
+// inside the fixture's sidebar scan.
+const sidebarRegion = merged.findIndex(([start, end]) => start <= sidebarStart && sidebarStart < end);
+merged.unshift(...merged.splice(sidebarRegion, 1));
 const bundle = merged.map(([start, end]) => js.slice(start, end)).join(";\n");
 
 const css = readdirSync(assets).filter((f) => f.endsWith(".css") && !f.startsWith("kyoube-")).map((f) => readFileSync(path.join(assets, f), "utf8")).join("\n");

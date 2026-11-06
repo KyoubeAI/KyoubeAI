@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/p
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { collectFiles, isBinary } from "../lib/files.mjs";
+import { collectFiles, isBinary, knownResidualReason } from "../lib/files.mjs";
 import { RebrandError, runRebrand } from "../rebrand.mjs";
 
 const BRAND_JSON = {
@@ -263,6 +263,31 @@ describe("runRebrand", () => {
       expect(result.sweep["integrations/assistant-plugins"]).toBe(1);
       const other = await makeTree({ "integrations/other/README.md": "# Paperclip integration\n" });
       await expect(runRebrand({ ...other, verify: true, report: false, log: () => {} })).rejects.toThrow(/sweep: integrations still carries 1 display match/);
+    });
+
+    it("allows what core 2026.1023 added: the MCP qualification record and server/scripts, and counts the pi provisioning inputs and skill licenses as known residuals", async () => {
+      const { root, brandDir } = await makeTree({
+        "doc/connections/verified-mcp-qualification-2026-10-08.json": '{ "surface": "Paperclip browser action Test dialog" }\n',
+        "server/scripts/seed.ts": 'console.log("Seeded a Paperclip company");\n',
+        "server/dist/vendor/paperclip-runner/cli/pi-provision-inputs/pi-acp.patch": '+    "Bind the configured OpenRouter API credential to this Paperclip runtime."\n',
+        "packages/paperclip-runner/dist/cli/pi-provision-inputs/pi-acp.patch": '+    "Bind the configured OpenRouter API credential to this Paperclip runtime."\n',
+        "server/dist/vendor/paperclip-runner/cli/pi-provision-inputs/pi-runtime-extension.ts": 'const fallback = "Paperclip tool request was rejected";\n',
+        "skills/complain/LICENSE": "Paperclip adaptations: local attributed storage\n",
+      });
+      const result = await runRebrand({ root, brandDir, verify: true, report: false, log: () => {} });
+      expect(result.sweepFailures).toEqual([]);
+      expect(result.sweep["doc/connections/verified-mcp-qualification-2026-10-08.json"]).toBe(1);
+      expect(result.sweep["server/scripts"]).toBe(1);
+      const residuals = result.knownResiduals.join("\n");
+      expect(residuals).toContain("server/dist/vendor/paperclip-runner/cli/pi-provision-inputs/pi-acp.patch");
+      expect(residuals).toContain("packages/paperclip-runner/dist/cli/pi-provision-inputs/pi-acp.patch");
+      expect(residuals).toContain("server/dist/vendor/paperclip-runner/cli/pi-provision-inputs/pi-runtime-extension.ts");
+      expect(residuals).toContain("skills/complain/LICENSE");
+      // The patch file is left byte for byte, and the rules name only these files.
+      expect(await read(root, "packages/paperclip-runner/dist/cli/pi-provision-inputs/pi-acp.patch")).toContain("Paperclip runtime");
+      for (const rel of ["packages/paperclip-runner/dist/cli/other/pi-acp.patch", "packages/paperclip-runner/dist/cli/pi-provision-inputs/nested/x.ts", "packages/other/dist/cli/pi-provision-inputs/pi-acp.patch", "skills/complain/SKILL.md", "skills/complain/docs/LICENSE"]) {
+        expect(knownResidualReason(rel)).toBeUndefined();
+      }
     });
 
     it("still fails on a preview page or root file nobody has triaged", async () => {

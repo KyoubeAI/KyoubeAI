@@ -70,13 +70,6 @@ const ERROR_AND_FOOTER_2026_1005_0 =
   '(vr||_===1)&&(0,t.jsx)(Yxe,{onBack:_===4&&Be!=="idle"?js:LYe({currentStep:_,entryStep:I})?()=>R(mr(_)):void 0,primaryLabel:_===1?"Continue":_===5?"Get started":_===4?ns.label:"Next",primaryIcon:_===4?ns.icon:void 0,loadingLabel:_===1?"Creating...":_===4?"Connecting":"Launching...",loading:_===3||_===4?!1:B,primaryDisabled:_===1?!Z.trim()||B:_===3?!he.trim():_===4?ns.disabled||B:B||Ht,onPrimary:r(()=>{_===1?Qe():_===3?R(4):_===4?As():ur()},"onPrimary")})';
 
 // Excerpts of core 2026.916.1's compiled server (server/dist), copied verbatim.
-const SIGNIN_COMMAND_2026_916_1 =
-  '        command: provider === "openai"\n' +
-  '            ? `(export CODEX_HOME=${shellQuote(directory)} && mkdir -p "$CODEX_HOME" && codex -c \'cli_auth_credentials_store="file"\' login --device-auth)`\n' +
-  '            : provider === "anthropic"\n' +
-  '                ? `(export CLAUDE_CONFIG_DIR=${shellQuote(directory)} && mkdir -p "$CLAUDE_CONFIG_DIR" && claude auth login)`\n' +
-  '                : `(export GROK_HOME=${shellQuote(directory)} && mkdir -p "$GROK_HOME" && grok login --device-auth)`,\n';
-
 // The auth module's imports and the start of authConfig in core 2026.916.1's
 // server/dist/auth/better-auth.js, copied verbatim.
 const BETTER_AUTH_2026_916_1 =
@@ -95,11 +88,6 @@ const BETTER_AUTH_2026_916_1 =
   "            disableSignUp: config.authDisableSignUp,\n" +
   "        },\n" +
   "        rateLimit: buildBetterAuthRateLimitOptions({\n";
-
-const CLAUDE_VERIFY_2026_916_1 =
-  '            if (!token)\n' +
-  '                throw new Error("Missing login");\n' +
-  '            await fetchClaudeQuota(token);\n';
 
 const patch = (id) => PATCHES.find((entry) => entry.id === id);
 const piPatch = patch("pi-transcript-non-assistant-messages");
@@ -321,6 +309,91 @@ describe("hermes-quiet-default", () => {
     expect(countMatches(once, hermesQuietPatch.upstreamFix)).toBe(0);
     expect(countMatches(HERMES_QUIET_2026_916_1, hermesQuietPatch.upstreamFix)).toBe(0);
     expect(countMatches(HERMES_QUIET_UPSTREAM_FIX, hermesQuietPatch.upstreamFix)).toBe(1);
+  });
+});
+
+// runChildProcess's deferred prompt write, packages/adapter-utils/src/server-utils.ts (2026.1023.0,
+// lines 4911-4918; TypeScript source, which the server runs through tsx).
+const CHILD_STDIN_2026_1023_0 =
+  "        const stdin = child.stdin;\n" +
+  "        if (opts.stdin != null && stdin) {\n" +
+  "          void spawnPersistPromise.finally(() => {\n" +
+  "            if (child.killed || stdin.destroyed) return;\n" +
+  "            stdin.write(opts.stdin as string);\n" +
+  "            stdin.end();\n" +
+  "          });\n" +
+  "        }\n";
+
+// The same lines with upstream PR #14057 applied (abridged to the statements the marker reads).
+const CHILD_STDIN_UPSTREAM_FIX =
+  "        const stdin = child.stdin;\n" +
+  "        if (opts.stdin != null && stdin) {\n" +
+  "          let stdinFailureHandled = false;\n" +
+  "          const handleStdinFailure = (err: unknown) => {};\n" +
+  '          stdin.on("error", handleStdinFailure);\n' +
+  "          void spawnPersistPromise.then(() => {\n" +
+  "            stdin.write(opts.stdin as string, handleStdinFailure);\n" +
+  "            stdin.end();\n" +
+  "          });\n" +
+  "        }\n";
+
+const childStdinPatch = patch("child-stdin-closed-early");
+
+/**
+ * Runs the (patched or unpatched) block with a stand-in child whose stdin is a plain stream, then
+ * has that stream fail as a pipe the child closed does. Returns what reached onLogError.
+ */
+async function runChildStdin(code, failure) {
+  const { PassThrough } = await import("node:stream");
+  const stdin = new PassThrough();
+  const child = { stdin, killed: false };
+  const logged = [];
+  const onLogError = (err, runId, message) => logged.push({ code: err.code, runId, message });
+  const block = new Function("child", "opts", "spawnPersistPromise", "onLogError", "runId", code.replace(/ as [A-Za-z.]+/g, ""));
+  block(child, { stdin: "Respond with hello." }, Promise.resolve(), onLogError, "run-1");
+  await new Promise((resolve) => setImmediate(resolve));
+  stdin.emit("error", Object.assign(new Error(failure), { code: failure }));
+  return logged;
+}
+
+describe("child-stdin-closed-early", () => {
+  it("is declared with the safety fields every patch needs, against upstream PR #14057", () => {
+    declaredSafely(childStdinPatch);
+    expect(childStdinPatch.upstream).toBe("https://github.com/paperclipai/paperclip/pull/14057");
+    expect(childStdinPatch.files).toEqual(["packages/adapter-utils/src/server-utils.ts"]);
+  });
+
+  it("unpatched, a child that closed its stdin takes the whole server down (issue #7755)", async () => {
+    await expect(runChildStdin(CHILD_STDIN_2026_1023_0, "EPIPE")).rejects.toThrow("EPIPE");
+  });
+
+  it("patched, a closed stdin is ignored and any other stdin failure is logged for the run", async () => {
+    const patched = applyToText(CHILD_STDIN_2026_1023_0, childStdinPatch);
+    expect(patched.count).toBe(1);
+    expect(await runChildStdin(patched.text, "EPIPE")).toEqual([]);
+    expect(await runChildStdin(patched.text, "ERR_STREAM_DESTROYED")).toEqual([]);
+    expect(await runChildStdin(patched.text, "EIO")).toEqual([{ code: "EIO", runId: "run-1", message: "failed to write child process stdin" }]);
+  });
+
+  it("still writes the prompt and closes stdin", async () => {
+    const { PassThrough } = await import("node:stream");
+    const stdin = new PassThrough();
+    const code = applyToText(CHILD_STDIN_2026_1023_0, childStdinPatch).text.replace(/ as [A-Za-z.]+/g, "");
+    new Function("child", "opts", "spawnPersistPromise", "onLogError", "runId", code)(
+      { stdin, killed: false }, { stdin: "Respond with hello." }, Promise.resolve(), () => {}, "run-1");
+    let written = "";
+    stdin.on("data", (chunk) => (written += chunk));
+    await new Promise((resolve) => stdin.on("end", resolve));
+    expect(written).toBe("Respond with hello.");
+  });
+
+  it("does not match again once applied, and recognises upstream's own fix only", () => {
+    const once = applyToText(CHILD_STDIN_2026_1023_0, childStdinPatch).text;
+    expect(applyToText(once, childStdinPatch).count).toBe(0);
+    expect(countMatches(once, childStdinPatch.upstreamFix)).toBe(0);
+    expect(countMatches(CHILD_STDIN_2026_1023_0, childStdinPatch.upstreamFix)).toBe(0);
+    expect(countMatches(CHILD_STDIN_UPSTREAM_FIX, childStdinPatch.upstreamFix)).toBe(1);
+    expect(applyToText(CHILD_STDIN_UPSTREAM_FIX, childStdinPatch).count).toBe(0);
   });
 });
 
@@ -614,22 +687,20 @@ async function writeFullCore(root) {
   await mkdir(path.join(root, "ui", "dist", "assets"), { recursive: true });
   await mkdir(path.join(root, "server", "dist", "services"), { recursive: true });
   await writeFile(path.join(root, "ui/dist/assets/index-5zyW-AFc.js"), FULL_BUNDLE_2026_916_1);
-  await writeFile(path.join(root, "server/dist/services/local-ai-login.js"), SIGNIN_COMMAND_2026_916_1);
-  await writeFile(path.join(root, "server/dist/services/local-ai-credentials.js"), CLAUDE_VERIFY_2026_916_1);
   await writeFile(path.join(root, "server/dist/services/issue-thread-interactions.js"), INTERACTION_CREATE_2026_1012_0);
   await writeFile(path.join(root, "server/dist/services/authorization.js"), AUTHZ_BOARD_2026_1012_0);
   await writeFile(path.join(root, "server/dist/app.js"), APP_API_2026_1012_0);
   await mkdir(path.join(root, "server", "dist", "realtime"), { recursive: true });
-  await writeFile(path.join(root, "server/dist/realtime/live-events-ws.js"), LIVE_WS_SEND_2026_1012_0);
+  await writeFile(path.join(root, "server/dist/realtime/live-events-ws.js"), LIVE_WS_SEND_2026_1023_0);
   await mkdir(path.join(root, "server", "dist", "auth"), { recursive: true });
   await writeFile(path.join(root, "server/dist/auth/better-auth.js"), BETTER_AUTH_2026_916_1);
   await mkdir(path.join(root, "server", "dist", "routes"), { recursive: true });
-  await writeFile(path.join(root, "server/dist/routes/issues.js"), CHAT_OPEN_2026_1005_0 + CHAT_MESSAGE_2026_1005_0 + SEARCH_ROUTES_2026_1012_0 + CREATE_ROUTE_2026_1012_0 + CHILD_ROUTE_2026_1012_0 + PLAN_ROUTE_2026_1012_0);
+  await writeFile(path.join(root, "server/dist/routes/issues.js"), CHAT_OPEN_2026_1005_0 + CHAT_MESSAGE_2026_1005_0 + SEARCH_ROUTES_2026_1023_0 + CREATE_ROUTE_2026_1012_0 + CHILD_ROUTE_2026_1012_0 + PLAN_ROUTE_2026_1012_0);
   await mkdir(path.join(root, "packages", "adapters", "hermes", "src", "server"), { recursive: true });
   await writeFile(path.join(root, "packages/adapters/hermes/src/server/execute.ts"), HERMES_QUIET_2026_916_1);
+  await mkdir(path.join(root, "packages", "adapter-utils", "src"), { recursive: true });
+  await writeFile(path.join(root, "packages/adapter-utils/src/server-utils.ts"), CHILD_STDIN_2026_1023_0);
 }
-
-const signinPatch = patch("anthropic-signin-setup-token");
 
 const licenseImportPatch = patch("license-seat-limit-import");
 const licenseHookPatch = patch("license-seat-limit-hook");
@@ -719,20 +790,6 @@ describe("a standing patch that stops matching", () => {
   });
 });
 
-describe("anthropic-signin-setup-token", () => {
-  it("is declared with the safety fields every patch needs", () => declaredSafely(signinPatch));
-
-  it("changes only the Claude sign-in command, once", () => {
-    const { count, text } = applyToText(SIGNIN_COMMAND_2026_916_1, signinPatch);
-    expect(count).toBe(1);
-    expect(text).toContain('mkdir -p "$CLAUDE_CONFIG_DIR" && kyoube connect claude)`');
-    expect(text).not.toContain("claude auth login");
-    expect(text).toContain("codex -c 'cli_auth_credentials_store=\"file\"' login --device-auth)");
-    expect(text).toContain("grok login --device-auth)");
-    expect(applyToText(text, signinPatch).count).toBe(0);
-  });
-});
-
 describe("an upstream-fix marker", () => {
   // A patch with a marker for the upstream fix, and one file per test case.
   const marked = {
@@ -818,7 +875,6 @@ describe("applyPatches", () => {
     expect(patched).toContain('.role!=="assistant")return[]');
     expect(patched).toContain("arguments[0]!==!0");
     expect(patched).toContain(SKIP_HARNESS_LABEL);
-    expect(await readFile(path.join(root, "server/dist/services/local-ai-login.js"), "utf8")).toContain("kyoube connect claude");
     expect(await readFile(path.join(root, "packages/adapters/hermes/src/server/execute.ts"), "utf8")).toContain("cfgBoolean(config.quiet) ?? true");
     const auth = await readFile(path.join(root, "server/dist/auth/better-auth.js"), "utf8");
     expect(auth).toContain("KyoubeLicenseAPIError");
@@ -1187,9 +1243,10 @@ const AUTHZ_BOARD_2026_1012_0 =
   "                }\n" +
   "            }\n";
 
-// realtime/live-events-ws.js lines 152-188: the ping loop and the connection
-// handler, whose listener sends every company event to the socket.
-const LIVE_WS_SEND_2026_1012_0 =
+// realtime/live-events-ws.js lines 161-279: the ping loop and the connection
+// handler, whose listener sends each company event through the core's own
+// privacy check (visibleEvent) on a delivery chain that logs any failure.
+const LIVE_WS_SEND_2026_1023_0 =
   "    const pingInterval = setInterval(() => {\n" +
   "        for (const socket of wss.clients) {\n" +
   "            if (!aliveByClient.get(socket)) {\n" +
@@ -1206,10 +1263,92 @@ const LIVE_WS_SEND_2026_1012_0 =
   "            socket.close(1008, \"missing context\");\n" +
   "            return;\n" +
   "        }\n" +
+  "        const access = authorizationService(db);\n" +
+  "        async function visibleEvent(event) {\n" +
+  "            if (context.actor.source === \"local_implicit\") {\n" +
+  "                if (event.type === \"activity.logged\" && event.payload.entityType === \"issue\") {\n" +
+  "                    return { ...event, payload: { ...event.payload,\n" +
+  "                            ...await activityToastIdentity(db, event.companyId, event.payload) } };\n" +
+  "                }\n" +
+  "                return event;\n" +
+  "            }\n" +
+  "            if (context.apiKeyId) {\n" +
+  "                const active = await db.select({ id: agentApiKeys.id }).from(agentApiKeys)\n" +
+  "                    .where(and(eq(agentApiKeys.id, context.apiKeyId), isNull(agentApiKeys.revokedAt))).limit(1);\n" +
+  "                if (!active.length)\n" +
+  "                    return null;\n" +
+  "            }\n" +
+  "            else {\n" +
+  "                const membership = await db.select({ id: companyMemberships.id }).from(companyMemberships)\n" +
+  "                    .where(and(eq(companyMemberships.companyId, context.companyId), eq(companyMemberships.principalType, \"user\"), eq(companyMemberships.principalId, context.actorId), eq(companyMemberships.status, \"active\"))).limit(1);\n" +
+  "                const admin = context.actor.source !== \"cloud_tenant\" && await db.select({ id: instanceUserRoles.id }).from(instanceUserRoles)\n" +
+  "                    .where(and(eq(instanceUserRoles.userId, context.actorId), eq(instanceUserRoles.role, \"instance_admin\"))).limit(1).then(rows => rows.length > 0);\n" +
+  "                if (!membership.length && !admin)\n" +
+  "                    return null;\n" +
+  "            }\n" +
+  "            const payload = event.payload;\n" +
+  "            const issueId = typeof payload.issueId === \"string\" ? payload.issueId\n" +
+  "                : payload.entityType === \"issue\" && typeof payload.entityId === \"string\" ? payload.entityId : null;\n" +
+  "            if (issueId) {\n" +
+  "                const [issue] = await db.select({ id: issues.id }).from(issues)\n" +
+  "                    .where(and(eq(issues.id, issueId), eq(issues.companyId, event.companyId))).limit(1);\n" +
+  "                if (!issue || !(await access.decide({ actor: context.actor, action: \"issue:read\",\n" +
+  "                    resource: { type: \"issue\", companyId: event.companyId, issueId } })).allowed)\n" +
+  "                    return null;\n" +
+  "            }\n" +
+  "            if (payload.entityType === \"project\" && typeof payload.entityId === \"string\") {\n" +
+  "                const [project] = await db.select({ id: projects.id }).from(projects)\n" +
+  "                    .where(and(eq(projects.id, payload.entityId), eq(projects.companyId, event.companyId))).limit(1);\n" +
+  "                if (!project || !(await access.decide({ actor: context.actor, action: \"project:read\",\n" +
+  "                    resource: { type: \"project\", companyId: event.companyId, projectId: project.id } })).allowed)\n" +
+  "                    return null;\n" +
+  "            }\n" +
+  "            const runId = typeof payload.runId === \"string\" ? payload.runId\n" +
+  "                : payload.entityType === \"heartbeat_run\" && typeof payload.entityId === \"string\" ? payload.entityId : null;\n" +
+  "            if (runId) {\n" +
+  "                const [run] = await db.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.id, runId), eq(heartbeatRuns.companyId, event.companyId)));\n" +
+  "                if (!run || !(await canActorReadHeartbeatRun(db, access, context.actor, run)))\n" +
+  "                    return null;\n" +
+  "            }\n" +
+  "            if (event.type.startsWith(\"heartbeat.run.\"))\n" +
+  "                return runId ? event : null;\n" +
+  "            if (event.type === \"agent.session.goal.changed\")\n" +
+  "                return issueId ? event : null;\n" +
+  "            // Company-wide invalidations carry no task-derived content. Authorized\n" +
+  "            // clients obtain details through viewer-filtered HTTP reads.\n" +
+  "            if (event.type === \"activity.logged\")\n" +
+  "                return { ...event, payload: {\n" +
+  "                        action: payload.action, entityType: payload.entityType, entityId: payload.entityId,\n" +
+  "                        // The task read check above authorizes attribution, but not arbitrary details.\n" +
+  "                        ...(issueId ? await activityToastIdentity(db, event.companyId, payload) : {}),\n" +
+  "                    } };\n" +
+  "            if (event.type === \"agent.status\")\n" +
+  "                return { ...event, payload: { agentId: payload.agentId, status: payload.status } };\n" +
+  "            if (event.type === \"external_object.updated\")\n" +
+  "                return { ...event, payload: { externalObjectId: payload.externalObjectId } };\n" +
+  "            if (event.type.startsWith(\"plugin.\"))\n" +
+  "                return event;\n" +
+  "            return null;\n" +
+  "        }\n" +
+  "        let delivery = Promise.resolve();\n" +
+  "        let pending = 0;\n" +
   "        const unsubscribe = subscribeCompanyLiveEvents(context.companyId, (event) => {\n" +
   "            if (socket.readyState !== WebSocket.OPEN)\n" +
   "                return;\n" +
-  "            socket.send(JSON.stringify(event));\n" +
+  "            if (++pending > 1000) {\n" +
+  "                socket.close(1013, \"event backlog\");\n" +
+  "                return;\n" +
+  "            }\n" +
+  "            delivery = delivery.then(async () => {\n" +
+  "                if (socket.readyState !== WebSocket.OPEN)\n" +
+  "                    return;\n" +
+  "                // Check at delivery time, including after a grant is revoked while the\n" +
+  "                // subscription remains open. Never cache successful privacy decisions.\n" +
+  "                const visible = await visibleEvent(event);\n" +
+  "                if (visible && socket.readyState === WebSocket.OPEN)\n" +
+  "                    socket.send(JSON.stringify(visible));\n" +
+  "            }).catch(err => logger.warn({ err, companyId: context.companyId }, \"live event authorization failed\"))\n" +
+  "                .finally(() => { pending -= 1; });\n" +
   "        });\n" +
   "        cleanupByClient.set(socket, unsubscribe);\n" +
   "        aliveByClient.set(socket, true);\n" +
@@ -1228,12 +1367,12 @@ const LIVE_WS_SEND_2026_1012_0 =
   "        });\n" +
   "    });\n";
 
-// routes/issues.js lines 5176-5256: the search/extract route and the company
+// routes/issues.js lines 5534-5617: the search/extract route and the company
 // search route, whole. Both refuse a company-scope denial with the same 403
 // text, and extract ends in its own `res.json(result)`, so each route is the
 // context that proves the other's anchor is left alone: one fixture serves
 // both search patches.
-const SEARCH_ROUTES_2026_1012_0 =
+const SEARCH_ROUTES_2026_1023_0 =
   "    router.get(\"/companies/:companyId/search/extract\", async (req, res) => {\n" +
   "        const companyId = req.params.companyId;\n" +
   "        assertCompanyAccess(req, companyId);\n" +
@@ -1267,7 +1406,9 @@ const SEARCH_ROUTES_2026_1012_0 =
   "            });\n" +
   "            return;\n" +
   "        }\n" +
-  "        const result = await getSearchService().extract(companyId, parsedQuery.data);\n" +
+  "        const result = await getSearchService().extract(companyId, parsedQuery.data, {\n" +
+  "            issueReadCondition: await issueReadSqlCondition(db, req.actor),\n" +
+  "        });\n" +
   "        res.json(result);\n" +
   "    });\n" +
   "    router.get(\"/companies/:companyId/search\", async (req, res) => {\n" +
@@ -1312,12 +1453,15 @@ const SEARCH_ROUTES_2026_1012_0 =
   "            });\n" +
   "            return;\n" +
   "        }\n" +
-  "        const result = await getSearchService().search(companyId, query);\n" +
+  "        const result = await getSearchService().search(companyId, query, {\n" +
+  "            issueReadCondition: await issueReadSqlCondition(db, req.actor),\n" +
+  "            projectReadCondition: await projectReadSqlCondition(db, req.actor),\n" +
+  "        });\n" +
   "        res.json(result);\n" +
   "    });\n";
 
-const SEARCH_SCOPE_2026_1012_0 = SEARCH_ROUTES_2026_1012_0;
-const SEARCH_RESULT_2026_1012_0 = SEARCH_ROUTES_2026_1012_0;
+const SEARCH_SCOPE_2026_1023_0 = SEARCH_ROUTES_2026_1023_0;
+const SEARCH_RESULT_2026_1023_0 = SEARCH_ROUTES_2026_1023_0;
 
 const VISIBILITY_MODULE = "/opt/kyoube/visibility/decide.mjs";
 
@@ -1346,7 +1490,7 @@ async function runPatchedSearch({ scope, route = "/companies/:companyId/search",
   const moduleFile = path.join(HERE, `.visibility-under-test-${stamp}.mjs`);
   const routesFile = path.join(HERE, `.hook-under-test-${stamp}.mjs`);
   const patched = ["visibility-search-scope", "visibility-search-filter"]
-    .reduce((text, id) => applyToText(text, PATCHES.find((entry) => entry.id === id)).text, SEARCH_ROUTES_2026_1012_0)
+    .reduce((text, id) => applyToText(text, PATCHES.find((entry) => entry.id === id)).text, SEARCH_ROUTES_2026_1023_0)
     .replace(VISIBILITY_MODULE, pathToFileURL(moduleFile).href);
   if (!moduleMissing) {
     await writeFile(moduleFile,
@@ -1357,7 +1501,7 @@ async function runPatchedSearch({ scope, route = "/companies/:companyId/search",
       "}\n");
   }
   // As runPatchedHook does: the patched routes go through a real module.
-  await writeFile(routesFile, `export default (router, access, assertCompanyAccess, companySearchQuerySchema, companySearchExtractQuerySchema, searchRateLimiter, companySearchRateLimitActor, getSearchService) => {\n${patched}};\n`);
+  await writeFile(routesFile, `export default (router, access, assertCompanyAccess, companySearchQuerySchema, companySearchExtractQuerySchema, searchRateLimiter, companySearchRateLimitActor, getSearchService, db, issueReadSqlCondition, projectReadSqlCondition) => {\n${patched}};\n`);
   try {
     const { default: register } = await import(pathToFileURL(routesFile).href);
     const handlers = new Map();
@@ -1380,7 +1524,7 @@ async function runPatchedSearch({ scope, route = "/companies/:companyId/search",
     };
     const service = { search: async () => found, extract: async () => found };
     const limiter = { consume: () => ({ allowed: true, limit: 60, remaining: 59 }) };
-    register({ get: (at, handler) => handlers.set(at, handler) }, access, () => {}, schema, schema, limiter, () => "actor", () => service);
+    register({ get: (at, handler) => handlers.set(at, handler) }, access, () => {}, schema, schema, limiter, () => "actor", () => service, {}, async () => ({}), async () => ({}));
     const actor = { type: "board", userId: "u1" };
     const res = fakeResponse();
     await handlers.get(route)({ params: { companyId: "c1" }, query: { q: "x" }, actor }, res);
@@ -1396,9 +1540,9 @@ describe("visibility patches", () => {
   it("anchors once each on the four core sites and inserts the marker and module path", () => {
     for (const [id, excerpt, file] of [
       ["visibility-board-decide", AUTHZ_BOARD_2026_1012_0, "server/dist/services/authorization.js"],
-      ["visibility-live-events", LIVE_WS_SEND_2026_1012_0, "server/dist/realtime/live-events-ws.js"],
-      ["visibility-search-scope", SEARCH_SCOPE_2026_1012_0, "server/dist/routes/issues.js"],
-      ["visibility-search-filter", SEARCH_RESULT_2026_1012_0, "server/dist/routes/issues.js"],
+      ["visibility-live-events", LIVE_WS_SEND_2026_1023_0, "server/dist/realtime/live-events-ws.js"],
+      ["visibility-search-scope", SEARCH_SCOPE_2026_1023_0, "server/dist/routes/issues.js"],
+      ["visibility-search-filter", SEARCH_RESULT_2026_1023_0, "server/dist/routes/issues.js"],
     ]) {
       const patch = byId(id);
       expect(patch.standing).toContain("work-object visibility");
@@ -1455,31 +1599,35 @@ describe("visibility patches", () => {
       await rm(file, { force: true });
     }
   });
-  it("the live-events patch keeps the open-socket guard and sends the filtered event", () => {
-    const { text } = applyToText(LIVE_WS_SEND_2026_1012_0, byId("visibility-live-events"));
-    expect(text).toContain("socket.send(JSON.stringify(kyoubeEvent))");
-    expect(text).not.toContain("socket.send(JSON.stringify(event))");
+  it("the live-events patch filters what the core's own check lets through, on the core's delivery chain", () => {
+    const { text } = applyToText(LIVE_WS_SEND_2026_1023_0, byId("visibility-live-events"));
+    // The filter is set up once per socket, before the core subscribes.
+    expect(text.indexOf("const kyoubeFilter = ")).toBeLessThan(text.indexOf("const unsubscribe = subscribeCompanyLiveEvents"));
     expect(text).toContain('context.actorType === "board"');
-    expect(text).toContain('logger.warn({ err: error, companyId: context.companyId }, "live websocket send failed");');
+    expect(text).toContain("const kyoubeVisible = await visibleEvent(event);\n                const visible = kyoubeVisible && kyoubeFilter ? await (await kyoubeFilter)(kyoubeVisible) : kyoubeVisible;\n                if (visible && socket.readyState === WebSocket.OPEN)\n                    socket.send(JSON.stringify(visible));");
+    // The core's backlog limit and failure logging stay as they are.
+    expect(text).toContain("if (++pending > 1000) {");
+    expect(text).toContain('.catch(err => logger.warn({ err, companyId: context.companyId }, "live event authorization failed"))');
   });
   /**
    * Opens one socket on the patched connection handler, as the core would, with the module path
    * pointed at a stand-in liveEventFilter (marks what it filtered, or rejects with `filterRejects`)
-   * or at no file (`moduleMissing`). Resolves to the subscribed listener, what the socket sent and
-   * what the core's logger was told.
+   * or at no file (`moduleMissing`). The core's own check (visibleEvent) runs on a stand-in
+   * database that finds the person's membership and the agent's key. Resolves to the subscribed
+   * listener, what the socket sent and what the core's logger was told.
    */
   async function runPatchedLive({ actorType = "board", moduleMissing = false, filterRejects = false, send } = {}) {
     const stamp = `${process.pid}-${Math.random().toString(36).slice(2)}`;
     const moduleFile = path.join(HERE, `.live-visibility-under-test-${stamp}.mjs`);
     const handlerFile = path.join(HERE, `.live-under-test-${stamp}.mjs`);
-    const excerpt = LIVE_WS_SEND_2026_1012_0.slice(LIVE_WS_SEND_2026_1012_0.indexOf('    wss.on("connection"'));
+    const excerpt = LIVE_WS_SEND_2026_1023_0.slice(LIVE_WS_SEND_2026_1023_0.indexOf('    wss.on("connection"'));
     const patched = applyToText(excerpt, byId("visibility-live-events")).text.replace(VISIBILITY_MODULE, pathToFileURL(moduleFile).href);
     if (!moduleMissing) {
       await writeFile(moduleFile, filterRejects
         ? "export function liveEventFilter() { return async () => { throw new Error(\"filter broke\"); }; }\n"
         : "export function liveEventFilter({ userId }) { return async (event) => ({ ...event, payload: {}, filteredFor: userId }); }\n");
     }
-    await writeFile(handlerFile, "export default ({ wss, subscribeCompanyLiveEvents, WebSocket, cleanupByClient, aliveByClient, logger, db, instanceUserRoles, companyMemberships, and, eq }) => {\n" + patched + "};\n");
+    await writeFile(handlerFile, "export default ({ wss, subscribeCompanyLiveEvents, WebSocket, cleanupByClient, aliveByClient, logger, db, instanceUserRoles, companyMemberships, agentApiKeys, heartbeatRuns, issues, projects, and, eq, isNull, authorizationService, activityToastIdentity, canActorReadHeartbeatRun }) => {\n" + patched + "};\n");
     try {
       const { default: register } = await import(pathToFileURL(handlerFile).href);
       let onConnection;
@@ -1493,22 +1641,30 @@ describe("visibility patches", () => {
         cleanupByClient: new Map(),
         aliveByClient: new Map(),
         logger: { warn: (...args) => warnings.push(args) },
-        db: {}, instanceUserRoles: {}, companyMemberships: {}, and: () => ({}), eq: () => ({}),
+        db: { select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ id: "row" }] }) }) }) },
+        instanceUserRoles: {}, companyMemberships: {}, agentApiKeys: {}, heartbeatRuns: {}, issues: {}, projects: {},
+        and: () => ({}), eq: () => ({}), isNull: () => ({}),
+        authorizationService: () => ({ decide: async () => ({ allowed: true }) }),
+        activityToastIdentity: async () => ({}),
+        canActorReadHeartbeatRun: async () => true,
       });
       const socket = { readyState: 1, send: send ?? ((frame) => sent.push(JSON.parse(frame))), on: () => {}, close: () => {} };
-      onConnection(socket, { paperclipUpgradeContext: { companyId: "c1", actorType, actorId: actorType === "board" ? "u1" : "a1" } });
+      onConnection(socket, { paperclipUpgradeContext: actorType === "board"
+        ? { companyId: "c1", actorType, actorId: "u1", actor: { type: "board", userId: "u1", source: "session" } }
+        : { companyId: "c1", actorType, actorId: "a1", apiKeyId: "k1", actor: { type: "agent", agentId: "a1", companyId: "c1", source: "agent_key" } } });
       return { listener, sent, warnings, cleanup: () => rm(moduleFile, { force: true }) };
     } finally {
       await rm(handlerFile, { force: true });
     }
   }
-  it("the patched live-events listener sends the filtered event to a person and the event itself to an agent", async () => {
-    const event = { type: "activity.logged", companyId: "c1", createdAt: "t", payload: { details: { title: "secret" } } };
+  // The core passes plugin events whole to anyone it lets through, so one shows what our filter adds.
+  it("the patched live-events listener sends a person the filtered event and an agent what the core sends", async () => {
+    const event = { type: "plugin.kyoube-apps.progress", companyId: "c1", createdAt: "t", payload: { title: "secret" } };
     for (const [actorType, expected] of [["board", { ...event, payload: {}, filteredFor: "u1" }], ["agent", event]]) {
       const live = await runPatchedLive({ actorType });
       try {
-        await expect(live.listener(event)).resolves.toBeUndefined();
-        expect(live.sent).toEqual([expected]);
+        expect(live.listener(event)).toBeUndefined();
+        await vi.waitFor(() => expect(live.sent).toEqual([expected]));
         expect(live.warnings).toEqual([]);
       } finally {
         await live.cleanup();
@@ -1516,33 +1672,35 @@ describe("visibility patches", () => {
     }
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const missing = await runPatchedLive({ moduleMissing: true });
-    await missing.listener(event);
-    expect(missing.sent).toEqual([{ type: "activity.logged", companyId: "c1", createdAt: "t", payload: {} }]);
+    missing.listener(event);
+    await vi.waitFor(() => expect(missing.sent).toEqual([{ type: event.type, companyId: "c1", createdAt: "t", payload: {} }]));
+    expect(error).toHaveBeenCalledWith("[kyoube] visibility module unavailable", expect.anything());
     error.mockRestore();
   });
-  it("the patched live-events listener logs a failed send or filter and never rejects", async () => {
-    const event = { type: "activity.logged", companyId: "c1", payload: {} };
+  it("a failed filter or send lands in the core's own log and sends nothing", async () => {
+    const event = { type: "plugin.kyoube-apps.progress", companyId: "c1", payload: {} };
     for (const options of [{ send: () => { throw new Error("socket gone"); } }, { filterRejects: true }, { actorType: "agent", send: () => { throw new Error("socket gone"); } }]) {
       const live = await runPatchedLive(options);
       try {
-        await expect(live.listener(event)).resolves.toBeUndefined();
-        expect(live.warnings).toEqual([[{ err: expect.any(Error), companyId: "c1" }, "live websocket send failed"]]);
+        expect(live.listener(event)).toBeUndefined();
+        await vi.waitFor(() => expect(live.warnings).toEqual([[{ err: expect.any(Error), companyId: "c1" }, "live event authorization failed"]]));
+        expect(live.sent).toEqual([]);
       } finally {
         await live.cleanup();
       }
     }
   });
   it("the search patches keep the 403 for everyone but a visibility denial, and filter that case", () => {
-    const scoped = applyToText(SEARCH_SCOPE_2026_1012_0, byId("visibility-search-scope")).text;
+    const scoped = applyToText(SEARCH_SCOPE_2026_1023_0, byId("visibility-search-scope")).text;
     expect(scoped).toContain('/* kyoube-visibility (docs/groups.md) */ if (!companyScopeDecision.allowed && companyScopeDecision.reason !== "deny_kyoube_visibility") {\n            res.status(403).json({');
     // The extract route refuses as before.
     expect(scoped).toContain("        if (!companyScopeDecision.allowed) {\n            res.status(403).json({\n                error: \"Company search is outside this actor's authorization boundary\",\n            });\n            return;\n        }\n        const parsedQuery = companySearchExtractQuerySchema.safeParse(req.query);\n");
-    const filtered = applyToText(SEARCH_RESULT_2026_1012_0, byId("visibility-search-filter")).text;
+    const filtered = applyToText(SEARCH_RESULT_2026_1023_0, byId("visibility-search-filter")).text;
     expect(filtered).toContain("filterSearchResults({ companyId, result, decide: (action, resource) => access.decide({ actor: req.actor, action, resource }) })");
     expect(filtered).toContain("results: [], countsByType: { issue: 0, comment: 0, document: 0, artifact: 0, agent: 0, project: 0 }, filterOptionCounts: {");
     expect(filtered).not.toContain("...result");
     // The extract route answers as before.
-    expect(filtered).toContain("const result = await getSearchService().extract(companyId, parsedQuery.data);\n        res.json(result);\n");
+    expect(filtered).toContain("const result = await getSearchService().extract(companyId, parsedQuery.data, {\n            issueReadCondition: await issueReadSqlCondition(db, req.actor),\n        });\n        res.json(result);\n");
   });
   it("the patched search route filters for a visibility denial and refuses every other denial as before", async () => {
     const open = await runPatchedSearch({ scope: { allowed: true, reason: "allow_company_member" } });
@@ -1580,15 +1738,15 @@ describe("visibility patches", () => {
   it("every patched excerpt still parses", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "core-patches-visibility-"));
     try {
-      const search = applyToText(applyToText(SEARCH_ROUTES_2026_1012_0, byId("visibility-search-scope")).text, byId("visibility-search-filter")).text;
+      const search = applyToText(applyToText(SEARCH_ROUTES_2026_1023_0, byId("visibility-search-scope")).text, byId("visibility-search-filter")).text;
       const excerpts = [
         ["core-authorization", AUTHZ_BOARD_2026_1012_0],
-        ["core-live-events", LIVE_WS_SEND_2026_1012_0],
-        ["core-search", SEARCH_ROUTES_2026_1012_0],
+        ["core-live-events", LIVE_WS_SEND_2026_1023_0],
+        ["core-search", SEARCH_ROUTES_2026_1023_0],
         ["visibility-board-decide", applyToText(AUTHZ_BOARD_2026_1012_0, byId("visibility-board-decide")).text],
-        ["visibility-live-events", applyToText(LIVE_WS_SEND_2026_1012_0, byId("visibility-live-events")).text],
-        ["visibility-search-scope", applyToText(SEARCH_SCOPE_2026_1012_0, byId("visibility-search-scope")).text],
-        ["visibility-search-filter", applyToText(SEARCH_RESULT_2026_1012_0, byId("visibility-search-filter")).text],
+        ["visibility-live-events", applyToText(LIVE_WS_SEND_2026_1023_0, byId("visibility-live-events")).text],
+        ["visibility-search-scope", applyToText(SEARCH_SCOPE_2026_1023_0, byId("visibility-search-scope")).text],
+        ["visibility-search-filter", applyToText(SEARCH_RESULT_2026_1023_0, byId("visibility-search-filter")).text],
         ["visibility-search-both", search],
       ];
       for (const [name, text] of excerpts) {

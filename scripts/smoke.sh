@@ -1214,6 +1214,19 @@ make_agent() { # name adapterType reportsTo(may be empty) adapterConfigJson -> a
   curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
     -X POST "$BASE_URL/api/companies/$COMPANY_ID/agents" --data "$body" | jq -r '.id'
 }
+# Since core 2026.1023 a new agent is "preparing" (status paused) until the core's lifecycle worker
+# makes it ready, usually within a second; a paused agent is neither woken nor self-tested.
+wait_ready() { # agent ids...
+  local id state i
+  for id in "$@"; do
+    for i in $(seq 1 60); do
+      state="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/agents/$id" | jq -r '.lifecycleState // "ready"')"
+      [[ "$state" == "ready" ]] && break
+      sleep 1
+    done
+    [[ "$state" == "ready" ]] || { echo "agent $id is still '$state' after 60s" >&2; exit 1; }
+  done
+}
 agent_key() { curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X POST "$BASE_URL/api/agents/$1/keys" --data '{"name":"smoke"}' | jq -r '.token'; }
 as_agent() { # key method path [body] [run-id] -> HTTP_STATUS, body in $TMP/resp.json
   local args=(-sS -o "$TMP/resp.json" -w '%{http_code}' -H "Authorization: Bearer $1" -H 'Content-Type: application/json' -X "$2" "$BASE_URL$3")
@@ -1224,10 +1237,31 @@ as_agent() { # key method path [body] [run-id] -> HTTP_STATUS, body in $TMP/resp
 
 # M manages R; P has neither manager nor reports. R and P run the core's
 # `process` adapter, so no model is needed: R's script stands in for an agent.
-M_ID="$(make_agent smoke-manager claude_local "" '{"cwd":"/kyoubeai/workspaces/smoke"}')"
+# Since core 2026.1023 a new agent is ready only after its harness answers a hello probe
+# (agent-harness-verification), and the smoke has no Claude sign-in. So while M is created a
+# stand-in claude, first on the server's PATH, answers the CLI engine's probe; it is removed once M
+# is ready, and M's runs then meet the image's signed-out claude, as on 1.14.
+PROBE_BIN=/kyoubeai/.local/bin/claude
+compose exec -T -u node app sh -c "test ! -e $PROBE_BIN" || { echo "$PROBE_BIN already exists; the smoke will not replace it" >&2; exit 1; }
+compose exec -T -u node app sh -c "mkdir -p ${PROBE_BIN%/*} && cat > $PROBE_BIN && chmod 700 $PROBE_BIN" <<'STUB'
+#!/bin/sh
+case " $* " in
+  *" --version "*) echo "2.1.306 (Claude Code)"; exit 0 ;;
+  *" --print "*) cat >/dev/null
+    printf '%s\n' '{"type":"system","subtype":"init","session_id":"smoke-probe","model":"smoke"}' \
+      '{"type":"assistant","session_id":"smoke-probe","message":{"id":"smoke-probe","content":[{"type":"text","text":"hello"}]}}' \
+      '{"type":"result","subtype":"success","is_error":false,"session_id":"smoke-probe","result":"hello"}'
+    exit 0 ;;
+esac
+exit 64
+STUB
+M_ID="$(make_agent smoke-manager claude_local "" '{"cwd":"/kyoubeai/workspaces/smoke","engine":"cli"}')"
 P_ID="$(make_agent smoke-peer process "" '{"cwd":"/kyoubeai/workspaces/smoke","command":"node","args":["-e",""]}')"
 R_ID="$(make_agent smoke-report process "$M_ID" '{"cwd":"/kyoubeai/workspaces/smoke","command":"node","args":["/kyoubeai/workspaces/smoke/escalate.mjs"]}')"
 for ID in "$M_ID" "$P_ID" "$R_ID"; do [[ -n "$ID" && "$ID" != "null" ]] || { echo "agent create failed" >&2; exit 1; }; done
+# The self-test needs both M and R active (see wait_ready).
+wait_ready "$M_ID" "$P_ID" "$R_ID"
+compose exec -T -u node app rm -f "$PROBE_BIN"
 
 compose exec -T app kyoube agent-rules --once | tee "$TMP/rules-once.log"
 grep -q 'self-test pass' "$TMP/rules-once.log" || { echo "the guard self-test did not pass on this core:" >&2; cat "$TMP/rules-once.log" >&2; exit 1; }
@@ -1365,6 +1399,7 @@ echo "==> agent questions: a report asks its manager; refusals outside its line,
 # with ask.mjs, which reads its plan from ask-plan.json, so no model is needed.
 # A reports to M, so M is in A's line and P (no manager, no reports) is not.
 A_ID="$(make_agent smoke-asker process "$M_ID" '{"cwd":"/kyoubeai/workspaces/smoke","command":"node","args":["/kyoubeai/workspaces/smoke/ask.mjs"]}')"
+wait_ready "$A_ID"
 [[ -n "$A_ID" && "$A_ID" != "null" ]] || { echo "agent create failed (smoke-asker)" >&2; exit 1; }
 compose exec -T -u node app sh -c 'mkdir -p /kyoubeai/workspaces/smoke && cat > /kyoubeai/workspaces/smoke/ask.mjs' <<'JS'
 import { existsSync } from "node:fs";
@@ -1761,27 +1796,58 @@ CONTAINER_HOST="$(server_env | sed -n 's/^HOSTNAME=//p')"
 [[ -n "$TRUSTED" && "$TRUSTED" == "$CONTAINER_HOST" ]] || { echo "trusted runtime host is '$TRUSTED', expected the container hostname '$CONTAINER_HOST'" >&2; exit 1; }
 echo "    pi, hermes and semver on the server's PATH; tree reinstalled; trusted runtime host = $TRUSTED"
 
-echo "==> Connections shows 'kyoube connect claude', which writes a one-year token into that sign-in's folder"
+echo "==> a Claude subscription signs in from the browser: the server runs claude setup-token and takes the pasted code"
+# Since core 2026.1023 the server runs `claude setup-token` itself (local-ai-browser-login), shows its
+# sign-in link in Connections and types the code the person pastes back. A stand-in claude on the
+# server's PATH prints the screen upstream's own test uses (local-ai-browser-login.test) and checks
+# that the code arrives; the real CLI's screen is checked by hand (docs/upgrading.md, "Moving to 1.15").
+STUB_BIN=/kyoubeai/.local/bin/claude
+compose exec -T -u node app sh -c "test ! -e $STUB_BIN" || { echo "$STUB_BIN already exists; the smoke will not replace it" >&2; exit 1; }
+SMOKE_SETUP_TOKEN="sk-ant-oat01-SMOKEsmokeSMOKEsmokeSMOKEsmoke_-0123456789"
+SMOKE_AUTH_URL="https://claude.com/cai/oauth/authorize?client_id=smoke&code=true&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&response_type=code&scope=user%3Ainference&state=smokesmokesmokesmoke"
+compose exec -T -u node app sh -c "cat > $STUB_BIN && chmod 700 $STUB_BIN" <<STUB
+#!/bin/sh
+[ "\$1" = setup-token ] || exit 64
+printf 'Welcome to Claude Code\nOpening browser to sign in...\nBrowser didn'"'"'t open? Use the url below to sign in (c to copy)\n'
+printf '%s\n' '$SMOKE_AUTH_URL'
+printf 'Paste code here if prompted >\n'
+read -r entered
+[ "\$entered" = smoke-browser-code ] || exit 65
+printf '\nLong-lived authentication token created successfully!\n\nYour OAuth token (valid for 1 year):\n\n%s\n\nStore this token securely. You won'"'"'t be able to see it again.\n' '$SMOKE_SETUP_TOKEN'
+STUB
 ATTEMPT="$(curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X POST \
   "$BASE_URL/api/companies/$COMPANY_ID/ai-connections/local/attempts" \
   --data '{"provider":"anthropic","method":"subscription","name":"smoke claude","ownership":"personal"}')"
-ATTEMPT_CMD="$(jq -r .command <<<"$ATTEMPT")"; ATTEMPT_ID="$(jq -r .sessionId <<<"$ATTEMPT")"
-[[ "$ATTEMPT_CMD" == *"&& kyoube connect claude)" ]] || { echo "the Claude sign-in command is not patched: $ATTEMPT_CMD" >&2; exit 1; }
-SMOKE_SETUP_TOKEN="sk-ant-oat01-SMOKEsmokeSMOKEsmokeSMOKEsmoke_-0123456789"
-compose exec -T -u node app sh -c 'mkdir -p /tmp/claude-stub && cat > /tmp/claude-stub/claude && chmod +x /tmp/claude-stub/claude' <<STUB
-#!/bin/sh
-# Stands in for 'claude setup-token': prints the success screen the real one ends with.
-[ "\$1" = setup-token ] || exit 64
-printf 'Login successful\r\n\r\nYour OAuth token (valid for 1 year):\r\n\r\n%s\r\n\r\nStore this token securely. You won'"'"'t be able to see it again.\r\n' "$SMOKE_SETUP_TOKEN"
-STUB
-compose exec -T -u node app env PATH="/tmp/claude-stub:$SERVER_PATH" bash -c "$ATTEMPT_CMD" \
-  || { echo "running the Connections command failed" >&2; exit 1; }
-ATTEMPT_DIR="$(sed -n "s/.*CLAUDE_CONFIG_DIR='\([^']*\)'.*/\1/p" <<<"$ATTEMPT_CMD")"
+ATTEMPT_ID="$(jq -r .sessionId <<<"$ATTEMPT")"
+[[ "$(jq -r '.command // ""' <<<"$ATTEMPT")" == "" ]] || { echo "the Claude sign-in still hands out a Terminal command: $(jq -r .command <<<"$ATTEMPT")" >&2; exit 1; }
+CHECK_BODY="{\"provider\":\"anthropic\",\"method\":\"subscription\",\"name\":\"smoke claude\",\"ownership\":\"personal\",\"localSessionId\":\"$ATTEMPT_ID\"}"
+claude_check() {
+  curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X POST \
+    "$BASE_URL/api/companies/$COMPANY_ID/ai-connections/local/check" --data "$CHECK_BODY"
+}
+CHECK=""
+for i in $(seq 1 30); do
+  CHECK="$(claude_check)"
+  [[ "$(jq -r '.authorizationUrl // ""' <<<"$CHECK")" == "$SMOKE_AUTH_URL" ]] && break
+  sleep 1
+done
+[[ "$(jq -r .status <<<"$CHECK")" == "sign_in_required" && "$(jq -r '.authorizationUrl // ""' <<<"$CHECK")" == "$SMOKE_AUTH_URL" ]] \
+  || { echo "the Claude sign-in did not show the link claude setup-token printed: $CHECK" >&2; exit 1; }
+curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X POST \
+  "$BASE_URL/api/companies/$COMPANY_ID/ai-connections/local/attempts/$ATTEMPT_ID/code" --data '{"browserCode":"smoke-browser-code"}' >/dev/null \
+  || { echo "the pasted code was refused" >&2; exit 1; }
+for i in $(seq 1 30); do
+  CHECK="$(claude_check)"
+  [[ "$(jq -r .status <<<"$CHECK")" == "ready" ]] && break
+  sleep 1
+done
+[[ "$(jq -r .status <<<"$CHECK")" == "ready" ]] || { echo "the Claude sign-in did not finish after the code was pasted: $CHECK" >&2; exit 1; }
+ATTEMPT_DIR="$(compose exec -T -u node app sh -c "find /kyoubeai -maxdepth 5 -type d -path '*/ai-local-logins/$ATTEMPT_ID'" | tr -d '\r' | head -1)"
 compose exec -T -u node app sh -c "test \"\$(stat -c %a '$ATTEMPT_DIR/.credentials.json')\" = 600 && jq -r .claudeAiOauth.accessToken '$ATTEMPT_DIR/.credentials.json'" \
-  | tr -d '\r' | grep -qx "$SMOKE_SETUP_TOKEN" || { echo "kyoube connect claude did not write the token (mode 600) into $ATTEMPT_DIR" >&2; exit 1; }
+  | tr -d '\r' | grep -qx "$SMOKE_SETUP_TOKEN" || { echo "the sign-in did not save the one-year token (mode 600) in its folder ($ATTEMPT_DIR)" >&2; exit 1; }
 curl -fsS -H "Authorization: Bearer $TOKEN" -X DELETE "$BASE_URL/api/companies/$COMPANY_ID/ai-connections/local/attempts/$ATTEMPT_ID" >/dev/null
-compose exec -T -u node app rm -rf /tmp/claude-stub
-echo "    the command Connections shows ran kyoube connect claude, which wrote a one-year token"
+compose exec -T -u node app rm -f "$STUB_BIN"
+echo "    the sign-in link reached Connections, the pasted code reached claude, and its one-year token was saved"
 
 echo "==> Test works on a harness switch that is not saved yet"
 CLAUDE_AGENT_ID="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/companies/$COMPANY_ID/agents" | jq -r '.[] | select(.name == "smoke-claude_local") | .id')"

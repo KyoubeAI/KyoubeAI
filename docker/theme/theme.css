@@ -251,6 +251,13 @@ div:has(> div > aside > nav), div:has(> div > div > aside > nav) { background: v
    holding both its first and its last link, which no other section does. */
 :is(:root[data-kyoube-shell="studio"] aside:has(> nav button > svg.lucide-square-pen), aside:has([data-kyoube-studio="team"])) nav > div:has(a[href$="/agents"]):has(a[href$="/activity"]):not(:has([data-kyoube-studio])) { display: none; }
 
+/* The core's own agent list (the streamlined shell's Agents section, core
+   2026.1023): the Studio Team roster replaces it. It carries no marker of its
+   own, so it is found by its section menu, or in the collapsed rail (no menu)
+   by its "See all agents" link; Studio's roster links there too, so a section
+   holding Studio markup is never it. */
+:is(:root[data-kyoube-shell="studio"] aside:has(> nav button > svg.lucide-square-pen), aside:has([data-kyoube-studio="team"])) nav > div:is(:has(button[aria-label="Agents section actions"]), :has(a[href$="/agents/all"])):not(:has([data-kyoube-studio])) { display: none; }
+
 /* Terminal lives on the Workspace page. */
 :is(:root[data-kyoube-shell="studio"] aside:has(> nav button > svg.lucide-square-pen), aside:has([data-kyoube-studio="team"])) nav div:has(> [data-kyoube-nav="terminal"]) { display: none; }
 
