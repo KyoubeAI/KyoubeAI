@@ -143,6 +143,10 @@ a.ks-step:hover { border-color: color-mix(in oklab, var(--kyoube-accent, #0f766e
 .ks-ws-head p { margin: 8px 0 0; font-size: 13.5px; color: var(--muted-foreground, #71717a); }
 [data-kyoube-page="org"] { max-width: none; }
 [data-kyoube-page="org"] .ks-ws-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+/* The chart fills the window below the page header (the core's 60 px bar, the main padding, the
+   "Team" header), and the phone's bottom tab bar below 768 px, so it opens fitted at a readable size. */
+[data-kyoube-page="org"] .ko-org:not(.ko-fill) { height: max(520px, calc(100dvh - 170px)); }
+@media (max-width: 767px) { [data-kyoube-page="org"] .ko-org:not(.ko-fill) { height: max(520px, calc(100dvh - 218px)); } }
 .ko-head-links { display: flex; gap: 8px; }
 .ko-panel-body { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .ko-panel-body p { margin: 0; font-size: 13px; }
