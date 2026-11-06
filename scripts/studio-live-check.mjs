@@ -27,6 +27,7 @@
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Cdp, Page, launchChrome, signIn } from "./lib/cdp.mjs";
 import { findChrome } from "./lib/headless-chrome.mjs";
 
@@ -85,6 +86,20 @@ function expectAll(label, facts, expectations, problems) {
     const ok = typeof want === "function" ? want(got) : got === want;
     if (!ok) problems.push(`${label}: ${key} is ${JSON.stringify(got)}`);
   }
+}
+
+/**
+ * Three live agents to rewire into a standalone team, so the chart must draw `team:<lead>` and
+ * the lead's two lines whatever the company's shape. All three are agents nobody reports to, by
+ * name: the lead is made top-level (a lead deep in a team would only be indented there) and the
+ * other two report to it. `patches` holds only the managers that change. Null with fewer than three.
+ */
+export function teamTrial(agents) {
+  const managers = new Set(agents.map((a) => a.reportsTo).filter(Boolean));
+  const [lead, ...members] = agents.filter((a) => !managers.has(a.id)).sort((a, b) => String(a.name).localeCompare(String(b.name))).slice(0, 3);
+  if (members.length < 2) return null;
+  const wanted = [[lead, null], ...members.map((m) => [m, lead.id])];
+  return { lead, members, patches: wanted.filter(([a, to]) => (a.reportsTo ?? null) !== to).map(([a, to]) => ({ id: a.id, reportsTo: to })) };
 }
 
 async function api(pathname, method = "GET", body) {
@@ -224,9 +239,9 @@ async function main() {
       else if (await page.evaluate(`!!document.querySelector('[data-kyoube-page="team"]')`)) problems.push(`agent list: the "${label}" tab opened a Studio profile`);
     }
 
-    // Studio's org chart at /team. With a board token the first agent becomes the
-    // lead of a team with the next two (their managers are put back afterwards),
-    // so the lines and the team panel are known; without one, only that cards are drawn.
+    // Studio's org chart at /team. With a board token three agents nobody reports to become a
+    // standalone team (teamTrial; their managers are put back afterwards), so the lines and the
+    // team panel are known; without one, only that cards are drawn.
     const teamUrl = `${base}/${prefix}/team`;
     const restore = [];
     let live = [];
@@ -235,18 +250,19 @@ async function main() {
         try {
           const company = (await api("/api/companies")).find((c) => c.issuePrefix === prefix);
           if (!company) problems.push(`team: no company has the prefix ${prefix}`);
-          else live = (await api(`/api/companies/${company.id}/agents`)).filter((a) => a.status !== "terminated").sort((a, b) => String(a.name).localeCompare(String(b.name)));
+          else live = (await api(`/api/companies/${company.id}/agents`)).filter((a) => a.status !== "terminated");
         } catch (error) {
           problems.push(`team: could not list the agents (${error instanceof Error ? error.message : error})`);
         }
       }
-      const [lead, second, third] = live;
-      const structured = live.length >= 3;
-      if (boardToken && !structured) problems.push(`team: only ${live.length} live agent(s), need 3 to check reporting lines and a team panel`);
+      const trial = teamTrial(live);
+      const { lead, members: [second, third] = [] } = trial ?? {};
+      const structured = trial !== null;
+      if (boardToken && !structured) problems.push(`team: need 3 live agents with no reports to check reporting lines and a team panel (have ${live.length} agent(s))`);
       if (structured) {
-        for (const agent of [second, third]) {
-          restore.push({ id: agent.id, reportsTo: agent.reportsTo ?? null });
-          await api(`/api/agents/${agent.id}`, "PATCH", { reportsTo: lead.id });
+        for (const patch of trial.patches) {
+          restore.push({ id: patch.id, reportsTo: live.find((a) => a.id === patch.id).reportsTo ?? null });
+          await api(`/api/agents/${patch.id}`, "PATCH", { reportsTo: patch.reportsTo });
         }
       }
       await page.goto(teamUrl);
@@ -353,4 +369,4 @@ async function main() {
   return 1;
 }
 
-process.exitCode = await main();
+if (process.argv[1] === fileURLToPath(import.meta.url)) process.exitCode = await main();
