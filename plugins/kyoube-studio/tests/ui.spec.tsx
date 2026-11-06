@@ -160,6 +160,16 @@ describe("sidebar", () => {
     expect(html).toContain("All agents (11)");
   });
 
+  it("the roster's org icon opens the Studio org chart", async () => {
+    installBridge({ agents: agents(Array.from({ length: 9 }, (_, i) => agentRow(i))) });
+    await loadBoard();
+    const html = render(StudioTeam);
+    expect(html).toContain('href="/BAP/team" class="ks-icon-btn" title="Org chart" aria-label="Org chart"');
+    expect(html).not.toContain('aria-label="All agents and the org chart"');
+    expect(html).toContain('href="/BAP/agents/all"');
+    expect(html).toContain("All agents (9)");
+  });
+
   it("marks the Build label, Routines link and Workspace link for the theme", () => {
     installBridge({}, "/BAP/routines");
     expect(render(StudioBuildLabel)).toContain('data-kyoube-studio="build"');

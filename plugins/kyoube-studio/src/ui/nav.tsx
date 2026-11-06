@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import type { PluginSidebarProps } from "@paperclipai/plugin-sdk/ui";
 import { useHostLocation, useHostNavigation } from "@paperclipai/plugin-sdk/ui";
 import { summarizeTeam, type TeamMember, type TeamSnapshot } from "../model.js";
 import { WORKSPACE_ROUTE } from "../manifest.js";
-import { agentRedirectTarget, coreAgentPage, coreAvatarCss, opensAgentList, pressOrgView } from "./agent-route.js";
+import { agentRedirectTarget, coreAgentPage, coreAvatarCss } from "./agent-route.js";
 import { useTeamData } from "./board-data.js";
 import { Icon } from "./icons.js";
 import { Avatar, SidebarLink, isActivePath } from "./shared.js";
@@ -14,16 +14,11 @@ import { timeAgo } from "./time.js";
 export const TEAM_LIMIT = 8;
 const TEAM_POLL_MS = 15_000;
 const AVATAR_STYLE_ID = "kyoube-studio-agent-avatar";
-/** How long the roster keeps the core's agent list on its org chart after it opens. */
-const ORG_VIEW_WAIT_MS = 5_000;
-/** How long after the page last changed the roster presses the org chart toggle. */
-const ORG_VIEW_SETTLE_MS = 60;
 
 /**
  * The roster is mounted on every page, so it also looks after the core's
  * agent page (see agent-route.ts): its default view opens the Studio profile,
- * its other tabs get the agent's character in the header, and the agent
- * list opens on its org chart.
+ * and its other tabs get the agent's character in the header.
  */
 function useCoreAgentPages(team: TeamSnapshot | null) {
   const navigation = useHostNavigation();
@@ -54,40 +49,6 @@ function useCoreAgentPages(team: TeamSnapshot | null) {
     }
     if (style) style.textContent = css;
   }, [location.pathname, team]);
-  // The agent list opens on its org chart (agent-route.ts). The core renders
-  // the toggle a moment after the route changes, and its own mount effect
-  // (and a settings load right after) puts the list back, so a press made
-  // during the mount is undone. Keep the org chart pressed, a beat after the
-  // page settles each time, until the person touches the page or the wait ends.
-  const previousPath = useRef<string | null>(null);
-  useEffect(() => {
-    const opened = opensAgentList(previousPath.current, location.pathname);
-    previousPath.current = location.pathname;
-    if (!opened) return;
-    let pending: ReturnType<typeof setTimeout> | undefined;
-    const press = () => {
-      pending = undefined;
-      pressOrgView(document);
-    };
-    const schedule = () => {
-      if (pending === undefined) pending = setTimeout(press, ORG_VIEW_SETTLE_MS);
-    };
-    const observer = new MutationObserver(schedule);
-    const timer = setTimeout(() => stop(), ORG_VIEW_WAIT_MS);
-    function stop() {
-      observer.disconnect();
-      clearTimeout(timer);
-      clearTimeout(pending);
-      document.removeEventListener("pointerdown", stop, true);
-      document.removeEventListener("keydown", stop, true);
-    }
-    // The person's own choice wins: any press or key on the page ends the watch.
-    document.addEventListener("pointerdown", stop, true);
-    document.addEventListener("keydown", stop, true);
-    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-pressed"] });
-    schedule();
-    return stop;
-  }, [location.pathname]);
   useEffect(() => () => {
     document.getElementById(AVATAR_STYLE_ID)?.remove();
     document.documentElement.removeAttribute("data-kyoube-redirecting");
@@ -148,7 +109,7 @@ export function StudioTeam(_props: PluginSidebarProps) {
   return (
     <div data-kyoube-studio="team" className="ks-team">
       <SectionLabel text={total > 0 ? `Team · ${total}` : "Team"}>
-        <a {...navigation.linkProps("/agents/all")} className="ks-icon-btn" title="All agents and the org chart" aria-label="All agents and the org chart"><Icon name="org" size={14} /></a>
+        <a {...navigation.linkProps("/team")} className="ks-icon-btn" title="Org chart" aria-label="Org chart"><Icon name="org" size={14} /></a>
         <a {...navigation.linkProps("/agents/new")} className="ks-icon-btn" title="Hire an agent" aria-label="Hire an agent"><Icon name="plus" size={14} /></a>
       </SectionLabel>
       {!team && !source.error ? (

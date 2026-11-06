@@ -69,39 +69,10 @@ export function coreAvatarCss(agent: { name: string; icon: string | null }): str
   ].join("\n");
 }
 
-/**
- * The core's agent list (`/<co>/agents/<filter>`) shows a list or an org
- * chart; the choice is the page's own state, which starts as the list and has
- * no URL of its own. Studio opens it on the org chart instead: when someone
- * arrives on the list from another page, the roster presses the core's
- * "Org chart view" toggle once. Moving between the filter tabs keeps whatever
- * view they picked, and when the core renames that toggle nothing is pressed
- * and the list shows, as stock.
- */
 const AGENT_LIST_PAGE = /^\/[^/]+\/agents\/([^/]+)\/?$/;
 
 /** Whether `pathname` is the core's agent list, under any filter tab. */
 export function isAgentListPage(pathname: string): boolean {
   const tab = AGENT_LIST_PAGE.exec(pathname)?.[1];
   return tab !== undefined && (AGENT_LIST_TABS as readonly string[]).includes(tab);
-}
-
-/** Whether moving from `previous` (null on first load) to `next` opens the agent list afresh. */
-export function opensAgentList(previous: string | null, next: string): boolean {
-  return isAgentListPage(next) && (previous === null || !isAgentListPage(previous));
-}
-
-/** The core's toggle for the org chart view, labelled by the core itself. */
-export const ORG_VIEW_TOGGLE = 'button[aria-label="Org chart view"]';
-
-/**
- * Presses the org chart toggle under `root` if it is there. Returns true once
- * the org chart is showing (pressed now, or already), false while the toggle
- * has not rendered yet.
- */
-export function pressOrgView(root: Pick<ParentNode, "querySelector">): boolean {
-  const toggle = root.querySelector<HTMLElement>(ORG_VIEW_TOGGLE);
-  if (!toggle) return false;
-  if (toggle.getAttribute("aria-pressed") !== "true") toggle.click();
-  return true;
 }
