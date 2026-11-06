@@ -447,6 +447,35 @@ describe("agent profile", () => {
     expect(render(AgentProfilePage)).not.toContain("Ambassador Content Agent");
   });
 
+  it("shows the switch on duty while the core is still resuming the agent, and off while it is pausing it", async () => {
+    installProfile(read({ ...WRITER, status: "paused", lifecycleState: "resuming" }));
+    await loadBoard();
+    expect(render(AgentProfilePage)).toContain('role="switch" aria-checked="true"');
+    installProfile(read({ ...WRITER, status: "paused", lifecycleState: "pausing" }));
+    await loadBoard();
+    expect(render(AgentProfilePage)).toContain('role="switch" aria-checked="false"');
+  });
+
+  // Since 2026.1023 a new agent is "paused" until its harness answers the core's check; the core
+  // lets it be paused from there and refuses to resume it, so the switch shows it on duty.
+  it("shows a new agent the core is still checking as on duty, and says what it waits for", async () => {
+    const NEWCOMER: ProfileAgentLike = { id: "n1", name: "New Hire", urlKey: "new-hire", title: null, icon: null, status: "paused", adapterType: "claude_local", lastHeartbeatAt: null };
+    const at = (agent: ProfileAgentLike) => installBridge({ agents: agents([WRITER, MANAGER, agent]), agent: read(agent) }, "/BAP/team/new-hire", BOARD);
+    at({ ...NEWCOMER, lifecycleState: "verifying" });
+    await loadBoard();
+    let html = render(AgentProfilePage);
+    expect(html).toContain('role="switch" aria-checked="true"');
+    expect(html).toContain("Checking its AI connection");
+    expect(html).not.toContain("Switch it on duty");
+    at({ ...NEWCOMER, lifecycleState: "verifying", lifecycleError: "The lifecycle step failed. Retry the operation." });
+    await loadBoard();
+    html = render(AgentProfilePage);
+    expect(html).toContain("Waiting for its AI connection");
+    expect(html).toContain("checks again every minute");
+    expect(html).toContain("Open Runtime");
+    expect(html).not.toContain("Its last run failed");
+  });
+
   it("says when the agent does not exist, and lists the team without an agent", async () => {
     installBridge({ agent: { found: false, agent: null, access: null } }, "/BAP/team/nobody");
     expect(render(AgentProfilePage)).toContain("does not exist");

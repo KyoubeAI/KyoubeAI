@@ -12,7 +12,9 @@
  * It also opens an agent through the core's own URLs and checks that the
  * Studio profile answers, that the core's agent views show the agent's
  * character and display-face name, and that `?classic=1` keeps the core's
- * overview. With a board token
+ * overview, that the roster's org icon opens the agent list on its org chart,
+ * and that every filter tab of the agent list stays on the list (naming any tab
+ * a core bump adds, which Studio must learn). With a board token
  * it disables kyoube.studio, checks that the stock sidebar comes back, and
  * enables it again. Screenshots of Home (dark and light), an agent profile and
  * the Workspace page are written to STUDIO_SHOTS_DIR when that is set, for a
@@ -176,6 +178,41 @@ async function main() {
       if (shotsDir) await writeFile(path.join(shotsDir, "agent-core-light.png"), await page.screenshot());
       await page.goto(`${agentUrl}/overview?classic=1`, { settleMs: 2500 });
       if (!(await page.evaluate(`location.pathname.endsWith("/overview")`))) problems.push("profile: ?classic=1 did not keep the core's own agent overview");
+    }
+
+    // The agent list: the roster's org icon opens it on the org chart, and every
+    // filter tab the core draws stays on the list. Studio keeps its own copy of
+    // the core's tab names (agent-route.ts) so it never takes a tab for an agent;
+    // a tab added by a core bump shows up here by name.
+    await page.goto(`${base}/${prefix}/dashboard`);
+    await page.waitForFunction(`!!document.querySelector('[data-kyoube-studio="team"] a[aria-label="All agents and the org chart"]')`, { timeoutMs: 30_000 });
+    await page.evaluate(`document.querySelector('[data-kyoube-studio="team"] a[aria-label="All agents and the org chart"]').click()`);
+    try {
+      await page.waitForFunction(`/\\/agents\\/all\\/?$/.test(location.pathname) && document.querySelector('button[aria-label="Org chart view"]')?.getAttribute("aria-pressed") === "true"`, { timeoutMs: 15_000 });
+      await sleep(1500);
+      if ((await page.evaluate(`document.querySelector('button[aria-label="Org chart view"]')?.getAttribute("aria-pressed")`)) !== "true") problems.push("agent list: the org chart did not stay chosen after the roster's org icon opened the list");
+    } catch {
+      problems.push(`agent list: the roster's org icon did not open the list on its org chart (at ${await page.evaluate("location.pathname")}; the core's "Org chart view" toggle may have changed)`);
+    }
+    const knownTabs = ["all", "active", "paused", "error", "builtin"];
+    const tabCount = await page.evaluate(`document.querySelectorAll('main [role="tab"]').length`);
+    if (tabCount === 0) problems.push("agent list: no filter tabs found");
+    for (let i = 0; i < tabCount; i += 1) {
+      const label = await page.evaluate(`(() => {
+        const tab = document.querySelectorAll('main [role="tab"]')[${i}];
+        if (!tab) return null;
+        // Radix tabs switch on mousedown.
+        tab.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+        tab.click();
+        return tab.textContent.trim();
+      })()`);
+      if (label === null) continue;
+      await sleep(1200);
+      const at = await page.evaluate("location.pathname");
+      const tab = /\/agents\/([^/]+)\/?$/.exec(at)?.[1];
+      if (!tab) problems.push(`agent list: the "${label}" tab left the list (at ${at})`);
+      else if (!knownTabs.includes(tab)) problems.push(`agent list: the core has a new filter tab "${tab}"; add it to AGENT_LIST_TABS in plugins/kyoube-studio/src/ui/agent-route.ts`);
+      else if (await page.evaluate(`!!document.querySelector('[data-kyoube-page="team"]')`)) problems.push(`agent list: the "${label}" tab opened a Studio profile`);
     }
 
     // Secondary sidebars (company settings) are <aside><nav> too; the skin must leave them whole.

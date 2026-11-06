@@ -31,6 +31,8 @@ function studioAgent(agent: HostAgent): ProfileAgentLike {
     title: agent.title,
     icon: agent.icon,
     status: agent.status,
+    lifecycleState: agent.lifecycleState ?? null,
+    lifecycleError: agent.lifecycleError ?? null,
     errorReason: agent.errorReason ?? null,
     lastHeartbeatAt: agent.lastHeartbeatAt,
     updatedAt: agent.updatedAt,

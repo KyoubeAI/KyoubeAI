@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CORE_AGENT_HEADER, agentRedirectTarget, coreAgentPage, coreAvatarCss, cssString } from "../src/ui/agent-route.js";
+import { CORE_AGENT_HEADER, ORG_VIEW_TOGGLE, agentRedirectTarget, coreAgentPage, coreAvatarCss, cssString, isAgentListPage, opensAgentList, pressOrgView } from "../src/ui/agent-route.js";
 import { assignTask, BoardApiError, boardPost, setAgentOnDuty } from "../src/ui/board-api.js";
 
 describe("the core agent page", () => {
@@ -10,6 +10,13 @@ describe("the core agent page", () => {
     expect(coreAgentPage("/BAP/agents/all")).toBeNull();
     expect(coreAgentPage("/BAP/agents/new")).toBeNull();
     expect(coreAgentPage("/BAP/team/ai-manager")).toBeNull();
+  });
+
+  it("leaves the agent list's filter tabs alone (they are routes, not agents)", () => {
+    for (const tab of ["all", "active", "paused", "error", "builtin"]) {
+      expect(coreAgentPage(`/BAP/agents/${tab}`)).toBeNull();
+      expect(agentRedirectTarget(`/BAP/agents/${tab}`, "")).toBeNull();
+    }
   });
 
   it("sends only the default view to the profile, under either name, and keeps the classic view on request", () => {
@@ -37,6 +44,48 @@ describe("the core agent page", () => {
     expect(cssString("back\\slash")).toBe('"back\\\\slash"');
     expect(cssString("two\nlines")).toBe('"two lines"');
     expect(coreAvatarCss({ name: 'Ada "The Builder"', icon: null })).toContain('[aria-label="Ada \\"The Builder\\" avatar"]');
+  });
+});
+
+describe("the agent list opens on the org chart", () => {
+  it("knows the agent list under every filter tab, and nothing else", () => {
+    for (const tab of ["all", "active", "paused", "error", "builtin"]) expect(isAgentListPage(`/BAP/agents/${tab}`)).toBe(true);
+    expect(isAgentListPage("/BAP/agents/all/")).toBe(true);
+    expect(isAgentListPage("/BAP/agents/new")).toBe(false);
+    expect(isAgentListPage("/BAP/agents/ai-manager")).toBe(false);
+    expect(isAgentListPage("/BAP/agents/ai-manager/instructions")).toBe(false);
+    expect(isAgentListPage("/BAP/team/ai-manager")).toBe(false);
+  });
+
+  it("counts arriving from another page (or a fresh load) as opening it, but not changing filter tab", () => {
+    expect(opensAgentList(null, "/BAP/agents/all")).toBe(true);
+    expect(opensAgentList("/BAP/dashboard", "/BAP/agents/all")).toBe(true);
+    expect(opensAgentList("/BAP/agents/ai-manager/instructions", "/BAP/agents/active")).toBe(true);
+    expect(opensAgentList("/BAP/agents/all", "/BAP/agents/paused")).toBe(false);
+    expect(opensAgentList("/BAP/agents/all", "/BAP/agents/all")).toBe(false);
+    expect(opensAgentList("/BAP/agents/all", "/BAP/dashboard")).toBe(false);
+  });
+
+  function fakeToggle(pressed: boolean | null) {
+    const clicks: number[] = [];
+    const toggle = pressed === null ? null : { getAttribute: (name: string) => (name === "aria-pressed" ? String(pressed) : null), click: () => clicks.push(1) };
+    const selectors: string[] = [];
+    const root = { querySelector: (selector: string) => { selectors.push(selector); return toggle; } } as unknown as Pick<ParentNode, "querySelector">;
+    return { root, clicks, selectors };
+  }
+
+  it("presses the core's org chart toggle once, and leaves it alone when already on", () => {
+    const off = fakeToggle(false);
+    expect(pressOrgView(off.root)).toBe(true);
+    expect(off.clicks).toHaveLength(1);
+    expect(off.selectors).toEqual([ORG_VIEW_TOGGLE]);
+    const on = fakeToggle(true);
+    expect(pressOrgView(on.root)).toBe(true);
+    expect(on.clicks).toHaveLength(0);
+  });
+
+  it("reports not-yet while the toggle has not rendered", () => {
+    expect(pressOrgView(fakeToggle(null).root)).toBe(false);
   });
 });
 

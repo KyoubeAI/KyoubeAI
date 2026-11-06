@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildHome, doneSince, gettingStarted, latestUpdates, needsYou, summarizeTeam, type AgentLike, type ApprovalLike, type IssueLike } from "../src/model.js";
+import { awaitingSetup, buildHome, doneSince, gettingStarted, latestUpdates, needsYou, summarizeTeam, type AgentLike, type ApprovalLike, type IssueLike } from "../src/model.js";
 
 const NOW = Date.parse("2026-09-24T09:00:00Z");
 const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
@@ -50,6 +50,32 @@ describe("summarizeTeam", () => {
     const pm = team.members.find((m) => m.id === "a-pm")!;
     expect(pm.detail).toBe("Waiting on you · BAP-38");
     expect(pm.href).toBe("/team/ai-project-manager");
+  });
+
+  // Core 2026.1023's lifecycle keeps status "paused" while an agent resumes, until its worker finishes.
+  it("shows an agent the core is still resuming as coming back on duty, and one it is pausing as paused", () => {
+    const resuming = summarizeTeam([{ id: "a-r", name: "R", status: "paused", lifecycleState: "resuming" }], []).members[0]!;
+    expect([resuming.state, resuming.detail]).toEqual(["idle", "Coming back on duty"]);
+    const pausing = summarizeTeam([{ id: "a-p", name: "P", status: "paused", lifecycleState: "pausing" }], []).members[0]!;
+    expect([pausing.state, pausing.detail]).toEqual(["paused", "Paused"]);
+  });
+
+  // Since 2026.1023 a new agent takes work only once its harness answers the core's check, retried every minute.
+  it("shows an agent the core is still setting up as checking, and one whose check failed as waiting for its AI connection", () => {
+    const member = (agent: Partial<AgentLike>) => summarizeTeam([{ id: "a-n", name: "N", status: "paused", ...agent }], []).members[0]!;
+    expect([member({ lifecycleState: "preparing" }).state, member({ lifecycleState: "preparing" }).detail]).toEqual(["idle", "Getting ready"]);
+    expect([member({ lifecycleState: "verifying" }).state, member({ lifecycleState: "verifying" }).detail]).toEqual(["idle", "Checking its AI connection"]);
+    const failed = member({ lifecycleState: "verifying", lifecycleError: "The lifecycle step failed. Retry the operation." });
+    expect([failed.state, failed.detail]).toEqual(["attention", "Waiting for its AI connection"]);
+    const failedSetup = member({ lifecycleState: "preparing", lifecycleError: "The lifecycle step failed. Retry the operation." });
+    expect([failedSetup.state, failedSetup.detail]).toEqual(["attention", "Could not get ready"]);
+    // A ready agent with a stale error is just its status.
+    expect(member({ status: "idle", lifecycleState: "ready", lifecycleError: "old" }).detail).toBe("Idle");
+  });
+
+  it("knows which lifecycle states are on their way to on duty, as the core's isAgentAwaitingSetup does", () => {
+    expect(["preparing", "verifying", "resuming"].every((s) => awaitingSetup(s))).toBe(true);
+    expect([null, undefined, "ready", "paused", "pausing", "terminating"].some((s) => awaitingSetup(s))).toBe(false);
   });
 
   it("marks an agent in error as needing attention, even with work in review", () => {

@@ -17,9 +17,22 @@ export interface AgentLike {
   title?: string | null;
   icon?: string | null;
   status: string;
+  /** The core's lifecycle state (2026.1023+): "resuming" still reports status "paused" until its worker finishes. */
+  lifecycleState?: string | null;
+  /** Set when the core's last lifecycle step failed; the core retries it every minute. */
+  lifecycleError?: string | null;
   errorReason?: string | null;
   lastHeartbeatAt?: Date | string | null;
   updatedAt?: Date | string | null;
+}
+
+/**
+ * Whether the core is taking the agent on duty (core 2026.1023+, its `isAgentAwaitingSetup`): a new
+ * agent is "preparing", then "verifying" until its harness answers the core's check, and a resumed
+ * one is "resuming". All report status "paused" meanwhile; the core lets them be paused, never resumed.
+ */
+export function awaitingSetup(lifecycleState: string | null | undefined): boolean {
+  return lifecycleState === "preparing" || lifecycleState === "verifying" || lifecycleState === "resuming";
 }
 
 export interface IssueLike {
@@ -172,6 +185,15 @@ export function summarizeTeam(agents: AgentLike[], issues: IssueLike[]): TeamSna
       state = "waiting";
       task = waitingOn;
       detail = `Waiting on you${waitingOn.identifier ? ` · ${waitingOn.identifier}` : ""}`;
+    } else if (agent.lifecycleState === "resuming") {
+      state = "idle";
+      detail = "Coming back on duty";
+    } else if (agent.lifecycleState === "preparing" || agent.lifecycleState === "verifying") {
+      const checking = agent.lifecycleState === "verifying";
+      state = agent.lifecycleError ? "attention" : "idle";
+      detail = agent.lifecycleError
+        ? checking ? "Waiting for its AI connection" : "Could not get ready"
+        : checking ? "Checking its AI connection" : "Getting ready";
     } else if (agent.status === "paused") {
       state = "paused";
       detail = "Paused";

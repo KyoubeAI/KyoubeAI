@@ -12,7 +12,14 @@
 import { characterFor } from "../characters.js";
 
 const CORE_AGENT_PAGE = /^\/[^/]+\/agents\/([^/]+)(?:\/([^/]+))?\/?$/;
-const NOT_AN_AGENT = new Set(["new", "all"]);
+/**
+ * The agent list's filter tabs, each a core route of its own
+ * (`/<co>/agents/<tab>`, the core's `AGENT_FILTER_TABS`) that outranks
+ * `agents/:agentId`, so none of them is ever an agent.
+ */
+const AGENT_LIST_TABS = ["all", "active", "paused", "error", "builtin"] as const;
+/** Core routes under `/agents/` that are not an agent: the new-agent page and the list's filter tabs. */
+const NOT_AN_AGENT = new Set<string>(["new", ...AGENT_LIST_TABS]);
 /** The core's default agent view, under its current and its previous name. */
 const DEFAULT_VIEWS = new Set(["overview", "dashboard"]);
 
@@ -60,4 +67,41 @@ export function coreAvatarCss(agent: { name: string; icon: string | null }): str
     `${avatar} { background: ${image} center / 100% no-repeat, var(--kyoube-tile-${tint}, #e9e9ec); width: 56px; height: 56px; border-radius: 30%; }`,
     `${avatar} > * { opacity: 0; }`,
   ].join("\n");
+}
+
+/**
+ * The core's agent list (`/<co>/agents/<filter>`) shows a list or an org
+ * chart; the choice is the page's own state, which starts as the list and has
+ * no URL of its own. Studio opens it on the org chart instead: when someone
+ * arrives on the list from another page, the roster presses the core's
+ * "Org chart view" toggle once. Moving between the filter tabs keeps whatever
+ * view they picked, and when the core renames that toggle nothing is pressed
+ * and the list shows, as stock.
+ */
+const AGENT_LIST_PAGE = /^\/[^/]+\/agents\/([^/]+)\/?$/;
+
+/** Whether `pathname` is the core's agent list, under any filter tab. */
+export function isAgentListPage(pathname: string): boolean {
+  const tab = AGENT_LIST_PAGE.exec(pathname)?.[1];
+  return tab !== undefined && (AGENT_LIST_TABS as readonly string[]).includes(tab);
+}
+
+/** Whether moving from `previous` (null on first load) to `next` opens the agent list afresh. */
+export function opensAgentList(previous: string | null, next: string): boolean {
+  return isAgentListPage(next) && (previous === null || !isAgentListPage(previous));
+}
+
+/** The core's toggle for the org chart view, labelled by the core itself. */
+export const ORG_VIEW_TOGGLE = 'button[aria-label="Org chart view"]';
+
+/**
+ * Presses the org chart toggle under `root` if it is there. Returns true once
+ * the org chart is showing (pressed now, or already), false while the toggle
+ * has not rendered yet.
+ */
+export function pressOrgView(root: Pick<ParentNode, "querySelector">): boolean {
+  const toggle = root.querySelector<HTMLElement>(ORG_VIEW_TOGGLE);
+  if (!toggle) return false;
+  if (toggle.getAttribute("aria-pressed") !== "true") toggle.click();
+  return true;
 }

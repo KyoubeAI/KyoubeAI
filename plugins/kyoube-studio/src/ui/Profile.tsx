@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEven
 import type { PluginPageProps } from "@paperclipai/plugin-sdk/ui";
 import { useHostContext, useHostLocation, useHostNavigation, usePluginAction, usePluginToast } from "@paperclipai/plugin-sdk/ui";
 import type { AskLevel } from "../ask-levels.js";
-import { summarizeTeam } from "../model.js";
+import { awaitingSetup, summarizeTeam } from "../model.js";
 import { buildProfile, type AgentProfile, type ProfileAgentLike, type ProfileTask } from "../profile.js";
 import { BoardApiError, assignTask, setAgentOnDuty } from "./board-api.js";
 import { useIssueComments, useTeamData } from "./board-data.js";
@@ -71,6 +71,23 @@ function WorkingNow({ profile, onAssign }: { profile: AgentProfile; onAssign: ()
         <div className="ks-now-top"><span className="ks-state" data-state="waiting"><i />Waiting on you</span><span className="ks-id">{waitingOn.identifier}</span></div>
         <a {...navigation.linkProps(waitingOn.href)} className="ks-now-title">{waitingOn.title}</a>
         <div className="ks-now-actions"><a {...navigation.linkProps(waitingOn.href)} className="ks-btn" data-tone="accent">{waitingOn.action ?? "Open"}</a></div>
+      </section>
+    );
+  }
+  if (agent.lifecycleState === "preparing" || agent.lifecycleState === "verifying") {
+    const checking = agent.lifecycleState === "verifying";
+    const failed = Boolean(agent.lifecycleError);
+    return (
+      <section className="ks-panel ks-now" aria-label="Getting ready">
+        <div className="ks-now-top"><span className="ks-state" data-state={failed ? "attention" : undefined}><i />{failed ? (checking ? "Waiting for its AI connection" : "Could not get ready") : (checking ? "Checking its AI connection" : "Getting ready")}</span></div>
+        <p className="ks-now-note">{failed
+          ? checking
+            ? "Its harness could not reach a model, so it takes no work yet. Sign it in or choose a connection on its Runtime tab; KyoubeAI checks again every minute."
+            : "Setting it up failed, so it takes no work yet; KyoubeAI checks again every minute."
+          : checking
+            ? "KyoubeAI is checking that its harness can reach a model. It takes work once the check passes."
+            : "It takes work once it is set up."}</p>
+        {failed && checking ? <div className="ks-now-actions"><a {...navigation.linkProps(profile.links.settings)} className="ks-btn" data-tone="accent">Open Runtime</a></div> : null}
       </section>
     );
   }
@@ -145,7 +162,9 @@ function DutySwitch({ profile, onChanged }: { profile: AgentProfile; onChanged: 
   // so a second click never repeats the first.
   const [confirmed, setConfirmed] = useState<boolean | null>(null);
   const status = profile.agent.status;
-  const actual = status !== "paused";
+  // The core keeps status "paused" while it takes an agent on duty (a new one is checked first),
+  // until its worker finishes; from there it can be paused, never resumed.
+  const actual = status !== "paused" || awaitingSetup(profile.agent.lifecycleState);
   const onDuty = confirmed ?? actual;
   const locked = status === "pending_approval" || status === "terminated";
   useEffect(() => {

@@ -53,6 +53,10 @@ export interface AgentProfile {
     roleLabel: string;
     icon: string | null;
     status: string;
+    /** The core's lifecycle state, or null on a core without one. */
+    lifecycleState: string | null;
+    /** The core's last failed lifecycle step, or null. */
+    lifecycleError: string | null;
     harness: string | null;
     about: string | null;
     errorReason: string | null;
@@ -218,6 +222,8 @@ export function buildProfile(
       roleLabel: (agent.role && ROLE_LABELS[agent.role]) || (agent.role ? agent.role.charAt(0).toUpperCase() + agent.role.slice(1) : "Agent"),
       icon: agent.icon ?? null,
       status: agent.status,
+      lifecycleState: agent.lifecycleState ?? null,
+      lifecycleError: agent.lifecycleError ?? null,
       harness: agent.adapterType ? HARNESS_LABELS[agent.adapterType] ?? agent.adapterType : null,
       about: agent.capabilities?.trim() || null,
       errorReason: agent.errorReason ?? null,
