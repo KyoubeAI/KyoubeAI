@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { PluginPageProps } from "@paperclipai/plugin-sdk/ui";
 import { useHostContext, useHostLocation, useHostNavigation, usePluginAction, usePluginToast } from "@paperclipai/plugin-sdk/ui";
 import type { AskLevel } from "../ask-levels.js";
-import { awaitingSetup, summarizeTeam } from "../model.js";
+import { summarizeTeam } from "../model.js";
 import { buildProfile, type AgentProfile, type ProfileAgentLike, type ProfileTask } from "../profile.js";
-import { BoardApiError, assignTask, setAgentOnDuty } from "./board-api.js";
 import { useIssueComments, useTeamData } from "./board-data.js";
+import { AssignForm, DutySwitch } from "./agent-actions.js";
 import { Icon } from "./icons.js";
 import { Avatar, usePolledData } from "./shared.js";
 import { ensureStyles } from "./styles.js";
@@ -114,82 +114,6 @@ function WorkingNow({ profile, onAssign }: { profile: AgentProfile; onAssign: ()
       <p className="ks-now-note">Not working on anything right now{agent.lastActiveAt ? `. Last active ${timeAgo(agent.lastActiveAt)}` : ""}.</p>
       <div className="ks-now-actions"><button type="button" className="ks-btn" data-tone="accent" onClick={onAssign}>Assign task</button></div>
     </section>
-  );
-}
-
-function AssignForm({ profile, onDone }: { profile: AgentProfile; onDone: () => void }) {
-  const host = useHostContext();
-  const navigation = useHostNavigation();
-  const toast = usePluginToast();
-  const [title, setTitle] = useState("");
-  const [details, setDetails] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!host.companyId || !title.trim()) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const issue = await assignTask(host.companyId, profile.agent.id, title, details);
-      const ref = issue.identifier || issue.id;
-      toast({ title: `Assigned ${issue.identifier ?? "the task"} to ${profile.agent.name}`, tone: "success", action: { label: "Open", href: navigation.resolveHref(`/issues/${encodeURIComponent(ref)}`) } });
-      onDone();
-    } catch (caught) {
-      setError(caught instanceof BoardApiError ? caught.message : "The task could not be created. Try again.");
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <form className="ks-assign" onSubmit={submit}>
-      <label htmlFor="ks-assign-title">What should {profile.agent.name} do?</label>
-      <input id="ks-assign-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="For example: draft three posts for the launch" autoFocus required maxLength={300} />
-      <textarea id="ks-assign-details" value={details} onChange={(e) => setDetails(e.target.value)} placeholder="Details, links, and what done looks like (optional)" rows={3} />
-      {error ? <p className="ks-assign-error" role="alert">{error}</p> : null}
-      <div className="ks-assign-actions">
-        <button type="button" className="ks-btn ks-btn-lg" onClick={onDone} disabled={busy}>Cancel</button>
-        <button type="submit" className="ks-btn ks-btn-lg" data-tone="primary" disabled={busy || !title.trim()}>{busy ? "Assigning…" : "Assign task"}</button>
-      </div>
-    </form>
-  );
-}
-
-function DutySwitch({ profile, onChanged }: { profile: AgentProfile; onChanged: () => void }) {
-  const toast = usePluginToast();
-  const [busy, setBusy] = useState(false);
-  // What the server just confirmed, shown until the profile's next read agrees,
-  // so a second click never repeats the first.
-  const [confirmed, setConfirmed] = useState<boolean | null>(null);
-  const status = profile.agent.status;
-  // The core keeps status "paused" while it takes an agent on duty (a new one is checked first),
-  // until its worker finishes; from there it can be paused, never resumed.
-  const actual = status !== "paused" || awaitingSetup(profile.agent.lifecycleState);
-  const onDuty = confirmed ?? actual;
-  const locked = status === "pending_approval" || status === "terminated";
-  useEffect(() => {
-    if (confirmed === null) return;
-    if (confirmed === actual) { setConfirmed(null); return; }
-    const timer = setTimeout(() => setConfirmed(null), 20_000);
-    return () => clearTimeout(timer);
-  }, [confirmed, actual]);
-  const flip = async () => {
-    setBusy(true);
-    try {
-      await setAgentOnDuty(profile.agent.id, !onDuty);
-      setConfirmed(!onDuty);
-      toast({ title: onDuty ? `${profile.agent.name} is off duty` : `${profile.agent.name} is back on duty`, body: onDuty ? "It stops its current run and takes no new work until you switch it back." : undefined, tone: "success" });
-      onChanged();
-    } catch (caught) {
-      toast({ title: onDuty ? "Could not pause the agent" : "Could not resume the agent", body: caught instanceof Error ? caught.message : undefined, tone: "error" });
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <button type="button" role="switch" aria-checked={onDuty} className="ks-switch" disabled={busy || locked} onClick={flip} title={locked ? "Available once the agent is approved" : undefined}>
-      <i aria-hidden="true" />{onDuty ? "On duty" : "Off duty"}
-    </button>
   );
 }
 
@@ -397,13 +321,13 @@ function Profile({ agentRef, view }: { agentRef: string; view: "overview" | "tas
           </div>
         </div>
         <div className="ks-prof-actions">
-          <DutySwitch profile={profile} onChanged={refresh} />
+          <DutySwitch agent={profile.agent} onChanged={refresh} />
           {chatTask ? <a {...navigation.linkProps(chatTask.href)} className="ks-btn ks-btn-lg" title={`Open ${chatTask.identifier} to talk to ${agent.name}`}><Icon name="chat" size={15} />Chat</a> : null}
           <button type="button" className="ks-btn ks-btn-lg" data-tone="primary" onClick={() => setAssigning((open) => !open)} aria-expanded={assigning}><Icon name="plus" size={15} />Assign task</button>
         </div>
       </header>
 
-      {assigning ? <AssignForm profile={profile} onDone={refresh} /> : null}
+      {assigning ? <AssignForm agent={profile.agent} onDone={refresh} /> : null}
       {agent.status === "pending_approval" ? (
         <div className="ks-banner" data-tone="waiting">This agent is waiting for board approval before it can run. <a {...navigation.linkProps("/approvals/pending")}>Review approvals</a></div>
       ) : null}

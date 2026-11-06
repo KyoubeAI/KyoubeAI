@@ -7,6 +7,7 @@ import { AgentProfilePage, StudioBuildLabel, StudioFooter, StudioHome, StudioRou
 import { _resetBoardData, loadBoardSnapshot, loadIssueComments } from "../src/ui/board-data.js";
 import { askLevelStep, parseTeamPath } from "../src/ui/Profile.js";
 import { headline } from "../src/ui/Home.js";
+import { AssignForm, DutySwitch } from "../src/ui/agent-actions.js";
 import { memberDetail } from "../src/ui/nav.js";
 import { isActivePath } from "../src/ui/shared.js";
 import { ensureStyles, STUDIO_CSS } from "../src/ui/styles.js";
@@ -485,5 +486,18 @@ describe("agent profile", () => {
     expect(index).toContain("<h1>Team</h1>");
     expect(index).toContain("AI Manager");
     expect(index).toContain('href="/BAP/agents/new"');
+  });
+});
+
+describe("shared agent actions", () => {
+  it("the shared on-duty switch and assign form render on their own", () => {
+    installBridge({});
+    const agent = { id: "a1", name: "Kai", status: "paused", lifecycleState: null };
+    const duty = render(DutySwitch, { agent, onChanged: () => {} });
+    expect(duty).toContain('aria-checked="false"');
+    expect(duty).toContain("Off duty");
+    const assign = render(AssignForm, { agent, onDone: () => {}, idPrefix: "ko-assign" });
+    expect(assign).toContain('id="ko-assign-title"');
+    expect(assign).toContain("What should Kai do?");
   });
 });
