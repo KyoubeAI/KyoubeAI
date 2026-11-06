@@ -257,10 +257,6 @@ a.ks-now-title:hover { text-decoration: underline; text-underline-offset: 2px; }
 .ks-sti[data-s="blk"] { border-color: var(--status-task-icon-blocked, #dc2626); background: var(--status-task-icon-blocked, #dc2626); }
 .ks-sti[data-s="done"] { border-color: var(--status-task-icon-done, #16a34a); background: var(--status-task-icon-done, #16a34a); }
 .ks-skeleton-avatar { width: 72px; height: 72px; margin: 0; border-radius: 30%; }
-.ks-member { align-items: flex-start; }
-.ks-member p { min-height: 18px; }
-.ks-hire { border-style: dashed; }
-.ks-hire-ph { width: 48px; height: 48px; border-radius: 30%; border: 1.5px dashed var(--muted-foreground, #71717a); display: grid; place-items: center; color: var(--muted-foreground, #71717a); }
 @container ks-prof (max-width: 820px) {
   .ks-pgrid, .ks-tasklists { grid-template-columns: minmax(0, 1fr); }
 }
