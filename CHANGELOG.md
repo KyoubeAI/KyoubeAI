@@ -51,7 +51,9 @@ building on it. The format is loosely [Keep a Changelog](https://keepachangelog.
 - Core patches: the two Claude sign-in patches are gone (the core now signs in itself, see Fixed). The
   eight work-object visibility patches stay. Live events now pass the core's own privacy check first
   and then KyoubeAI's, and company search keeps the core's private-task filter and then applies
-  KyoubeAI's. The theme hides the core's new sidebar agent list (the Studio Team roster replaces it).
+  KyoubeAI's. A restricted person who creates a task in a hidden project or under a hidden task now
+  gets "not found", as for opening one, instead of a refusal: the core reads the project or parent
+  first. The theme hides the core's new sidebar agent list (the Studio Team roster replaces it).
   The rebrand's sweep allows `server/scripts` and one more upstream development file, and lists the
   pi provisioning inputs and the bundled skills' licence notices as known residuals.
 - Kyoube Studio is 0.6.2. The bootstrap reinstalls it on the next start.

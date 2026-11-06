@@ -1076,10 +1076,19 @@ else
   if [[ "$HTTP_STATUS" != 200 ]] || ! jq -e --arg p "$P_PUB" --arg t "$PUBLIC_ID" '.results | map(.id) | index($p) != null and index($t) != null' "$TMP/op.json" >/dev/null; then
     echo "the restricted operator's search for 'public' does not list the Public project and visible-in-public: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1
   fi
+  # From core 2026.1023.0 the create route reads the named project or parent first, and the
+  # visibility decision hides it, so the core answers "not found" before the create check's 403.
   as_op POST "/api/companies/$COMPANY_ID/issues" "{\"title\":\"into secret\",\"projectId\":\"$P_SEC\"}"
-  [[ "$HTTP_STATUS" == 403 ]] || { echo "the restricted operator created a task in a hidden project: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1; }
+  if [[ "$HTTP_STATUS" != 404 ]] || ! jq -e '.error == "Project not found"' "$TMP/op.json" >/dev/null; then
+    echo "the restricted operator's task in a hidden project was not refused as not found: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1
+  fi
   as_op POST "/api/companies/$COMPANY_ID/issues" "{\"title\":\"under owner\",\"parentId\":\"$OWNER_ROOT_ID\"}"
-  [[ "$HTTP_STATUS" == 403 ]] || { echo "the restricted operator created a task under a hidden one: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1; }
+  if [[ "$HTTP_STATUS" != 404 ]] || ! jq -e '.error == "Issue not found"' "$TMP/op.json" >/dev/null; then
+    echo "the restricted operator's task under a hidden one was not refused as not found: $HTTP_STATUS $(cat "$TMP/op.json")" >&2; exit 1
+  fi
+  curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/companies/$COMPANY_ID/issues" \
+    | jq -e '[(.issues? // .)[] | select(.title == "into secret" or .title == "under owner")] | length == 0' >/dev/null \
+    || { echo "a refused task was created anyway" >&2; exit 1; }
   op_task "{\"title\":\"into public\",\"projectId\":\"$P_PUB\"}" >/dev/null
   op_task "{\"title\":\"under own\",\"parentId\":\"$OP_OWN_ID\"}" >/dev/null
   as_op GET "/api/companies/$COMPANY_ID/approvals"
