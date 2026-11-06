@@ -65,7 +65,13 @@ const INSPECT = `(() => {
     buildBeforeData: !!build && !!data && !!(build.compareDocumentPosition(data) & Node.DOCUMENT_POSITION_FOLLOWING),
     dataShown: shown(data),
     workspaceShown: shown(nav && nav.querySelector('a[data-kyoube-nav="workspace"]')),
-    homeLabel: (link("/dashboard")?.textContent || "").trim(),
+    // The link's first text, so the core's "N live" runs badge after the label is left out.
+    homeLabel: (() => {
+      const a = link("/dashboard");
+      if (!a) return "";
+      const walk = document.createTreeWalker(a, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.textContent.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP) });
+      return (walk.nextNode()?.textContent || "").trim();
+    })(),
     searchBorder: search ? getComputedStyle(search).borderTopWidth : null,
     newTaskFilled: !!newTask && getComputedStyle(newTask).backgroundColor !== "rgba(0, 0, 0, 0)",
     homeShown: shown(home),
