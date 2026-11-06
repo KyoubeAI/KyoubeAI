@@ -323,8 +323,10 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
       <section key={p.id} className="ko-panel" data-org-panel={p.id} data-tint={p.tint} data-dim={dim ? "" : undefined} style={boxStyle(box)}>
         <div className="ko-panel-head">
           <button type="button" className="ko-chev" aria-expanded="true" aria-label={`Collapse ${p.name}`} onClick={() => togglePanel(p.id)}><Chevron /></button>
-          <span className="ko-panel-name">{p.name}</span>
-          <span className="ko-tally">{tallyText(p.tally)}</span>
+          <span className="ko-panel-label">
+            <span className="ko-panel-name">{p.name}</span>
+            <span className="ko-tally">{tallyText(p.tally)}</span>
+          </span>
         </div>
         {inside.map((c) => card(c, box))}
       </section>

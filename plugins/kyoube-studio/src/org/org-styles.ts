@@ -75,8 +75,10 @@ ${tintRules}
 .ko-chev:hover { background: color-mix(in oklab, ${FG} 8%, transparent); }
 .ko-chev svg { flex: none; transition: transform .15s; }
 .ko-chev[aria-expanded="false"] svg { transform: rotate(-90deg); }
+/* The name sits over the tally, so a role-named lead ("Team · Product Lead, Field") and a busy tally both fit a team-width panel. */
+.ko-panel-label { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
 .ko-panel-name { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ko-tally { margin-left: auto; font-size: 11.5px; color: ${MUTED}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ko-tally { font-size: 11.5px; color: ${MUTED}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ko-chip .ko-chev { flex: 1; font-size: 12.5px; font-weight: 600; }
 .ko-chip-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ko-chip i[data-alert] { flex: none; width: 8px; height: 8px; border-radius: 50%; background: ${DANGER}; }
