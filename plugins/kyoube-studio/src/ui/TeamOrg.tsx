@@ -109,6 +109,7 @@ export function TeamOrg() {
             onPresentChange={(next) => navigation.navigate(next ? "/team?present=1" : "/team", { replace: true })}
             storageKey={storageKey}
             fillWindow
+            fillKey={Boolean(source.error)}
           />
         </>
       )}

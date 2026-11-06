@@ -24,6 +24,8 @@ export interface OrgChartProps {
   storageKey: string | null;
   /** Take the window's height below the chart's top (at least 520 px), measured on mount and on every resize. */
   fillWindow?: boolean;
+  /** With fillWindow, measure again whenever this changes: for something above the chart that comes and goes. */
+  fillKey?: string | number | boolean;
 }
 
 /** Before the ResizeObserver reports, so the server render has a stable view. */
@@ -89,7 +91,7 @@ function Card({ agent, box, origin, dim, selected, moment, onSelect, onFocus }: 
   );
 }
 
-export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPanel, present, onPresentChange, storageKey, fillWindow = false }: OrgChartProps): JSX.Element {
+export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPanel, present, onPresentChange, storageKey, fillWindow = false, fillKey }: OrgChartProps): JSX.Element {
   ensureOrgStyles();
   const tree = useMemo(() => buildOrgTree(agents), [agents]);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => defaultCollapsed(tree, agents.length));
@@ -212,7 +214,7 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
     };
   }, [fillWindow]);
   // Once a presentation ends, fit the chart on the next size report, and measure again in case the
-  // window changed while it ran.
+  // window changed while it ran. Measure again too when fillKey says the chart's top moved.
   const wasPresent = useRef(present);
   useLayoutEffect(() => {
     if (refitOnLeave(wasPresent.current, present)) refitPending.current = true;
@@ -220,7 +222,7 @@ export function OrgChart({ agents, doneTaskIds, selectedId, onSelect, renderPane
     // Still in full screen until exitFullscreen settles; the window's resize measures then.
     const el = rootRef.current;
     if (fillWindow && !present && el && document.fullscreenElement !== el) setFilledHeight(measureFillHeight(el));
-  }, [fillWindow, present]);
+  }, [fillWindow, present, fillKey]);
 
   // The tour moves the view to each stop; the stage's transition glides it, and reduced motion cuts.
   const lastFrame = useRef<TourFrame | null>(null);
