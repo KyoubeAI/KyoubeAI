@@ -51,6 +51,12 @@ describe("diffMoments", () => {
     expect(diffMoments(prev, next)).toEqual([{ kind: "problem", agentId: "ana" }]);
   });
 
+  it("a task done in both snapshots does not finish again while the run goes on", () => {
+    const prev = momentSnapshot([agent("ana", "working", "t1")], ["t1"]);
+    const next = momentSnapshot([agent("ana", "working", "t1")], ["t1"]);
+    expect(diffMoments(prev, next)).toEqual([]);
+  });
+
   it("two identical snapshots give no moments", () => {
     const agents = [agent("ana", "working", "t1"), agent("bo", "attention", "t2")];
     const prev = momentSnapshot(agents, ["t0"]);

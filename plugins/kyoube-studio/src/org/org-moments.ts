@@ -27,7 +27,8 @@ export function diffMoments(previous: MomentSnapshot | null, next: MomentSnapsho
     const before = previous.agents.get(agentId);
     if (!before) continue;
 
-    if (before.taskId !== null && next.done.has(before.taskId)) {
+    // Only the poll where the task turns done: a run that goes on keeps its done task on the card.
+    if (before.taskId !== null && next.done.has(before.taskId) && !previous.done.has(before.taskId)) {
       finished.push({ kind: "finished", agentId });
     }
     if (now.taskId !== null && now.taskId !== before.taskId && !next.done.has(now.taskId)) {
