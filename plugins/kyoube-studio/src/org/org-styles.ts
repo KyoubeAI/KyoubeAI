@@ -96,9 +96,11 @@ ${tintRules}
 /* Presentation: full screen, or the whole window (ko-fill) above the host's own layers when full screen is refused. */
 .ko-org[data-org-present] { background: var(--background, #fff); }
 .ko-org.ko-fill { position: fixed; inset: 0; z-index: 2147483000; width: auto; height: auto; min-height: 0; }
-.ko-caption { position: absolute; z-index: 3; left: 50%; bottom: 32px; transform: translateX(-50%); max-width: calc(100% - 32px); box-sizing: border-box; margin: 0; padding: 10px 20px; border-radius: 999px; background: ${CARD}; border: 1px solid ${BORDER}; box-shadow: 0 4px 16px rgb(0 0 0 / .08); font-family: var(--kyoube-font-display, Georgia, serif); font-size: 20px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ko-caption { position: absolute; z-index: 3; left: 50%; bottom: 32px; transform: translateX(-50%); max-width: calc(100% - 32px); box-sizing: border-box; margin: 0; padding: 10px 20px; border-radius: 999px; background: ${CARD}; border: 1px solid ${BORDER}; box-shadow: 0 4px 16px rgb(0 0 0 / .08); font-family: var(--kyoube-font-display, Georgia, serif); font-size: 20px; line-height: 1.2; text-align: center; text-wrap: balance; width: max-content; }
 
 @media (max-width: 639px) {
+  /* A long live tally wraps to a second line on a phone instead of losing its end. */
+  .ko-caption { font-size: 17px; border-radius: 18px; padding: 8px 16px; }
   .ko-side { top: auto; left: 0; width: auto; max-height: 65%; border-left: 0; border-top: 1px solid ${BORDER}; border-radius: 16px 16px 0 0; box-shadow: 0 -8px 24px rgb(0 0 0 / .08); }
 }
 
