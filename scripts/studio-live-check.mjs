@@ -265,6 +265,8 @@ async function main() {
           await api(`/api/agents/${patch.id}`, "PATCH", { reportsTo: patch.reportsTo });
         }
       }
+      // The Home check above stored the light theme; the first chart shot is of the dark default.
+      await page.evaluate(`localStorage.removeItem("paperclip.theme")`);
       await page.goto(teamUrl);
       try {
         await page.waitForFunction(boardToken && live.length > 0 ? `document.querySelectorAll("[data-org-card]").length === ${live.length}` : `document.querySelectorAll("[data-org-card]").length >= 1`, { timeoutMs: 30_000 });
@@ -291,6 +293,7 @@ async function main() {
         problems.push("team: clicking a card did not open the side panel (data-org-side)");
       }
       if (shotsDir) {
+        await sleep(500); // The side panel slides and fades in.
         await writeFile(path.join(shotsDir, "team-dark.png"), await page.screenshot());
         await page.evaluate(`localStorage.setItem("paperclip.theme", "light")`);
         await page.goto(teamUrl);
