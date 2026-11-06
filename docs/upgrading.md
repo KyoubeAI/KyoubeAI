@@ -77,6 +77,13 @@ A plugin stuck in another status has its own log under **Settings → Plugins �
 If a plugin is deliberately disabled by an operator, `ensure-plugins` leaves it alone and says so —
 that is not a failure, but `doctor` will not call it `ready` either.
 
+## The team page is an org chart (Studio 0.7.0)
+
+`/<company>/team` now shows a living org chart: agent cards with live state, team panels, and a
+"Not in a team yet" shelf. The org icon next to **Team** opens it. The core's agent list is at
+**List**, or `/agents/all`. The 1.15 workaround that pressed the core's "Org chart view" button is gone.
+Nothing to do, since the bootstrap installs 0.7.0 on the next start.
+
 ## Moving to 1.15
 
 1.15 moves from core 2026.1012.0 to 2026.1023.0. Read this before you rebuild.

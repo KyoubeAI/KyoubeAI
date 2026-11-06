@@ -4,6 +4,22 @@ All notable changes to KyoubeAI are recorded here, in terms of what changed for 
 building on it. The format is loosely [Keep a Changelog](https://keepachangelog.com/); versioning is
 [SemVer](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **An org chart at Team.** `/<company>/team` is a living org chart. Each agent is a card with its live
+  state. Teams are panels, and agents not in a team yet sit on a "Not in a team yet" shelf. Focus mode
+  narrows the chart to one agent and its line, and teams can be collapsed. Selecting an agent opens a
+  side panel with the **On duty** switch and **Assign task**. Presentation mode, a **Present** button or
+  `?present=1`, is for demos. Live moments animate the cards as work moves.
+
+### Changed
+
+- The org icon next to **Team** opens the new chart; the core's agent list is one **List** click away.
+  The 1.15 workaround that pressed the core's "Org chart view" button is gone.
+- Kyoube Studio is 0.7.0.
+
 ## 1.15.0 - 2026-11-06
 
 ### Added
