@@ -35,14 +35,26 @@ KyoubeAI's design rests on three zones of trust, each with a different guarantee
    model (auth, deployment modes, the MCP tool gateway) is documented upstream — see
    [Out of scope](#out-of-scope). The image build does change it in three ways: the rebrand and the
    theme (presentation only, `docs/branding.md`, `docs/theme.md`), and the fixes in
-   `docker/core-patches/patches.mjs`. There are eleven: nine in the served UI (the first-run wizard's
+   `docker/core-patches/patches.mjs`. There are eighteen: nine in the served UI (the first-run wizard's
    "Skip for now", and display fixes for the pi and Hermes task chat), one in the Hermes adapter's
    server source (`hermes-quiet-default`: an unset Quiet output passes Hermes `-Q`, as the agent form
-   already showed) and, new in 1.1, one in the compiled server code.
-   `anthropic-signin-setup-token` changes the command the server presents for a Claude subscription
-   sign-in, in `server/dist/services/local-ai-login.js`: `claude auth login` becomes
-   `kyoube connect claude`, which runs `claude setup-token` in the same sign-in folder. (The agent Test
-   route fix that 1.1 also carried, `adapter-test-unsaved-harness-switch`, is upstream since core
+   already showed), and one in the adapters' shared process runner (`child-stdin-closed-early`,
+   upstream PR #14057: a harness CLI that exits or closes its input before reading the prompt no
+   longer crashes the whole server with an unhandled `EPIPE`; since core 2026.1023.0 the core retries
+   a failed harness check every minute, so a broken `claude` would otherwise crash it every minute),
+   and seven in the core's own Claude subscription sign-in (`setup-token-*`, upstream PRs #15550 and
+   #17276, issue #17868), without which it fails with the Claude Code the image ships: the prompt
+   parser skips Claude's "Hold Shift…" copy hint, the sign-in terminal gets a 50×1000 window, and when
+   the raw stream holds no token the runner parses the screen that stream draws
+   (`docker/core-patches/setup-token-screen.mjs`). That last one keeps the sign-in's output in memory
+   for longer: the whole stream instead of only what follows the prompt, bounded at 64 KiB like the
+   core's own buffers and dropped the moment the token binds; it is never logged or written to disk,
+   and the token still has to sit between the core's two exact anchor lines. The two Claude sign-in patches of 1.1–1.14 (`anthropic-signin-setup-token` and
+   `anthropic-signin-inference-probe`) were deleted in 1.15: from core 2026.1023.0 the server runs
+   `claude setup-token` itself, under a terminal it controls, with the provider's API-key variables
+   cleared, takes the code the person pastes in the browser, writes the one-year token to the
+   attempt's own folder with mode 600, and no longer checks it against the usage endpoint. (The agent
+   Test route fix that 1.1 also carried, `adapter-test-unsaved-harness-switch`, is upstream since core
    2026.1001, upstream commit 9335b7d, and was deleted.) Each patch has to match the core's code exactly once, or
    the image build fails and names the patch, so a core bump cannot carry one over silently. A flaw in
    one of these patches is in scope here. The standing patches for licensing, user groups and agent
@@ -264,8 +276,13 @@ and what data level they hold. Group tables are in `kyoube_meta` (`groups`, `gro
   Accepted residual: from core 2026.1012.0 an agent's email inbox (AgentMail) works without the
   experimental Chat connectors setting, and the core creates a task assigned to that agent for every
   new email thread with no assignment check. A restricted agent with an inbox therefore takes work
-  from anyone who can email it. Only someone with `tools:manage_connections` (owners and admins by
-  default) can set up an inbox.
+  from anyone who can email it. Only someone with `tools:manage_connections` can set up an inbox:
+  owners and admins and, from core 2026.1023.0, operators.
+  Accepted residual (1.15, core 2026.1023.0): the core's Operator role holds `agents:configure`,
+  `agents:create` and `tools:manage_connections` among fourteen grants, and KyoubeAI follows it. Groups
+  limit who may give an agent work, so an operator can still change the settings and instructions of
+  an agent in a group they are not in, or connect an account to it. Make such a person a viewer, or
+  remove those grants on the core's member permissions page (docs/groups.md, "Operators").
 - **Sync routes: the kyoube CLI, or owners and admins.** A plugin route declared `auth: "board"` is
   not limited to instance admins: the core's board check only asks whether the caller is a signed-in
   person rather than an agent, so every company member passes it. "Board-only" therefore means "no
@@ -328,6 +345,11 @@ A company can be need-to-know (`docs/groups.md`, "Visibility"): operators and vi
 projects of their groups and the tasks they are involved in, and owners, admins and instance admins
 see everything. The mode is per company and defaults to open.
 
+From 1.15 (core 2026.1023.0) the core also has private tasks and projects of its own
+(`docs/groups.md`, "Private tasks and projects"). The two combine: a person sees a task only when
+both allow it. The core treats every plugin as a non-member of a private task, so Kyoube's plugins
+read nothing of one; that is the core's guarantee, and KyoubeAI does not widen it.
+
 - **Where it is enforced.** In the core's authorization decision, the board branch of `decideBase`
   (`server/dist/services/authorization.js`), through the standing patch `visibility-board-decide`. The
   routes that ask that decision for a project or task read, a comment, a change (`issue:mutate`) or an
@@ -335,7 +357,8 @@ see everything. The mode is per company and defaults to open.
   intersection carries it to agent runs: an agent working for a restricted person is held to what
   that person may see. Seven more standing patches cover what the decision does not reach:
   - the live-events socket (`visibility-live-events`, which cuts every event for a restricted person
-    down to its type and ids);
+    down to its type and ids; from core 2026.1023.0 it runs on what the core's own privacy check
+    already lets through, because that check passes plugin events whole and run events in full);
   - company search (`visibility-search-scope` and `visibility-search-filter`);
   - task creation by a person who names no assignee, which the core does not check
     (`visibility-create-check`, `visibility-create-child-check` and `visibility-create-plan-check`);

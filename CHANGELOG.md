@@ -4,6 +4,86 @@ All notable changes to KyoubeAI are recorded here, in terms of what changed for 
 building on it. The format is loosely [Keep a Changelog](https://keepachangelog.com/); versioning is
 [SemVer](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **Private tasks and projects (from the core).** A task can be marked private when it is created, and
+  a project can be made private with its own member list. Private work is readable only by the person
+  responsible for it, its creator, its assignee, the people and agents it is shared with and the
+  project's members; owners and admins see it only through an audited emergency read. KyoubeAI's
+  work-object visibility still applies on top. Kyoube's own plugins are not members of a private task,
+  so on one: an app's confirm-first actions cannot run against it, notify sends no notice about it,
+  the Files link is not offered, and an app cannot follow or cancel a task it started there. See
+  [docs/groups.md](docs/groups.md#private-tasks-and-projects).
+- **Model gateways (from the core).** **Connectors** gains OpenRouter, Amazon Bedrock, Google Gemini
+  and custom Responses, Messages and Chat Completions endpoints, and an agent's **Runtime** tab picks
+  one as its **Connection**. Claude agents can run through OpenRouter, Bedrock or a Messages endpoint;
+  Codex through OpenRouter or a Responses endpoint; OpenCode and Hermes through OpenRouter or a Chat
+  Completions endpoint. The Google Gemini connection is an API key for Gemini CLI agents.
+
+### Changed
+
+- The core is Paperclip 2026.1023.0 (was 2026.1012.0), with the plugin SDK pinned to match. 28
+  database migrations (0306–0333) run on the first start; two of them (0313, 0314) commit in batches
+  and take longer on an instance with a long run history. Back up first, and read
+  [docs/upgrading.md](docs/upgrading.md#moving-to-115).
+- **Operators can now change the company (from the core).** The Operator role grows from one grant to
+  fourteen: creating and configuring agents, skills, environments, invitations, task assignment,
+  pipelines, connections, tools and audit reads. Existing Operators get them on the first start.
+  KyoubeAI follows the core here; demote anyone who should not configure agents or connect accounts
+  ([docs/groups.md](docs/groups.md#operators)).
+- **Budgets hold on unpriced usage (from the core).** While a run's usage has no reliable price, a
+  budget policy now counts as at its limit until the charge is resolved. Set the policy's unpriced
+  usage to **allow** if your agents run on providers the core cannot price.
+- Each agent gets a lasting signing key, kept encrypted with the instance's secrets master key
+  (`instances/default/secrets/master.key` in the home volume). `scripts/backup.sh` already saves it;
+  restore a home volume and its databases together, or agent runs fail.
+- The pause and resume of an agent go through the core's new agent lifecycle. Studio's **On duty**
+  switch shows an agent the core is still bringing back as on duty, and the roster says "Coming back
+  on duty" until it is.
+- **A new agent takes work once its harness works (from the core).** A newly hired agent stays paused
+  until its harness answers a test call to its model; the core tries again every minute, so an agent
+  hired before its harness is signed in starts on its own within a minute of the sign-in. Studio says
+  so: the roster shows "Checking its AI connection", or "Waiting for its AI connection" once a check
+  has failed, and the profile links to the agent's **Runtime** tab. Agents that already exist are not
+  checked again on upgrade.
+- Core patches: the two Claude sign-in patches are gone (the core now signs in itself, see Fixed). The
+  eight work-object visibility patches stay. Live events now pass the core's own privacy check first
+  and then KyoubeAI's, and company search keeps the core's private-task filter and then applies
+  KyoubeAI's. The theme hides the core's new sidebar agent list (the Studio Team roster replaces it).
+  The rebrand's sweep allows `server/scripts` and one more upstream development file, and lists the
+  pi provisioning inputs and the bundled skills' licence notices as known residuals.
+- Kyoube Studio is 0.6.2. The bootstrap reinstalls it on the next start.
+
+### Fixed
+
+- **The Active, Paused and Error tabs of the agent list open.** Studio took the tab name for an agent
+  and sent you to a profile that said "This agent does not exist or has been removed". The list's
+  filter tabs now stay on the list.
+- **The team's org icon opens the org chart.** The icon next to **Team** in the sidebar ("All agents
+  and the org chart") opened the agent list on its list view; it now opens on the org chart. Choosing
+  the list view still works and sticks for that visit.
+- **A Claude subscription connects, from the browser.** The Terminal step is gone: in **Connections**
+  (or on an agent's **Runtime** tab), add a Claude subscription, open the sign-in link it shows, sign
+  in, and paste the code Claude gives you back into the browser. The server runs `claude setup-token`
+  itself and keeps the one-year token. Before, the browser could wait on "sign in required" for good
+  after the Terminal step, because the core checked the new token against an Anthropic endpoint that
+  refuses it. If you tried before, start the sign-in again. The core's own sign-in could not read
+  what the Claude Code in the image prints, so on its own it waited on "Preparing browser sign-in…"
+  for good and, once past that, lost the token after you pasted the code ("Sign-in ended before the
+  account was connected"). KyoubeAI fixes both until upstream ships them (core patches
+  `setup-token-*`, upstream PRs #15550 and #17276, issue #17868).
+- **A broken harness install no longer takes the server down.** When a harness CLI (a truncated
+  `claude`, say) exited before reading its prompt, the core's unhandled `EPIPE` stopped the whole
+  server, and since this core retries a failed harness check every minute, it would have stopped it
+  every minute. The run now just fails. (Core patch `child-stdin-closed-early`, until upstream
+  PR #14057 ships.)
+
+### Removed
+
+- `kyoube connect claude`. It now says where the sign-in moved and exits.
+
 ## 1.14.1 - 2026-10-31
 
 ### Fixed

@@ -77,6 +77,61 @@ A plugin stuck in another status has its own log under **Settings → Plugins �
 If a plugin is deliberately disabled by an operator, `ensure-plugins` leaves it alone and says so —
 that is not a failure, but `doctor` will not call it `ready` either.
 
+## Moving to 1.15
+
+1.15 moves from core 2026.1012.0 to 2026.1023.0. Read this before you rebuild.
+
+- **Check `KYOUBE_CORE_VERSION=2026.1023.0` in `.env`.** `./update.sh` keeps it in step with
+  `.env.example`; a hand-run `docker compose up -d --build` uses whatever `.env` says.
+- **Back up first.** The core adds 28 database migrations (`0306` to `0333`). They run on the first
+  start and cannot be undone: `bash scripts/backup.sh`. Two of them (`0313`, private tasks, and `0314`,
+  draft images) work through existing rows in batches of 1,000 and commit each batch, so the first
+  start takes longer on an instance with a long run history. An interrupted start leaves them to finish
+  on the next one.
+- **Operators get fourteen grants.** The core's Operator role now covers creating and configuring
+  agents, skills, environments, invitations, task assignment, pipelines, connections, tools and audit
+  reads, and existing operators get them on the first start. KyoubeAI follows the core. Groups still
+  decide who may give an agent work, but an operator can now change any agent's settings. Review your
+  operators, and make anyone who should not configure agents or connect accounts a viewer
+  ([groups.md](groups.md#operators)).
+- **Budgets hold on unpriced usage.** Every budget policy gets an unpriced-usage setting, `block` by
+  default: while a run's usage has no reliable price, the policy counts as at its limit. If your agents
+  run on a provider the core cannot price, set the policy to **allow**, or resolve the charge on the
+  Costs page.
+- **Private tasks and projects** arrive from the core, on by default. Kyoube's plugins cannot read a
+  private task, so an app's confirm-first actions, notify's notices, the Files link and an app's task
+  tracking do not work on one ([groups.md](groups.md#private-tasks-and-projects)). Leave
+  `PAPERCLIP_ISSUE_PRIVACY_MODE` unset.
+- **Agent signing keys.** The core gives each agent a lasting key pair and keeps the private key
+  encrypted with the instance's secrets master key, `/kyoubeai/instances/default/secrets/master.key`.
+  It is in the home volume, so `scripts/backup.sh` saves it, but restore the home volume and the
+  databases together: with another master key, agent runs fail.
+- **Claude signs in from the browser.** Connections shows a sign-in link and a box for the code Claude
+  gives you; the Terminal step and `kyoube connect claude` are gone. A Claude subscription connected
+  with 1.1 to 1.14 keeps working. After the update, connect one Claude subscription once (any test
+  company will do) to check that the sign-in finishes on your Claude Code version: the core reads the
+  token from the screen `claude setup-token` ends with.
+- **A new agent waits for its harness.** An agent hired from now on stays paused until its harness
+  answers a test call to its model, and the core tries again every minute. Hire with the harness
+  signed in, or sign it in afterwards and the agent starts by itself within a minute; Studio shows
+  "Waiting for its AI connection" meanwhile. Existing agents are not checked again.
+- **Claude Code agents run on the core's ACP engine.** Every Claude Code agent without an `engine`
+  setting, existing ones included, now runs through the Claude ACP server the core image bundles
+  instead of `claude --print`. Set `engine` to `cli` in an agent's adapter configuration to keep the
+  1.14 behaviour for it.
+- **Connect Claude once, then point each agent at it.** Add a Claude subscription in
+  **Connections** (sign in, paste the code back), then on each Claude Code agent's **Runtime** tab
+  choose that connection. An agent left without one runs on the server's own Claude login, and
+  with none it fails every run with "Not logged in · Please run /login" (on the ACP engine:
+  "ACP agent reported a terminal access failure").
+- **The sidebar's agent list.** The core now draws its own agent list in the sidebar; the Studio theme
+  hides it, since the Team roster replaces it.
+- **The core image's own CLIs moved** to Claude Code 2.1.306, Codex 0.163.0, OpenCode 1.19.3 and
+  Gemini CLI 0.65.0. They are fallbacks: a harness installed from the Terminal still comes first.
+- **New in Connectors:** model gateways (OpenRouter, Amazon Bedrock, Google Gemini and your own
+  endpoints) for Claude Code, Codex, OpenCode, Hermes and Gemini CLI agents. See the README, "How
+  agents reach a model".
+
 ## Moving to need-to-know visibility
 
 This release adds need-to-know visibility ([`groups.md`](groups.md#visibility)): migration

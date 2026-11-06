@@ -132,6 +132,14 @@ verifying each feature) and `integrations/assistant-plugins` (the source of upst
 OpenAI plugins for its "Assistant connections (MCP)" feature, which nothing in the image reads or
 serves). Again nothing else needed a new rule: `residual 0` and code-shaped matches 0.
 
+On core 2026.1023.0 it gained two more allowlisted rows,
+`doc/connections/verified-mcp-qualification-2026-10-08.json` (upstream's record of which MCP
+connectors passed its tests; nothing reads it) and `server/scripts` (upstream's development
+scripts, run with tsx from a source checkout, never by the image), and two known residuals: the runner's
+`pi-provision-inputs` (in `server/dist/vendor` and `packages`), the patch and extension it applies
+to pi when it provisions pi, whose result must match pinned sha256 values, and the `LICENSE` notices of upstream's
+bundled skills, whose attribution stays as written.
+
 Verified against the built image on 2026-09-14, after the final review fix wave (the history at the
 end of this section says what each round closed). That build's `rebrand:` header lines were
 

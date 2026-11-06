@@ -143,11 +143,17 @@ no installer for Grok: install it from its own instructions so that `grok` lands
 ### How agents reach a model
 
 - **AI connections** hold a subscription sign-in or an API key centrally, and hand it to each run. You add
-  one from an agent's **Runtime** tab, under **AI connection**. Claude Code, Codex, OpenCode and Grok can
-  use them.
+  one in **Connectors** or from an agent's **Runtime** tab, under **AI connection**. Claude Code, Codex,
+  OpenCode and Grok can use them, Gemini CLI a Google (Gemini API key) connection, and Hermes a model
+  gateway connection.
+- **Model gateways** are AI connections to OpenRouter, Amazon Bedrock or your own Responses, Messages or
+  Chat Completions endpoint. Claude Code can run through OpenRouter, Bedrock or a Messages endpoint,
+  Codex through OpenRouter or a Responses endpoint, and OpenCode and Hermes through OpenRouter or a Chat
+  Completions endpoint. Pick the connection on the agent's **Runtime** tab; the model picker takes a
+  model id you type.
 - **The harness's own login**, made in the Terminal, or provider keys in `.env` (`ANTHROPIC_API_KEY`,
-  `OPENAI_API_KEY`, `OPENROUTER_API_KEY`; `docker compose up -d` applies them). pi and Hermes always work
-  this way; the others do for agents that have no AI connection.
+  `OPENAI_API_KEY`, `OPENROUTER_API_KEY`; `docker compose up -d` applies them). pi always works this way;
+  the others do for agents that have no AI connection.
 
 ### Claude Code
 
@@ -155,17 +161,17 @@ no installer for Grok: install it from its own instructions so that `grok` lands
    date.
 2. Connect it, one of these ways:
    - **Pro or Max subscription, as an AI connection.** On the agent's **Runtime** tab, choose Claude Code,
-     then add a Claude subscription under **AI connection**. It shows a command ending in
-     `kyoube connect claude`. Paste it into the Terminal, sign in at the link it prints, and paste the code
-     back (if it then asks for the token Claude printed, paste that). When the Terminal says *Done*, click
-     **Connect**. The connection holds a one-year token; connect it again once a year.
+     then add a Claude subscription under **AI connection** (or add it in **Connectors**). It shows a
+     sign-in link: open it, sign in to Claude, and paste the code Claude shows back into the box under
+     the link. Then click **Connect**. The connection holds a one-year token; connect it again once a
+     year. No Terminal step is needed.
    - **Anthropic API key:** add it as an AI connection, or set `ANTHROPIC_API_KEY` in `.env`.
    - **Just your own login:** run `claude` in the Terminal and use `/login`. Agents without an AI
      connection use it, and Claude keeps it refreshed.
 3. Choose Claude Code and the connection on the agent's **Runtime** tab.
 
 Claude subscription connections made before 1.1 hold an 8-hour token and stop working; connect them again
-once, as above.
+once, as above. `kyoube connect claude`, the Terminal step of 1.1–1.14, is gone and says so.
 
 ### Codex
 
@@ -180,7 +186,8 @@ once, as above.
 1. `kyoube harness install hermes`.
 2. Run `hermes setup` in the Terminal to pick a provider and model and enter keys (OpenRouter and others).
    Its settings, sessions and memory live in `~/.hermes`.
-3. Choose Hermes on the agent's **Runtime** tab. Hermes does not use AI connections.
+3. Choose Hermes on the agent's **Runtime** tab. It uses its own settings, or a model gateway connection
+   (OpenRouter or a Chat Completions endpoint) picked there.
 
 ### pi
 
@@ -212,7 +219,7 @@ conversation across runs, and start a new one when their workspace moves.
 
 The core image carries a copy of each. `kyoube harness install gemini` (or `opencode`, `kimi`) installs
 your own, newer copy, which then takes precedence. Sign in from the Terminal as each one's documentation
-describes.
+describes, or give Gemini CLI a Google connection (a Gemini API key) and OpenCode an OpenRouter one.
 
 ### Switching an agent's harness
 

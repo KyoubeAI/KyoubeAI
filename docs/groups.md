@@ -40,6 +40,21 @@ They also keep data-access administration by role: agent data grants, company da
 typed-decision settings. A group's `schema` level lets its members change tables and publish apps. It
 never lets them decide who else gets access.
 
+## Operators
+
+From KyoubeAI 1.15 (core 2026.1023.0) an operator holds fourteen grants from the core: creating and
+configuring agents (`agents:create`, `agents:configure`), skills, environments, inviting people,
+assigning tasks, pipelines, managing connections and tool profiles, using and administering tools,
+and reading the tool and agent audit. Joining approvals and member permissions stay with owners and
+admins, and an operator cannot invite an admin or an owner. Existing operators get the new grants on
+the first start. KyoubeAI follows the core here.
+
+Groups decide who may give an agent work, not who may change it. An operator can therefore open and
+change any agent's settings and instructions, including an agent in a group they are not in, and can
+connect accounts (an email inbox among them). If an operator should not do that, make them a viewer,
+or remove those grants on the core's member permissions page. KyoubeAI's rules loop changes only the
+operator's `tasks:assign` grant (see [What KyoubeAI changes in the core](#what-kyoubeai-changes-in-the-core)).
+
 ## Data levels
 
 - A person's level is the highest level among their groups that set one. If none of their groups
@@ -214,6 +229,38 @@ know about:
 - Disabling the `kyoube.apps` plugin leaves the last written policy in force. To lift need-to-know
   without it, delete `/kyoubeai/kyoube/visibility/index.json`, then restart or wait two seconds.
 
+## Private tasks and projects
+
+From KyoubeAI 1.15 the core has private work of its own. A task can be marked private when it is
+created, and a project can be made private with its own member list. A private task is readable only
+by the person responsible for it, its creator, its assignee, the people and agents it is shared with
+and, in a private project, the project's members. That covers task lists and counts, search,
+activity, runs and their transcripts, documents and attachments. Subtasks of a private task are
+private too; sharing a subtask does not share its parent. Owners and admins do not see private work
+either, except through an audited emergency read (`?breakGlass=true`), which records who read it and
+leaves a notice on the task.
+
+It works alongside need-to-know, not instead of it: a person sees a task only when both allow it. A
+private task is hidden from someone who could otherwise see everything in the company, and a
+need-to-know company still hides the projects and tasks outside a restricted person's groups, which
+private tasks cannot express.
+
+**Kyoube plugins on a private task.** The core treats every plugin as someone who is not on the task,
+so Kyoube's plugins cannot read a private task. Agents and people on it still use Kyoube data and apps
+as usual. What does not work there:
+
+- An app's confirm-first actions (Data & Apps) cannot be run against the task.
+- Notify sends no notice about it.
+- The task page shows no Files link.
+- An app that started a task cannot follow or cancel it once it is private.
+
+Two things stay company-wide on purpose, as the core designed them: the dashboard and sidebar totals
+count private work (without titles), and the company's run list shows a locked row for a private
+task's run, with only the agent, status, timing, tokens and cost.
+
+Leave `PAPERCLIP_ISSUE_PRIVACY_MODE` unset (it defaults to `enforce`). `shadow` only logs what it
+would refuse, and `off` turns private tasks off.
+
 ## Licence
 
 Creating and changing groups needs any valid licence (see [licensing.md](licensing.md)). Without
@@ -253,7 +300,7 @@ Agent restrictions use the core's own mechanism, written by the agent rules loop
   without the experimental Chat connectors setting. Every new email thread to it becomes a task
   assigned to that agent, and the core runs no assignment check for it, so a restricted agent with an
   inbox takes work from anyone who emails it. Setting up an inbox needs `tools:manage_connections`,
-  which only owners and admins hold unless someone grants it.
+  which owners, admins and, from KyoubeAI 1.15, operators hold.
 
 Work-object visibility needs eight standing core patches, the `visibility-*` entries in
 `docker/core-patches/patches.mjs`. Four, `visibility-board-decide`, `visibility-live-events`,
@@ -264,8 +311,11 @@ live-events socket and in its company search. Three, `visibility-create-check`,
 plan routes ask the same decision when a person creates a task without naming an assignee, which the
 core otherwise does not check. One, `visibility-route-gate`, puts the decision in front of every route
 addressed by a task or project id or task identifier, many of which check only that the person is in
-the company. The core has no visibility setting of its own, so without them everyone
-in a company sees all of its tasks and projects. The build fails if a core release moves the code one
+the company. The core's own private tasks hide a single task or project from everyone not named on
+it, but the core has no rule that hides by group, so without these patches everyone in a company sees
+all of its open tasks and projects. On core 2026.1023.0 the live-events patch filters what the core's
+own privacy check already lets through, and the search filter runs after the core's own private-task
+filter. The build fails if a core release moves the code one
 of them anchors on.
 
 Chat needs one standing core patch, `groups-chat-open-assign-check` and

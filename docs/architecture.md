@@ -361,11 +361,19 @@ The third is for agent questions (`docs/agent-rules.md`): `agent-questions-ask-l
 another agent, which refuses it or makes it answerable by that agent, depending on the asker's ask
 level.
 `docker/core-patches/patches.mjs` carries fixes to upstream bugs that had to ship here first, and the
-standing entries (licensing, user groups, agent questions). The temporary fixes are nine in the served UI (the first-run wizard's "Skip
+standing entries (licensing, user groups and work-object visibility, agent questions). The temporary fixes are nine in the served UI (the first-run wizard's "Skip
 for now", and the pi and Hermes task-chat transcript fixes), one in the Hermes adapter's server source
-(`hermes-quiet-default`, upstream PR #12016, in `packages/adapters/hermes/src/server/execute.ts`, which
-the server runs through tsx) and one in the compiled server code: `anthropic-signin-setup-token` (the command Claude subscription
-sign-in presents, in `local-ai-login.js`). They are applied to the pristine core layer by
+(`hermes-quiet-default`, upstream PR #12016, in `packages/adapters/hermes/src/server/execute.ts`), and
+one in the adapters' shared process runner (`child-stdin-closed-early`, upstream PR #14057, in
+`packages/adapter-utils/src/server-utils.ts`: an unhandled `EPIPE` on a harness CLI's input no longer
+crashes the server); the server runs these TypeScript sources through tsx. Seven more make the core's
+own Claude subscription sign-in work with the Claude Code the image ships (`setup-token-*`, upstream
+PRs #15550 and #17276): six in `packages/adapters/claude-local/src/server/setup-token-parse.ts` and
+`setup-token-runner.ts` (skip Claude's copy hint before the code prompt; read the token from the drawn
+screen, rendered by `docker/core-patches/setup-token-screen.mjs`, when the raw stream holds none) and
+one in `server/dist/services/local-ai-browser-login.js` (a 50×1000 window for the sign-in terminal).
+The two Claude sign-in fixes of 1.1–1.14 went in 1.15: core 2026.1023.0 runs `claude setup-token`
+itself and takes the pasted code in the browser. They are applied to the pristine core layer by
 `docker/core-patches/apply.mjs` in the Dockerfile step right before the rebrand, while the same fix is
 on its way upstream (each entry names its issue or PR). A
 pattern anchors on the compiled bundle's string literals and code shape (never a minifier's

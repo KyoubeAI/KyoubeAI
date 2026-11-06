@@ -97,6 +97,8 @@ Inside `/kyoubeai` (the `kyoubeai-home` volume):
 | `.cache/` | Download caches: apt's packages and index, so kept packages can come back without a network. Not backed up, and neither is `.npm/`, npm's cache. |
 | `instances/default/projects/<companyId>/<projectId>/` | Each project's managed working folder (`_default`, or the repository name for a cloned repo): what its agents have written, and what the project's **Files** tab shows and edits. |
 | `instances/default/workspaces/<agentId>/` | An agent's own default working directory, used for runs with no project folder. |
+| `instances/default/secrets/master.key` | The core's secrets master key, mode `600`. It encrypts the secrets the core stores and, from 1.15 (core 2026.1023.0), each agent's private signing key. Back it up with the databases and restore them together: with another key, the stored secrets cannot be read and agent runs fail. Never rotate it by deleting it. |
+| `instances/default/ai-local-logins/<attempt>/` | A browser sign-in in progress (a Claude or Codex subscription): the CLI's login folder for that attempt, mode `700`. The core moves the credential into the connection when you click **Connect** and removes the folder. |
 
 ## Backups
 
