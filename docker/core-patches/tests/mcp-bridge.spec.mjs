@@ -5,6 +5,7 @@ import { findTool, KYOUBE_MCP_PATH, listTools, REMOVED_TOOLS, registerDispatch, 
 class CapabilityError extends Error {}
 const deps = { z, CapabilityError };
 const p = { grant: { companyId: "c1" } };
+const RID = "6f1c2b9e-3d4a-4c5b-8e7f-0a1b2c3d4e5f";
 
 const QUERY = { name: "kyoubeai_data_query", title: "Data query", description: "Run a query", inputSchema: { type: "object" }, tier: "read", annotations: { readOnlyHint: true } };
 const DROP = { name: "kyoubeai_data_drop_table", title: "Data drop table", description: "Drop a table", inputSchema: { type: "object", properties: { table: { type: "string" } } }, tier: "configure", annotations: { destructiveHint: true } };
@@ -81,7 +82,14 @@ describe("findTool", () => {
     const tool = await findTool(p, DROP.name, deps);
     expect(tool).toMatchObject({ name: DROP.name, description: DROP.description, write: false, configure: true, destructive: true });
     expect(() => tool.schema.parse({})).toThrow();
-    expect(tool.schema.parse({ requestId: "r1", table: "t" })).toEqual({ requestId: "r1", table: "t" });
+    expect(tool.schema.parse({ requestId: RID, table: "t" })).toEqual({ requestId: RID, table: "t" });
+  });
+
+  it("refuses a requestId that is not a UUID, as the core's receipts store a uuid", async () => {
+    const tool = await findTool(p, DROP.name, deps);
+    for (const requestId of ["r1", "smoke-mcp-1", ""]) {
+      expect(() => tool.schema.parse({ requestId, table: "t" })).toThrow(z.ZodError);
+    }
   });
 
   it("builds a read capability with an open schema", async () => {
@@ -94,7 +102,7 @@ describe("findTool", () => {
     const tool = await findTool(p, DROP.name, deps);
     const body = { ok: true };
     const api = vi.fn(async () => body);
-    const out = await tool.run(p, { requestId: "r1", table: "t", companyId: "evil" }, api);
+    const out = await tool.run(p, { requestId: RID, table: "t", companyId: "evil" }, api);
     expect(api).toHaveBeenCalledWith(p, "POST", "/plugins/kyoube.apps/api/mcp/call", { companyId: "c1", tool: DROP.name, arguments: { table: "t" } });
     expect(out).toBe(body);
   });

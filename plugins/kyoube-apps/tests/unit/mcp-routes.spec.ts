@@ -52,7 +52,7 @@ describe("handleMcpApiRequest", () => {
 
   it("runs a tool as the signed-in person in the request's company", async () => {
     const { services: s, data } = services();
-    const response = await handleMcpApiRequest(s, request("mcp.call", { companyId: COMPANY, tool: "kyoubeai_data_query", arguments: { table: "deals", limit: 5, requestId: "r", companyId: "evil" } }));
+    const response = await handleMcpApiRequest(s, request("mcp.call", { companyId: COMPANY, tool: "kyoubeai_data_query", arguments: { table: "deals", limit: 5, requestId: "6f1c2b9e-3d4a-4c5b-8e7f-0a1b2c3d4e5f", companyId: "evil" } }));
     expect(data.calls).toEqual([{ method: "query", args: [COMPANY, { kind: "user", id: "u1", runId: null }, "deals", { where: undefined, orderBy: undefined, limit: 5, offset: undefined, fields: undefined }] }]);
     expect(response!.status).toBe(200);
     expect(response!.body).toMatchObject({ outcome: "completed", data: { method: "query" } });
@@ -72,7 +72,7 @@ describe("handleMcpApiRequest", () => {
 
   it("answers invalid arguments as a rejected outcome", async () => {
     const { services: s, data } = services();
-    const response = await handleMcpApiRequest(s, request("mcp.call", { companyId: COMPANY, tool: "kyoubeai_data_insert", arguments: { table: "deals", requestId: "r" } }));
+    const response = await handleMcpApiRequest(s, request("mcp.call", { companyId: COMPANY, tool: "kyoubeai_data_insert", arguments: { table: "deals", requestId: "6f1c2b9e-3d4a-4c5b-8e7f-0a1b2c3d4e5f" } }));
     expect(response!.status).toBe(200);
     expect(response!.body).toMatchObject({ outcome: "rejected", status: 400, code: "invalid" });
     expect((response!.body as { message: string }).message).toMatch(/^invalid: rows/);

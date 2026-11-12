@@ -53,6 +53,9 @@ describe("the MCP catalogue", () => {
       } else {
         expect(schema.properties).toHaveProperty("requestId");
         expect(schema.required).toContain("requestId");
+        // The core's receipts store the id as a uuid, so the published schema asks for one.
+        expect(schema.properties?.requestId).toMatchObject({ type: "string", format: "uuid" });
+        expect((schema.properties?.requestId as { description?: string }).description).toBe("A new UUID for this intended action. Reuse this UUID and identical arguments on retries; never invent a second ID after an uncertain result.");
       }
     }
   });

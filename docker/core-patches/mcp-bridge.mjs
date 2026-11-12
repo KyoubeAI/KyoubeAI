@@ -88,7 +88,7 @@ export async function findTool(principal, name, { z, CapabilityError }) {
     write: entry.tier === "write",
     configure: entry.tier === "configure",
     destructive: entry.annotations?.destructiveHint === true,
-    schema: writes ? z.object({ requestId: z.string().min(1).max(200) }).passthrough() : z.object({}).passthrough(),
+    schema: writes ? z.object({ requestId: z.uuid() }).passthrough() : z.object({}).passthrough(),
     async run(p, args, api) {
       const { companyId: _companyId, requestId: _requestId, ...rest } = args ?? {};
       return api(p, "POST", `${PLUGIN_API}/call`, { companyId: p.grant.companyId, tool: name, arguments: rest });

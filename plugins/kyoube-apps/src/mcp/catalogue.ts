@@ -74,7 +74,8 @@ export interface McpTool {
 
 const MCP_PREFIX = "kyoubeai_";
 
-const requestId = z.string().min(1).max(200).describe("a new unique id for this change; reuse it only to retry the same change");
+// The core's own contract (public-mcp/contracts.js): its receipts store the id as a uuid.
+const requestId = z.uuid().describe("A new UUID for this intended action. Reuse this UUID and identical arguments on retries; never invent a second ID after an uncertain result.");
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

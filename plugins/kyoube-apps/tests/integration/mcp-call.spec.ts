@@ -33,7 +33,7 @@ function call(userId: string, tool: string, args: Record<string, unknown>) {
 
 describe("MCP calls against the real data service", () => {
   it("lets a member insert and query rows as themselves", async () => {
-    const inserted = await call("member-1", "kyoubeai_data_insert", { table: "deals", rows: [{ name: "Acme" }], requestId: "req-1" });
+    const inserted = await call("member-1", "kyoubeai_data_insert", { table: "deals", rows: [{ name: "Acme" }], requestId: "00000000-0000-4000-8000-000000000001" });
     expect(inserted!.status).toBe(200);
     expect(inserted!.body).toMatchObject({ outcome: "completed", data: [{ name: "Acme", created_by_kind: "user", created_by_id: "member-1" }] });
     const queried = await call("member-1", "kyoubeai_data_query", { table: "deals" });
@@ -41,14 +41,14 @@ describe("MCP calls against the real data service", () => {
   });
 
   it("rejects a member dropping a table, with the member's own level deciding", async () => {
-    const dropped = await call("member-1", "kyoubeai_data_drop_table", { table: "deals", requestId: "req-2" });
+    const dropped = await call("member-1", "kyoubeai_data_drop_table", { table: "deals", requestId: "00000000-0000-4000-8000-000000000002" });
     expect(dropped!.status).toBe(200);
     expect(dropped!.body).toMatchObject({ outcome: "rejected", status: 403, code: "forbidden" });
     expect((await service.query(C, OWNER, "deals", {})).rows).toHaveLength(1);
   });
 
   it("rejects a viewer inserting rows", async () => {
-    const inserted = await call("viewer-1", "kyoubeai_data_insert", { table: "deals", rows: [{ name: "Nope" }], requestId: "req-3" });
+    const inserted = await call("viewer-1", "kyoubeai_data_insert", { table: "deals", rows: [{ name: "Nope" }], requestId: "00000000-0000-4000-8000-000000000003" });
     expect(inserted!.status).toBe(200);
     expect(inserted!.body).toMatchObject({ outcome: "rejected", status: 403, code: "forbidden" });
     expect((await service.query(C, OWNER, "deals", {})).rows).toHaveLength(1);
