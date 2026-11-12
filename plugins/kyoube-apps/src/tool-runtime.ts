@@ -40,6 +40,47 @@ export function toolErrorText(error: DataError): string {
   return error.details && Object.keys(error.details).length > 0 ? `${error.message} ${JSON.stringify(error.details)}` : error.message;
 }
 
+export type ToolRunResult = { content: string; data: unknown } | { error: string; dataError?: DataError };
+
+/**
+ * Runs one tool for a given actor: validates `params`, calls the tool, and turns
+ * the outcome into a result. Agent tools and MCP calls share it, so both get the
+ * same validation text and error masking. `dataError` is returned for callers
+ * (the MCP route) that map it to a status; the agent handler drops it.
+ */
+export async function runTool<S>(
+  tool: ToolDefinition<S>,
+  service: S,
+  companyId: string,
+  actor: DataActor,
+  params: unknown,
+  logWarn?: (message: string, meta: Record<string, unknown>) => void,
+): Promise<ToolRunResult> {
+  const parsed = tool.schema.safeParse(params ?? {});
+  if (!parsed.success) {
+    const text = parsed.error.issues.map((issue) => `${issue.path.join(".") || "params"} ${issue.message}`).join("; ");
+    return { error: `invalid: ${text}`, dataError: new DataError("invalid", text) };
+  }
+  try {
+    const data = await tool.run(service, companyId, actor, parsed.data);
+    return { content: formatToolResult(data), data };
+  } catch (error) {
+    const message = error instanceof DataError ? error.message : `error: ${error instanceof Error ? error.message : String(error)}`;
+    // Ruling P2-R24: meta stays free of `params` (untrusted agent input) —
+    // only identifying info and the real error go to the operator log.
+    // Ruling P4-R15 scrubs a mapped DataError's own message of driver detail, so the raw
+    // error it was mapped from is logged alongside it: this is the operator log, not the
+    // activity log, and an operator debugging a failed write needs the driver's text.
+    const cause = error instanceof DataError && error.cause !== undefined
+      ? { cause: error.cause instanceof Error ? error.cause.message : String(error.cause) }
+      : {};
+    logWarn?.("tool failed", { tool: tool.name, actorKind: actor.kind, actorId: actor.id, message, ...cause });
+    // Never echo a raw JS/driver error message back; only a `DataError`'s own
+    // message (already considered caller-safe) is.
+    return error instanceof DataError ? { error: toolErrorText(error), dataError: error } : { error: "error: internal error" };
+  }
+}
+
 export function registerToolHandlers<S>(ctx: PluginContext, definitions: ToolDefinition<S>[], service: S): void {
   for (const tool of definitions) {
     ctx.tools.register(tool.name, { displayName: tool.displayName, description: tool.description, parametersSchema: jsonSchemaFor(tool.schema) }, async (params, runCtx) => {
@@ -49,34 +90,14 @@ export function registerToolHandlers<S>(ctx: PluginContext, definitions: ToolDef
       if (!runCtx.agentId || !runCtx.companyId) {
         return { error: "invalid: tool run context is missing the agent or company" };
       }
-      const parsed = tool.schema.safeParse(params ?? {});
-      if (!parsed.success) {
-        return { error: `invalid: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "params"} ${issue.message}`).join("; ")}` };
-      }
       // Invariant: the actor is narrowed to "agent" from the host-authenticated
-      // `runCtx` ONLY — never from `params`/`parsed.data` (untrusted model
-      // output). `{ kind: "system" }` (see `systemActor()` in data/service.ts)
-      // grants unconditional schema access and is plugin-internal only; no
-      // actor built here may ever carry that kind.
+      // `runCtx` ONLY — never from `params` (untrusted model output).
+      // `{ kind: "system" }` (see `systemActor()` in data/service.ts) grants
+      // unconditional schema access and is plugin-internal only; no actor built
+      // here may ever carry that kind.
       const actor: DataActor = { kind: "agent", id: runCtx.agentId, runId: runCtx.runId };
-      try {
-        const data = await tool.run(service, runCtx.companyId, actor, parsed.data);
-        return { content: formatToolResult(data), data };
-      } catch (error) {
-        const message = error instanceof DataError ? error.message : `error: ${error instanceof Error ? error.message : String(error)}`;
-        // Ruling P2-R24: meta stays free of `params` (untrusted agent input) —
-        // only identifying info and the real error go to the operator log.
-        // Ruling P4-R15 scrubs a mapped DataError's own message of driver detail, so the raw
-        // error it was mapped from is logged alongside it: this is the operator log, not the
-        // activity log, and an operator debugging a failed write needs the driver's text.
-        const cause = error instanceof DataError && error.cause !== undefined
-          ? { cause: error.cause instanceof Error ? error.cause.message : String(error.cause) }
-          : {};
-        ctx.logger.warn("tool failed", { tool: tool.name, agentId: runCtx.agentId, message, ...cause });
-        // Never echo a raw JS/driver error message back to the agent; only a
-        // `DataError`'s own message (already considered caller-safe) is.
-        return { error: error instanceof DataError ? toolErrorText(error) : "error: internal error" };
-      }
+      const result = await runTool(tool, service, runCtx.companyId, actor, params, (message, meta) => ctx.logger.warn(message, meta));
+      return "error" in result ? { error: result.error } : { content: result.content, data: result.data };
     });
   }
 }

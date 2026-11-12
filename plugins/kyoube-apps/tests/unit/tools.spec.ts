@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createTestHarness } from "@paperclipai/plugin-sdk/testing";
 import { DataError, mapPgError } from "../../src/data/errors.js";
 import manifest from "../../src/manifest.js";
+import { z } from "zod";
+import { runTool, toolErrorText, type ToolDefinition } from "../../src/tool-runtime.js";
 import { TOOL_DEFINITIONS, formatToolResult, registerTools, toolDeclarations } from "../../src/tools.js";
 import { createStubService } from "../stub-service.js";
 
@@ -105,5 +107,37 @@ describe("registerTools", () => {
     expect(result.error).not.toContain("ada@example.com");
     const warning = harness.logs.find((entry) => entry.level === "warn");
     expect(String(warning?.meta?.cause)).toContain("contacts_email_idx");
+  });
+});
+
+describe("runTool", () => {
+  const actor = { kind: "user" as const, id: "person-1" };
+  const company = "11111111-1111-4111-8111-111111111111";
+  const stub = (run: ToolDefinition<null>["run"]): ToolDefinition<null> => ({ name: "stub_tool", displayName: "Stub", description: "A stub tool for tests", schema: z.object({ n: z.number().optional() }), run });
+
+  it("returns truncated content and the full data", async () => {
+    const big = { text: "x".repeat(30_000) };
+    const result = await runTool(stub(async () => big), null, company, actor, {});
+    expect(result).toMatchObject({ data: big });
+    expect((result as { content: string }).content.endsWith("(truncated; narrow the query or use limit/offset)")).toBe(true);
+  });
+  it("returns a DataError's text and the error itself", async () => {
+    const error = new DataError("forbidden", "schema access required");
+    const result = await runTool(stub(async () => { throw error; }), null, company, actor, {});
+    expect(result).toEqual({ error: toolErrorText(error), dataError: error });
+    expect((result as { dataError: DataError }).dataError.code).toBe("forbidden");
+  });
+  it("masks other errors and logs the real message", async () => {
+    const logs: Array<{ message: string; meta: Record<string, unknown> }> = [];
+    const result = await runTool(stub(async () => { throw new Error("pg: secret"); }), null, company, actor, {}, (message, meta) => logs.push({ message, meta }));
+    expect(result).toEqual({ error: "error: internal error" });
+    expect(logs[0]?.message).toBe("tool failed");
+    expect(String(logs[0]?.meta.message)).toContain("pg: secret");
+    expect(logs[0]?.meta).toMatchObject({ tool: "stub_tool", actorKind: "user", actorId: "person-1" });
+  });
+  it("rejects invalid params", async () => {
+    const result = await runTool(stub(async () => 1), null, company, actor, { n: "no" });
+    expect((result as { error: string }).error).toMatch(/^invalid:/);
+    expect((result as { dataError?: DataError }).dataError?.code).toBe("invalid");
   });
 });
