@@ -81,12 +81,14 @@ export async function findTool(principal, name, { z, CapabilityError }) {
   if (!tools) throw new CapabilityError(UNAVAILABLE);
   const entry = tools.find((tool) => tool.name === name);
   if (!entry) return undefined;
-  const writes = entry.tier === "write" || entry.tier === "configure";
+  // A tier this bridge does not know fails closed: the strictest scope and a receipt.
+  const tier = entry.tier === "read" || entry.tier === "write" ? entry.tier : "configure";
+  const writes = tier !== "read";
   return {
     name,
     description: entry.description,
-    write: entry.tier === "write",
-    configure: entry.tier === "configure",
+    write: tier === "write",
+    configure: tier === "configure",
     destructive: entry.annotations?.destructiveHint === true,
     schema: writes ? z.object({ requestId: z.uuid() }).passthrough() : z.object({}).passthrough(),
     async run(p, args, api) {

@@ -85,12 +85,31 @@ describe("the MCP catalogue", () => {
       expect(entry.description).not.toContain("your task");
     }
     expect(entries.find((entry) => entry.name === "kyoubeai_apps_publish")!.description).toBe(
-      "Publish a version (default: latest) so company members can open it. Declared tables must exist. Requires schema access. If the version adds or changes decision sets, connections or task templates, the call is refused until you show the person what changed and they agree; then send it again with decisionsConfirmed, connectionsConfirmed or tasksConfirmed set to true.",
+      "Publish a version (default: latest) so company members can open it. Declared tables must exist. Requires schema access. If the version adds or changes decision sets, connections or task templates, the call is refused until you show the person what changed and they agree; then send it again with a new requestId and decisionsConfirmed, connectionsConfirmed or tasksConfirmed set to true.",
     );
     expect(entries.find((entry) => entry.name === "kyoubeai_apps_rollback")!.description).toBe(
-      "Point the published app at an earlier version. Requires schema access. If that version has different decision sets, connections or task templates, the call is refused until you show the person what changed and they agree; then send it again with decisionsConfirmed, connectionsConfirmed or tasksConfirmed set to true.",
+      "Point the published app at an earlier version. Requires schema access. If that version has different decision sets, connections or task templates, the call is refused until you show the person what changed and they agree; then send it again with a new requestId and decisionsConfirmed, connectionsConfirmed or tasksConfirmed set to true.",
     );
     expect(entries.find((entry) => entry.name === "kyoubeai_data_drop_table")!.description).toBe("Drop a table. Recoverable for 30 days unless the company enabled hard deletes. Requires schema access.");
+  });
+
+  it("tells the person's assistant, not an agent, what the confirmation flags mean", () => {
+    for (const entry of entries) expect(JSON.stringify(entry.inputSchema)).not.toContain("agents cannot");
+    for (const name of ["kyoubeai_apps_publish", "kyoubeai_apps_rollback"]) {
+      const properties = schemaOf(entries.find((entry) => entry.name === name)!).properties as Record<string, { description?: string }>;
+      expect(properties.decisionsConfirmed!.description).toBe("set true only after you showed the person what the version's new or changed decision sets send and they agreed");
+      expect(properties.connectionsConfirmed!.description).toBe("set true only after you showed the person which outside services the version's new or changed connections reach and they agreed");
+      expect(properties.tasksConfirmed!.description).toBe("set true only after you showed the person which agent each new or changed task template reaches and what it is told, and they agreed");
+      expect(properties.decisionsConfirmed).toMatchObject({ type: "boolean" });
+    }
+    // The agent tools keep their own text.
+    const agentPublish = APP_TOOL_DEFINITIONS.find((tool) => tool.name === "apps_publish")!.schema as z.ZodObject<Record<string, z.ZodType>>;
+    expect(agentPublish.shape.decisionsConfirmed!.description).toContain("agents cannot publish such a version");
+  });
+
+  it("refuses a property description override for a property the tool does not have", () => {
+    const apps = APP_TOOL_DEFINITIONS.map((tool) => (tool.name === "apps_publish" ? { ...tool, schema: z.object({ slug: z.string() }) } : tool));
+    expect(() => buildCatalogue({ data: TOOL_DEFINITIONS, apps })).toThrow("MCP property decisionsConfirmed missing on apps_publish");
   });
 
   it("keeps each entry's agent definition to run", () => {

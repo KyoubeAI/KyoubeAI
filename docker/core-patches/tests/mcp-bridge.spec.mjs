@@ -92,6 +92,19 @@ describe("findTool", () => {
     }
   });
 
+  it("treats a tier it does not know as configure, never as read", async () => {
+    for (const tier of ["admin", undefined, "READ", ""]) {
+      const ODD = { ...DROP, name: "kyoubeai_data_odd", tier, annotations: {} };
+      dispatch.mockResolvedValue({ version: 1, tools: [QUERY, ODD] });
+      resetForTests(() => now);
+      registerDispatch(dispatch);
+      const tool = await findTool(p, ODD.name, deps);
+      expect(tool, String(tier)).toMatchObject({ write: false, configure: true });
+      expect(() => tool.schema.parse({})).toThrow(z.ZodError);
+      expect(tool.schema.parse({ requestId: RID })).toEqual({ requestId: RID });
+    }
+  });
+
   it("builds a read capability with an open schema", async () => {
     const tool = await findTool(p, QUERY.name, deps);
     expect(tool).toMatchObject({ write: false, configure: false, destructive: false });

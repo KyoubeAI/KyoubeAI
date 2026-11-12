@@ -23,12 +23,20 @@ export interface McpToolEntry {
   annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: false };
 }
 
+// The agent text says "agents cannot publish such a version"; over MCP the caller is the person's assistant.
+const CONFIRMATIONS = {
+  decisionsConfirmed: "set true only after you showed the person what the version's new or changed decision sets send and they agreed",
+  connectionsConfirmed: "set true only after you showed the person which outside services the version's new or changed connections reach and they agreed",
+  tasksConfirmed: "set true only after you showed the person which agent each new or changed task template reaches and what it is told, and they agreed",
+};
+
 /**
  * One row per agent tool. A tool without a row fails `buildCatalogue` (and so
  * the tests), so a new agent tool can't reach MCP unclassified or silently
- * skip it. `description` replaces agent-facing text with text for a person.
+ * skip it. `description` replaces agent-facing text with text for a person;
+ * `properties` does the same for parameter descriptions.
  */
-export const MCP_SETTINGS: Record<string, { tier: McpTier; destructive?: true; description?: string }> = {
+export const MCP_SETTINGS: Record<string, { tier: McpTier; destructive?: true; description?: string; properties?: Record<string, string> }> = {
   data_list_tables: { tier: "read" },
   data_describe_table: { tier: "read" },
   data_list_review: {
@@ -56,11 +64,13 @@ export const MCP_SETTINGS: Record<string, { tier: McpTier; destructive?: true; d
   data_create_index: { tier: "configure" },
   apps_publish: {
     tier: "configure",
-    description: "Publish a version (default: latest) so company members can open it. Declared tables must exist. Requires schema access. If the version adds or changes decision sets, connections or task templates, the call is refused until you show the person what changed and they agree; then send it again with decisionsConfirmed, connectionsConfirmed or tasksConfirmed set to true.",
+    description: "Publish a version (default: latest) so company members can open it. Declared tables must exist. Requires schema access. If the version adds or changes decision sets, connections or task templates, the call is refused until you show the person what changed and they agree; then send it again with a new requestId and decisionsConfirmed, connectionsConfirmed or tasksConfirmed set to true.",
+    properties: CONFIRMATIONS,
   },
   apps_rollback: {
     tier: "configure",
-    description: "Point the published app at an earlier version. Requires schema access. If that version has different decision sets, connections or task templates, the call is refused until you show the person what changed and they agree; then send it again with decisionsConfirmed, connectionsConfirmed or tasksConfirmed set to true.",
+    description: "Point the published app at an earlier version. Requires schema access. If that version has different decision sets, connections or task templates, the call is refused until you show the person what changed and they agree; then send it again with a new requestId and decisionsConfirmed, connectionsConfirmed or tasksConfirmed set to true.",
+    properties: CONFIRMATIONS,
   },
   apps_archive: { tier: "configure", destructive: true },
 };
@@ -81,10 +91,18 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** The definition's parameters without the agent guardrail ids, plus `requestId` for a change. */
-function inputSchemaFor(schema: z.ZodTypeAny, tier: McpTier): Record<string, unknown> {
+/**
+ * The definition's parameters without the agent guardrail ids, with the person-facing property
+ * descriptions, plus `requestId` for a change.
+ */
+function inputSchemaFor(name: string, schema: z.ZodTypeAny, tier: McpTier, properties: Record<string, string> = {}): Record<string, unknown> {
   if (!(schema instanceof z.ZodObject)) throw new Error("MCP tools need an object schema");
-  const { issueId: _issueId, confirmationId: _confirmationId, ...shape } = schema.shape;
+  const { issueId: _issueId, confirmationId: _confirmationId, ...shape } = schema.shape as Record<string, z.ZodType>;
+  for (const [property, text] of Object.entries(properties)) {
+    const field = shape[property];
+    if (!field) throw new Error(`MCP property ${property} missing on ${name}`);
+    shape[property] = field.describe(text);
+  }
   return jsonSchemaFor(z.object(tier === "read" ? shape : { ...shape, requestId }));
 }
 
@@ -117,7 +135,7 @@ function build(definitions: Definitions): McpTool[] {
         name: `${MCP_PREFIX}${definition.name}`,
         title: definition.displayName,
         description,
-        inputSchema: inputSchemaFor(definition.schema, settings.tier),
+        inputSchema: inputSchemaFor(definition.name, definition.schema, settings.tier, settings.properties),
         tier: settings.tier,
         annotations: {
           readOnlyHint: settings.tier === "read",
