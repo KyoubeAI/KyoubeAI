@@ -677,9 +677,12 @@ export const PATCHES = [
   // docs/superpowers/specs/2026-11-12-mcp-connector-design.md, "1. Core patches". The core serves
   // its public MCP endpoint at /mcp/paperclip with `paperclip_*` tool names; KyoubeAI serves it at
   // /mcp/kyoubeai with `kyoubeai_*` names, and its setup page names the server kyoubeai and gains a
-  // Claude (web, Desktop, mobile) section with an Add to Claude link. The setup copy exists twice:
-  // readable in packages/shared/dist/mcp-setup.js (the server's /mcp/setup page) and minified in the
-  // UI's agent-avatar-url chunk, so those entries match both. The scope identifiers (`paperclip:*`),
+  // Claude (web, Desktop, mobile) section with an Add to Claude link. The shared constants and setup
+  // copy exist in three places: packages/shared/src/*.ts, which the server loads through tsx
+  // (packages/shared exports "./*": "./src/*.ts", so this is the copy behind the endpoint, the OAuth
+  // resource and the server's /mcp/setup page); packages/shared/dist/*.js, patched the same so any
+  // dist consumer stays consistent; and, for the setup copy, minified in the UI's agent-avatar-url
+  // chunk. Those entries match every copy. The scope identifiers (`paperclip:*`),
   // the OAuth server and the Dot runner (`/mcp/runner`, `paperclip_dot_*`) stay as they are.
   // tests/mcp-endpoint.spec.mjs runs every entry on 2026.1023.0's own files. When an anchor stops
   // matching, redo the entry for the new core.
@@ -687,11 +690,11 @@ export const PATCHES = [
     id: "mcp-path-shared",
     title: "MCP connector: the public MCP endpoint is /mcp/kyoubeai",
     standing: "KyoubeAI MCP connector",
-    files: ["packages/shared/dist/public-mcp.js"],
+    files: ["packages/shared/src/public-mcp.ts", "packages/shared/dist/public-mcp.js"],
     // The OAuth resource and /.well-known/oauth-protected-resource/mcp/kyoubeai follow from the constant.
     pattern: /\bPUBLIC_MCP_PATH = "\/mcp\/paperclip";/g,
     replacement: 'PUBLIC_MCP_PATH = "/mcp/kyoubeai";',
-    expect: 1,
+    expect: 2,
   },
   {
     id: "mcp-path-events",
@@ -709,77 +712,79 @@ export const PATCHES = [
     standing: "KyoubeAI MCP connector",
     files: [
       "server/dist/services/public-mcp/*.js",
+      "packages/shared/src/mcp-setup.ts",
       "packages/shared/dist/mcp-setup.js",
       "ui/dist/assets/agent-avatar-url-*.js",
     ],
     // Names, and descriptions and messages that mention another tool ("returned by
     // paperclip_search_tasks"). 2026.1023.0: capabilities.js 20, expanded-capabilities.js 28,
-    // contracts.js 3, file-transfers.js 3, events.js 1, mcp-setup.js 6, agent-avatar-url 5.
+    // contracts.js 3, file-transfers.js 3, events.js 1, mcp-setup.ts 6, mcp-setup.js 6, agent-avatar-url 5.
     pattern: new RegExp(`\\bpaperclip_(${MCP_PUBLIC_TOOL_NAMES.join("|")})\\b`, "g"),
     replacement: "kyoubeai_$1",
-    expect: 66,
+    expect: 72,
   },
   {
     id: "mcp-setup-server-name",
     title: "MCP connector: the setup steps name the server kyoubeai",
     standing: "KyoubeAI MCP connector",
-    files: ["packages/shared/dist/mcp-setup.js", "ui/dist/assets/agent-avatar-url-*.js"],
+    files: ["packages/shared/src/mcp-setup.ts", "packages/shared/dist/mcp-setup.js", "ui/dist/assets/agent-avatar-url-*.js"],
     // Each command or sentence that names the client-side server: `codex mcp add`, `codex mcp
     // login`, `claude mcp add --transport http`, `claude mcp login`, OpenCode's config key and `opencode
     // mcp auth`, "select paperclip," and (readable copy only) "the name paperclip already points".
-    // `--scopes paperclip:read,…` and `claude mcp login --help` are left alone. 2026.1023.0: mcp-setup.js
-    // 8, agent-avatar-url 7.
+    // `--scopes paperclip:read,…` and `claude mcp login --help` are left alone. 2026.1023.0: mcp-setup.ts
+    // 8, mcp-setup.js 8, agent-avatar-url 7.
     pattern: /(codex mcp add |codex mcp login |claude mcp add --transport http |claude mcp login |opencode mcp auth |select |the name |mcp: ?\{ ?)paperclip\b/g,
     replacement: "$1kyoubeai",
-    expect: 15,
+    expect: 23,
   },
   {
     id: "mcp-setup-client-names",
     title: "MCP connector: the setup page lists Claude (web, Desktop, mobile) and ChatGPT, and no Headless",
     standing: "KyoubeAI MCP connector",
-    files: ["packages/shared/dist/mcp-setup.js", "ui/dist/assets/agent-avatar-url-*.js"],
+    files: ["packages/shared/src/mcp-setup.ts", "packages/shared/dist/mcp-setup.js", "ui/dist/assets/agent-avatar-url-*.js"],
     // `assistantClientNames`, which orders the setup page's sections. Headless needs upstream's
     // `paperclipai` CLI, which KyoubeAI doesn't ship. The optional spaces fit the readable and the
     // minified copy alike.
     pattern: /browser:( ?)"ChatGPT \/ Claude web",( ?)headless:( ?)"Headless",( ?)/g,
     replacement: 'claude_web:$1"Claude (web, Desktop, mobile)",$2browser:$3"ChatGPT",$4',
-    expect: 2,
+    expect: 3,
   },
   {
     id: "mcp-setup-claude-web",
     title: "MCP connector: the Claude (web, Desktop, mobile) setup steps, with an Add to Claude link",
     standing: "KyoubeAI MCP connector",
-    files: ["packages/shared/dist/mcp-setup.js", "ui/dist/assets/agent-avatar-url-*.js"],
+    files: ["packages/shared/src/mcp-setup.ts", "packages/shared/dist/mcp-setup.js", "ui/dist/assets/agent-avatar-url-*.js"],
     // Inserted before `mcpSetupSteps`' browser case, whose first `code:` is the server URL variable
-    // (`serverUrl` readable, `e` minified). The lookbehind is the inserted case's own end, so a second
+    // (`serverUrl` in src and dist, `e` minified). The lookbehind is the inserted case's own end, so a second
     // apply matches nothing.
     pattern: /(?<!before doing work\." \}\]; )(case ?"browser": ?return ?\[\s*\{ ?text: ?"Open your assistant's Apps \/ Connectors settings[^"]*", ?code: ?([A-Za-z_$][\w$]*) ?\})/g,
     replacement:
       `case "claude_web": return [{ text: ${JSON.stringify(MCP_CLAUDE_WEB_STEP_TEXTS[0])}, ` +
       "code: `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=KyoubeAI&connectorUrl=${encodeURIComponent($2)}` }, " +
       `{ text: ${JSON.stringify(MCP_CLAUDE_WEB_STEP_TEXTS[1])} }]; $1`,
-    expect: 2,
+    expect: 3,
   },
   {
     id: "mcp-setup-after-approval",
     title: "MCP connector: after approval, the assistant also summarizes data tables",
     standing: "KyoubeAI MCP connector",
-    files: ["packages/shared/dist/mcp-setup.js"],
-    // The setup page's "After approval" section, in mcpSetupMarkdown (the UI chunk has no copy, 2026.1023.0).
+    files: ["packages/shared/src/mcp-setup.ts", "packages/shared/dist/mcp-setup.js"],
+    // The setup page's "After approval" section, in mcpSetupMarkdown, src and dist (the UI chunk has no
+    // copy, 2026.1023.0).
     pattern: /then summarize agents and open tasks\./g,
     replacement: "then summarize agents, open tasks and data tables.",
-    expect: 1,
+    expect: 2,
   },
   {
     id: "mcp-setup-no-headless",
     title: "MCP connector: the Other setup steps no longer point to the removed Headless section",
     standing: "KyoubeAI MCP connector",
-    files: ["packages/shared/dist/mcp-setup.js", "ui/dist/assets/agent-avatar-url-*.js"],
-    // The default (Other) case of `mcpSetupSteps`, in both copies (2026.1023.0). `mcp-setup-client-names`
+    files: ["packages/shared/src/mcp-setup.ts", "packages/shared/dist/mcp-setup.js", "ui/dist/assets/agent-avatar-url-*.js"],
+    // The default (Other) case of `mcpSetupSteps`, in all three copies (2026.1023.0). `mcp-setup-client-names`
     // removes the Headless section this sentence sent people to.
     pattern: /If it cannot receive a browser callback, use the Headless instructions\./g,
     replacement: "If it cannot receive a browser callback, use Claude Code, Codex or OpenCode instead.",
-    expect: 2,
+    expect: 3,
   },
   {
     id: "mcp-ui-configure-label",

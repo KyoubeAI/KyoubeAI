@@ -43,8 +43,8 @@ async function listFiles(dir) {
   return entries.filter((entry) => entry.isFile()).map((entry) => path.relative(dir, path.join(entry.parentPath, entry.name))).sort();
 }
 
-// The patched tree lives under tests/ so the patched mcp-setup.js resolves its one package import
-// (zod, through ./public-mcp.js) from docker/core-patches/node_modules.
+// The patched tree lives under tests/ so the patched mcp-setup resolves its one package import
+// (zod, through ./public-mcp) from docker/core-patches/node_modules.
 let root;
 beforeEach(async () => {
   root = await mkdtemp(path.join(HERE, ".mcp-under-test-"));
@@ -103,13 +103,23 @@ describe("the mcp-* entries", () => {
       expect(text.match(/\bpaperclip_(?!dot_)[a-z][a-z_]*/g), file).toBeNull();
       expect(text.includes("/mcp/paperclip"), file).toBe(false);
     }
-    const shared = await readFile(path.join(root, "packages/shared/dist/public-mcp.js"), "utf8");
-    expect(shared).toContain('export const PUBLIC_MCP_PATH = "/mcp/kyoubeai";');
-    expect(shared).toContain('export const DOT_RUNNER_MCP_PATH = "/mcp/runner";');
+    // Both copies of the shared constants: the server loads src/*.ts through tsx; dist is kept consistent.
+    const files = await listFiles(root);
+    for (const file of ["packages/shared/src/public-mcp.ts", "packages/shared/src/mcp-setup.ts"]) expect(files).toContain(file);
+    for (const file of ["packages/shared/src/public-mcp.ts", "packages/shared/dist/public-mcp.js"]) {
+      const shared = await readFile(path.join(root, file), "utf8");
+      expect(shared, file).toContain('export const PUBLIC_MCP_PATH = "/mcp/kyoubeai";');
+      expect(shared, file).toContain('export const DOT_RUNNER_MCP_PATH = "/mcp/runner";');
+    }
     expect(await readFile(path.join(root, "server/dist/services/public-mcp/events.js"), "utf8")).toContain('cloudOrigin + "/mcp/kyoubeai"');
   });
 
-  it("the patched setup page names the server kyoubeai, adds Claude web and drops Headless", async () => {
+  // The server's /mcp/setup page uses the TypeScript source, which it loads through tsx
+  // (packages/shared exports "./*": "./src/*.ts"); the compiled dist copy is kept the same.
+  it.each([
+    ["the source the server loads", "packages/shared/src/mcp-setup.ts"],
+    ["the compiled copy", "packages/shared/dist/mcp-setup.js"],
+  ])("the patched setup page (%s) names the server kyoubeai, adds Claude web and drops Headless", async (_, entry) => {
     await applyPatches(root, MCP_PATCHES());
     // The fixture keeps the core's `//# sourceMappingURL=` lines but not the maps; drop them from
     // the copy that is imported, so the loader does not go looking.
@@ -117,7 +127,7 @@ describe("the mcp-* entries", () => {
       const full = path.join(root, file);
       await writeFile(full, (await readFile(full, "utf8")).replace(/\n\/\/# sourceMappingURL=\S+\s*$/, "\n"));
     }
-    const setup = await import(pathToFileURL(path.join(root, "packages/shared/dist/mcp-setup.js")).href);
+    const setup = await import(pathToFileURL(path.join(root, entry)).href);
     expect(Object.keys(setup.assistantClientNames).sort()).toEqual(["browser", "claude", "claude_web", "codex", "opencode", "other"]);
     expect(setup.assistantClientNames.claude_web).toBe("Claude (web, Desktop, mobile)");
     expect(setup.assistantClientNames.browser).toBe("ChatGPT");
