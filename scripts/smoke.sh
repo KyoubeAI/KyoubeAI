@@ -1220,8 +1220,9 @@ echo "==> assistant connections (MCP): sign in as a person, the directory rules,
 MCP_URL="$BASE_URL/mcp/kyoubeai"
 STATUS="$(curl -sS -o "$TMP/mcp-settings.json" -w '%{http_code}' -b "$COOKIES" -c "$COOKIES" -H 'Content-Type: application/json' -H "Origin: $BASE_URL" \
   -X PATCH "$BASE_URL/api/instance/settings/experimental" --data '{"enablePublicMcp":true}')"
-[[ "$STATUS" == 200 ]] && jq -e '.enablePublicMcp == true' "$TMP/mcp-settings.json" >/dev/null \
-  || { echo "could not turn assistant connections on: $STATUS $(cat "$TMP/mcp-settings.json")" >&2; exit 1; }
+if ! { [[ "$STATUS" == 200 ]] && jq -e '.enablePublicMcp == true' "$TMP/mcp-settings.json" >/dev/null; }; then
+  echo "could not turn assistant connections on: $STATUS $(cat "$TMP/mcp-settings.json")" >&2; exit 1
+fi
 for i in $(seq 1 30); do
   STATUS="$(curl -sS -o "$TMP/mcp-resource.json" -w '%{http_code}' "$BASE_URL/.well-known/oauth-protected-resource/mcp/kyoubeai")"
   [[ "$STATUS" == 200 ]] && break
@@ -1243,23 +1244,25 @@ mcp_token() { # cookie-jar allowWrites allowConfiguration -> prints an access to
   status="$(curl -sS -o "$TMP/mcp-oauth.json" -w '%{http_code}' -b "$1" -c "$1" -H 'Content-Type: application/json' -H "Origin: $BASE_URL" \
     -X POST "$BASE_URL/api/mcp/device/consent" --data "$(jq -cn --arg u "$code" --arg c "$COMPANY_ID" --argjson w "$2" --argjson k "$3" \
       '{userCode: $u, decision: "approve", companyId: $c, allowWrites: $w, allowConfiguration: $k}')")"
-  [[ "$status" == 200 ]] && jq -e '.status == "approved"' "$TMP/mcp-oauth.json" >/dev/null \
-    || { echo "the MCP consent answered $status: $(cat "$TMP/mcp-oauth.json")" >&2; exit 1; }
+  if ! { [[ "$status" == 200 ]] && jq -e '.status == "approved"' "$TMP/mcp-oauth.json" >/dev/null; }; then
+    echo "the MCP consent answered $status: $(cat "$TMP/mcp-oauth.json")" >&2; exit 1
+  fi
   for _ in 1 2 3 4 5 6; do
     status="$(curl -sS -o "$TMP/mcp-oauth.json" -w '%{http_code}' -X POST "$BASE_URL/mcp/oauth/token" --data-urlencode "client_id=$client" \
       --data-urlencode "resource=$MCP_URL" --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:device_code" --data-urlencode "device_code=$device")"
     jq -e '.error == "authorization_pending" or .error == "slow_down"' "$TMP/mcp-oauth.json" >/dev/null || break
     sleep 6
   done
-  [[ "$status" == 200 ]] && jq -e '.access_token | type == "string" and length > 0' "$TMP/mcp-oauth.json" >/dev/null \
-    || { echo "the MCP token request answered $status: $(cat "$TMP/mcp-oauth.json")" >&2; exit 1; }
+  if ! { [[ "$status" == 200 ]] && jq -e '.access_token | type == "string" and length > 0' "$TMP/mcp-oauth.json" >/dev/null; }; then
+    echo "the MCP token request answered $status: $(cat "$TMP/mcp-oauth.json")" >&2; exit 1
+  fi
   jq -r '.access_token' "$TMP/mcp-oauth.json"
 }
 mcp_call() { # token method params-json -> the JSON-RPC result in $TMP/mcp.json; exits on a transport or protocol error
   local status
   status="$(curl -sS -o "$TMP/mcp.json" -w '%{http_code}' -H "Authorization: Bearer $1" -H 'Accept: application/json, text/event-stream' \
     -H 'Content-Type: application/json' -X POST "$MCP_URL" --data "$(jq -cn --arg m "$2" --argjson p "$3" '{jsonrpc: "2.0", id: 1, method: $m, params: $p}')")"
-  [[ "$status" == 200 ]] && jq -e 'has("result")' "$TMP/mcp.json" >/dev/null || { echo "MCP $2 answered $status: $(cat "$TMP/mcp.json")" >&2; exit 1; }
+  if ! { [[ "$status" == 200 ]] && jq -e 'has("result")' "$TMP/mcp.json" >/dev/null; }; then echo "MCP $2 answered $status: $(cat "$TMP/mcp.json")" >&2; exit 1; fi
   jq '.result' "$TMP/mcp.json" >"$TMP/mcp-result.json" && mv "$TMP/mcp-result.json" "$TMP/mcp.json"
 }
 mcp_tool() { # token tool arguments-json -> the tool's result in $TMP/mcp.json
