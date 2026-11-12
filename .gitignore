@@ -14,3 +14,5 @@ coverage/
 docker-compose.override.yml
 # Scratch hook modules the core-patches tests write
 docker/core-patches/tests/.hook-under-test-*.mjs
+# The core's own build output, copied verbatim as core-patches test fixtures
+!docker/core-patches/tests/fixtures/**/dist/

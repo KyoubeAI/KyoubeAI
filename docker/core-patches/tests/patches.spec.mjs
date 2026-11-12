@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -709,6 +709,8 @@ async function writeFullCore(root) {
   ]) {
     await writeFile(path.join(root, target), await readFile(path.join(HERE, "fixtures", name), "utf8"));
   }
+  // The public MCP files the mcp-* patches change, verbatim (tests/mcp-endpoint.spec.mjs).
+  await cp(path.join(HERE, "fixtures", "mcp-2026.1023.0"), root, { recursive: true });
 }
 
 const licenseImportPatch = patch("license-seat-limit-import");
@@ -850,7 +852,7 @@ describe("an upstream-fix marker", () => {
     expect(stdout).toContain("core-patches: hermes-quiet-default: already fixed upstream");
     const report = await applyPatches(root, PATCHES);
     expect(report.find((entry) => entry.id === hermesQuietPatch.id)).toMatchObject({ skipped: "already fixed upstream" });
-    expect(report.filter((entry) => !entry.skipped).map((entry) => entry.matched)).toEqual(PATCHES.filter((entry) => entry !== hermesQuietPatch).map(() => 1));
+    expect(report.filter((entry) => !entry.skipped).map((entry) => entry.matched)).toEqual(PATCHES.filter((entry) => entry !== hermesQuietPatch).map((entry) => entry.expect));
     expect(await readFile(path.join(root, "packages/adapters/hermes/src/server/execute.ts"), "utf8")).toBe(fixed);
   });
 });
@@ -878,7 +880,7 @@ describe("applyPatches", () => {
     const file = path.join(root, "ui/dist/assets/index-5zyW-AFc.js");
     await writeFullCore(root);
     const report = await applyPatches(root, PATCHES);
-    expect(report.map((entry) => entry.matched)).toEqual(PATCHES.map(() => 1));
+    expect(report.map((entry) => entry.matched)).toEqual(PATCHES.map((entry) => entry.expect));
     expect(report.find((entry) => entry.id === buttonPatch.id).files).toEqual(["ui/dist/assets/index-5zyW-AFc.js"]);
     const patched = await readFile(file, "utf8");
     expect(patched).toContain('.role!=="assistant")return[]');
@@ -915,7 +917,7 @@ describe("applyPatches", () => {
     const file = path.join(root, "ui/dist/assets/index-5zyW-AFc.js");
     await writeFullCore(root);
     const report = await applyPatches(root, PATCHES, { dryRun: true });
-    expect(report.map((entry) => entry.matched)).toEqual(PATCHES.map(() => 1));
+    expect(report.map((entry) => entry.matched)).toEqual(PATCHES.map((entry) => entry.expect));
     expect(await readFile(file, "utf8")).toBe(FULL_BUNDLE_2026_916_1);
   });
 });

@@ -9,7 +9,7 @@
  * that no longer has the bug — or that changed the code's shape — fails the
  * build with the patch's id, which is the cue to remove (or redo) it.
  *
- * One kind of entry is permanent: a `standing` entry (KyoubeAI licensing, user groups, agent questions and work-object visibility)
+ * One kind of entry is permanent: a `standing` entry (KyoubeAI licensing, user groups, agent questions, work-object visibility and the MCP connector)
  * carries `standing: "<what it is for>"` in place of `upstream` and is never
  * deleted. When a core release moves the code it anchors on, the build fails
  * the same way, and the fix is to redo the entry for that core.
@@ -76,6 +76,28 @@ export const ROUTE_GATE_PATHS = [
   ["issue", "/companies/:kyoubeCompanyId/email/tasks/:kyoubeRef"],
   ["project", "/projects/:kyoubeRef"],
   ["project", "/companies/:kyoubeCompanyId/resource-memberships/me/projects/:kyoubeRef"],
+];
+
+/**
+ * The core's public MCP tools (2026.1023.0), without the `paperclip_` prefix: every `name:
+ * "paperclip_…"` in server/dist/services/public-mcp/{capabilities,expanded-capabilities,
+ * file-transfers}.js except the Dot runner's `dot_*`, which stay as they are. `mcp-tool-names`
+ * serves them as `kyoubeai_<name>`. Exported for the tests.
+ */
+export const MCP_PUBLIC_TOOL_NAMES = [
+  "add_comment", "block_task", "call_api", "connection", "create_project", "create_skill", "create_task", "finish_task",
+  "get_agent", "get_download_url", "get_project", "get_skill", "get_upload_url", "list_agent_instruction_revisions",
+  "list_agents", "list_deliverables", "list_document_revisions", "list_project_repositories", "list_projects",
+  "list_skills", "pending_approvals", "read_agent_instructions", "read_document", "read_skill_file", "read_task",
+  "register_deliverable", "search_api", "search_tasks", "set_project_repositories", "update_agent",
+  "update_agent_instructions", "update_deliverable", "update_project", "update_skill", "update_task", "write_document",
+  "write_skill_file",
+];
+
+/** The setup page's Claude (web, Desktop, mobile) steps that `mcp-setup-claude-web` adds. */
+const MCP_CLAUDE_WEB_STEP_TEXTS = [
+  "Open this link to add KyoubeAI as a custom connector in Claude, then choose Connect and approve the connection in KyoubeAI. On Team and Enterprise plans an Owner adds custom connectors for the organization. The instance must be reachable over public HTTPS.",
+  "In a conversation, turn on the KyoubeAI connector from the tools menu. Verify the account and organization with kyoubeai_connection before doing work.",
 ];
 
 export const PATCHES = [
@@ -650,5 +672,112 @@ export const PATCHES = [
       `for (const [kyoubeKind, kyoubePath] of ${JSON.stringify(ROUTE_GATE_PATHS).replaceAll(",", ", ")}) ` +
       'api.use(kyoubePath, (req, res, next) => req.actor?.type !== "board" ? next() : kyoubeLoadGate().then((kyoubeRouteGate) => kyoubeRouteGate ? kyoubeRouteGate(kyoubeKind, req, res, next) : void res.status(404).json({ error: kyoubeKind === "project" ? "Project not found" : "Issue not found" }))); }\n',
     expect: 1,
+  },
+  // ── MCP connector (standing: never deleted) ──
+  // docs/superpowers/specs/2026-11-12-mcp-connector-design.md, "1. Core patches". The core serves
+  // its public MCP endpoint at /mcp/paperclip with `paperclip_*` tool names; KyoubeAI serves it at
+  // /mcp/kyoubeai with `kyoubeai_*` names, and its setup page names the server kyoubeai and gains a
+  // Claude (web, Desktop, mobile) section with an Add to Claude link. The setup copy exists twice:
+  // readable in packages/shared/dist/mcp-setup.js (the server's /mcp/setup page) and minified in the
+  // UI's agent-avatar-url chunk, so those entries match both. The scope identifiers (`paperclip:*`),
+  // the OAuth server and the Dot runner (`/mcp/runner`, `paperclip_dot_*`) stay as they are.
+  // tests/mcp-endpoint.spec.mjs runs every entry on 2026.1023.0's own files. When an anchor stops
+  // matching, redo the entry for the new core.
+  {
+    id: "mcp-path-shared",
+    title: "MCP connector: the public MCP endpoint is /mcp/kyoubeai",
+    standing: "KyoubeAI MCP connector",
+    files: ["packages/shared/dist/public-mcp.js"],
+    // The OAuth resource and /.well-known/oauth-protected-resource/mcp/kyoubeai follow from the constant.
+    pattern: /\bPUBLIC_MCP_PATH = "\/mcp\/paperclip";/g,
+    replacement: 'PUBLIC_MCP_PATH = "/mcp/kyoubeai";',
+    expect: 1,
+  },
+  {
+    id: "mcp-path-events",
+    title: "MCP connector: the cloud event check calls /mcp/kyoubeai",
+    standing: "KyoubeAI MCP connector",
+    files: ["server/dist/services/public-mcp/events.js"],
+    // The one hard-coded copy of the path outside the shared constant (2026.1023.0).
+    pattern: /"\/mcp\/paperclip"/g,
+    replacement: '"/mcp/kyoubeai"',
+    expect: 1,
+  },
+  {
+    id: "mcp-tool-names",
+    title: "MCP connector: every public tool is named kyoubeai_<name>",
+    standing: "KyoubeAI MCP connector",
+    files: [
+      "server/dist/services/public-mcp/*.js",
+      "packages/shared/dist/mcp-setup.js",
+      "ui/dist/assets/agent-avatar-url-*.js",
+    ],
+    // Names, and descriptions and messages that mention another tool ("returned by
+    // paperclip_search_tasks"). 2026.1023.0: capabilities.js 20, expanded-capabilities.js 28,
+    // contracts.js 3, file-transfers.js 3, events.js 1, mcp-setup.js 6, agent-avatar-url 5.
+    pattern: new RegExp(`\\bpaperclip_(${MCP_PUBLIC_TOOL_NAMES.join("|")})\\b`, "g"),
+    replacement: "kyoubeai_$1",
+    expect: 66,
+  },
+  {
+    id: "mcp-setup-server-name",
+    title: "MCP connector: the setup steps name the server kyoubeai",
+    standing: "KyoubeAI MCP connector",
+    files: ["packages/shared/dist/mcp-setup.js", "ui/dist/assets/agent-avatar-url-*.js"],
+    // Each command or sentence that names the client-side server: `codex mcp add`, `codex mcp
+    // login`, `claude mcp add --transport http`, `claude mcp login`, OpenCode's config key and `opencode
+    // mcp auth`, "select paperclip," and (readable copy only) "the name paperclip already points".
+    // `--scopes paperclip:read,…` and `claude mcp login --help` are left alone. 2026.1023.0: mcp-setup.js
+    // 8, agent-avatar-url 7.
+    pattern: /(codex mcp add |codex mcp login |claude mcp add --transport http |claude mcp login |opencode mcp auth |select |the name |mcp: ?\{ ?)paperclip\b/g,
+    replacement: "$1kyoubeai",
+    expect: 15,
+  },
+  {
+    id: "mcp-setup-client-names",
+    title: "MCP connector: the setup page lists Claude (web, Desktop, mobile) and ChatGPT, and no Headless",
+    standing: "KyoubeAI MCP connector",
+    files: ["packages/shared/dist/mcp-setup.js", "ui/dist/assets/agent-avatar-url-*.js"],
+    // `assistantClientNames`, which orders the setup page's sections. Headless needs upstream's
+    // `paperclipai` CLI, which KyoubeAI doesn't ship. The optional spaces fit the readable and the
+    // minified copy alike.
+    pattern: /browser:( ?)"ChatGPT \/ Claude web",( ?)headless:( ?)"Headless",( ?)/g,
+    replacement: 'claude_web:$1"Claude (web, Desktop, mobile)",$2browser:$3"ChatGPT",$4',
+    expect: 2,
+  },
+  {
+    id: "mcp-setup-claude-web",
+    title: "MCP connector: the Claude (web, Desktop, mobile) setup steps, with an Add to Claude link",
+    standing: "KyoubeAI MCP connector",
+    files: ["packages/shared/dist/mcp-setup.js", "ui/dist/assets/agent-avatar-url-*.js"],
+    // Inserted before `mcpSetupSteps`' browser case, whose first `code:` is the server URL variable
+    // (`serverUrl` readable, `e` minified). The lookbehind is the inserted case's own end, so a second
+    // apply matches nothing.
+    pattern: /(?<!before doing work\." \}\]; )(case ?"browser": ?return ?\[\s*\{ ?text: ?"Open your assistant's Apps \/ Connectors settings[^"]*", ?code: ?([A-Za-z_$][\w$]*) ?\})/g,
+    replacement:
+      `case "claude_web": return [{ text: ${JSON.stringify(MCP_CLAUDE_WEB_STEP_TEXTS[0])}, ` +
+      "code: `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=KyoubeAI&connectorUrl=${encodeURIComponent($2)}` }, " +
+      `{ text: ${JSON.stringify(MCP_CLAUDE_WEB_STEP_TEXTS[1])} }]; $1`,
+    expect: 2,
+  },
+  {
+    id: "mcp-setup-after-approval",
+    title: "MCP connector: after approval, the assistant also summarizes data tables",
+    standing: "KyoubeAI MCP connector",
+    files: ["packages/shared/dist/mcp-setup.js"],
+    // The setup page's "After approval" section, in mcpSetupMarkdown (the UI chunk has no copy, 2026.1023.0).
+    pattern: /then summarize agents and open tasks\./g,
+    replacement: "then summarize agents, open tasks and data tables.",
+    expect: 1,
+  },
+  {
+    id: "mcp-ui-configure-label",
+    title: "MCP connector: a configure connection reads \"Configure agents, projects, skills, tables and apps\"",
+    standing: "KyoubeAI MCP connector",
+    files: ["ui/dist/assets/index-*.js"],
+    // The assistant connections list and the connection summary, in the main bundle.
+    pattern: /Configure agents, projects and skills/g,
+    replacement: "Configure agents, projects, skills, tables and apps",
+    expect: 2,
   },
 ];
