@@ -7,6 +7,7 @@ import { decisionToolDeclarations } from "./decisions/tools.js";
 import { APPS_PAGE_ROUTE } from "./apps/page-route.js";
 import { appToolDeclarations } from "./apps/tools.js";
 import { CONNECTION_API_ROUTES } from "./connections/api-routes.js";
+import { MCP_API_ROUTES } from "./mcp/api-routes.js";
 import { connectionToolDeclarations } from "./connections/tools.js";
 import { DECISIONS_CONFIG_SCHEMA } from "./decisions/config.js";
 import { CONNECTIONS_CONFIG_SCHEMA } from "./connections/config.js";
@@ -14,9 +15,12 @@ import appsSkillMarkdown from "./skills/kyoube-apps.md";
 import decisionsSkillMarkdown from "./skills/kyoube-decisions.md";
 import skillMarkdown from "./skills/kyoube-data.md";
 import { toolDeclarations } from "./tools.js";
+import { PLUGIN_VERSION } from "./version.js";
 
 export const PLUGIN_ID = "kyoube.apps";
-export const PLUGIN_VERSION = "0.14.0";
+// The version lives in its own module so the MCP routes (which this manifest
+// lists) can report it without importing the manifest back.
+export { PLUGIN_VERSION };
 export const DATA_PAGE_ROUTE = "data";
 export const DATA_ACCESS_SETTINGS_ROUTE = "data-access";
 export const GROUPS_SETTINGS_ROUTE = "groups";
@@ -93,7 +97,7 @@ const manifest: PaperclipPluginManifestV1 = {
     properties: { ...DECISIONS_CONFIG_SCHEMA.properties, ...CONNECTIONS_CONFIG_SCHEMA.properties },
   },
   tools: [...toolDeclarations(), ...appToolDeclarations(), ...decisionToolDeclarations(), ...connectionToolDeclarations()],
-  apiRoutes: [...API_ROUTES, ...APP_API_ROUTES, ...DECISION_API_ROUTES, ...GROUP_API_ROUTES, ...CONNECTION_API_ROUTES],
+  apiRoutes: [...API_ROUTES, ...APP_API_ROUTES, ...DECISION_API_ROUTES, ...GROUP_API_ROUTES, ...CONNECTION_API_ROUTES, ...MCP_API_ROUTES],
   jobs: [
     { jobKey: PURGE_JOB_KEY, displayName: "Purge trashed tables and fields", description: "Drops tables/fields soft-deleted more than 30 days ago.", schedule: "0 3 * * *" },
     { jobKey: FILL_JOB_KEY, displayName: "Fill AI columns", description: "Asks the company's typed-decision model about new and changed rows of AI columns (docs/decisions.md).", schedule: "*/5 * * * *" },

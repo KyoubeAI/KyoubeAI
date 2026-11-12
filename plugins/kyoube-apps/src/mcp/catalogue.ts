@@ -1,0 +1,136 @@
+import { z } from "zod";
+import type { AppService } from "../apps/service.js";
+import { APP_TOOL_DEFINITIONS } from "../apps/tools.js";
+import type { DataService } from "../data/service.js";
+import { GUARD_NOTE } from "../decisions/guardrail.js";
+import { jsonSchemaFor, type ToolDefinition } from "../tool-runtime.js";
+import { TOOL_DEFINITIONS } from "../tools.js";
+
+/**
+ * The agent tools as MCP tools, for a person's assistant connected at
+ * `/mcp/kyoubeai`. The core's bridge reads this catalogue through
+ * `GET /mcp/tools` and calls a tool through `POST /mcp/call` (api-routes.ts),
+ * which runs the same agent definition as the signed-in person.
+ */
+export type McpTier = "read" | "write" | "configure";
+
+export interface McpToolEntry {
+  name: string;
+  title: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  tier: McpTier;
+  annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: false };
+}
+
+/**
+ * One row per agent tool. A tool without a row fails `buildCatalogue` (and so
+ * the tests), so a new agent tool can't reach MCP unclassified or silently
+ * skip it. `description` replaces agent-facing text with text for a person.
+ */
+export const MCP_SETTINGS: Record<string, { tier: McpTier; destructive?: true; description?: string }> = {
+  data_list_tables: { tier: "read" },
+  data_describe_table: { tier: "read" },
+  data_list_review: {
+    tier: "read",
+    description: "List the rows whose AI column answers are waiting for a person to review: row id, field, the model's suggestion and its confidence. No row values; read the rows with kyoubeai_data_get.",
+  },
+  data_get: { tier: "read" },
+  data_query: { tier: "read" },
+  data_count: { tier: "read" },
+  data_sql_select: { tier: "read" },
+  data_my_access: { tier: "read" },
+  apps_list: { tier: "read" },
+  apps_get: { tier: "read" },
+  data_insert: { tier: "write" },
+  data_update: { tier: "write", destructive: true },
+  data_delete: { tier: "write", destructive: true },
+  apps_create: { tier: "write" },
+  apps_update: { tier: "write" },
+  data_create_table: { tier: "configure" },
+  data_add_field: { tier: "configure" },
+  data_update_field: { tier: "configure" },
+  data_remove_field: { tier: "configure", destructive: true },
+  data_drop_table: { tier: "configure", destructive: true },
+  data_rename_table: { tier: "configure" },
+  data_create_index: { tier: "configure" },
+  apps_publish: { tier: "configure" },
+  apps_rollback: { tier: "configure" },
+  apps_archive: { tier: "configure", destructive: true },
+};
+
+export interface McpTool {
+  entry: McpToolEntry;
+  service: "data" | "apps";
+  // Each definition's params type differs; the route runs it through `runTool`.
+  definition: ToolDefinition<any>;
+}
+
+const MCP_PREFIX = "kyoubeai_";
+
+const requestId = z.string().min(1).max(200).describe("a new unique id for this change; reuse it only to retry the same change");
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** The definition's parameters without the agent guardrail ids, plus `requestId` for a change. */
+function inputSchemaFor(schema: z.ZodTypeAny, tier: McpTier): Record<string, unknown> {
+  if (!(schema instanceof z.ZodObject)) throw new Error("MCP tools need an object schema");
+  const { issueId: _issueId, confirmationId: _confirmationId, ...shape } = schema.shape;
+  return jsonSchemaFor(z.object(tier === "read" ? shape : { ...shape, requestId }));
+}
+
+type Definitions = { data: ToolDefinition<DataService>[]; apps: ToolDefinition<AppService>[] };
+
+function build(definitions: Definitions): McpTool[] {
+  const all = [
+    ...definitions.data.map((definition) => ({ service: "data" as const, definition })),
+    ...definitions.apps.map((definition) => ({ service: "apps" as const, definition })),
+  ];
+  const names = new Set(all.map(({ definition }) => definition.name));
+  for (const { definition } of all) {
+    if (!MCP_SETTINGS[definition.name]) throw new Error(`MCP settings missing for ${definition.name}`);
+  }
+  for (const name of Object.keys(MCP_SETTINGS)) {
+    if (!names.has(name)) throw new Error(`MCP settings for unknown tool ${name}`);
+  }
+  // Whole words only: `data_update` inside `data_update_field` has no word
+  // boundary after it, so each name is replaced exactly once.
+  const toolNames = new RegExp(`\\b(${[...names].map(escapeRegExp).join("|")})\\b`, "g");
+  return all.map(({ service, definition }) => {
+    const settings = MCP_SETTINGS[definition.name]!;
+    const description = (settings.description ?? definition.description)
+      .replace(GUARD_NOTE, "")
+      .replace(toolNames, (name) => `${MCP_PREFIX}${name}`);
+    return {
+      service,
+      definition,
+      entry: {
+        name: `${MCP_PREFIX}${definition.name}`,
+        title: definition.displayName,
+        description,
+        inputSchema: inputSchemaFor(definition.schema, settings.tier),
+        tier: settings.tier,
+        annotations: {
+          readOnlyHint: settings.tier === "read",
+          destructiveHint: settings.destructive === true,
+          idempotentHint: settings.tier === "read",
+          openWorldHint: false,
+        },
+      },
+    };
+  });
+}
+
+let memo: McpTool[] | undefined;
+
+/**
+ * The catalogue, built once from the agent definitions. Tests pass their own
+ * definition lists to check the settings guard; those builds are not kept.
+ */
+export function buildCatalogue(definitions?: Definitions): McpTool[] {
+  if (definitions) return build(definitions);
+  memo ??= build({ data: TOOL_DEFINITIONS, apps: APP_TOOL_DEFINITIONS });
+  return memo;
+}

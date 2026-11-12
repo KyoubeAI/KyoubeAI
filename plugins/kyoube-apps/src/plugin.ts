@@ -17,6 +17,7 @@ import { AiColumnService } from "./decisions/columns.js";
 import { SecretCache } from "./secrets/cache.js";
 import { API_KEY_CONFIG_PATH, ProviderResolver, validateDecisionsConfig } from "./decisions/config.js";
 import { handleConnectionsApiRequest } from "./connections/api-routes.js";
+import { handleMcpApiRequest } from "./mcp/api-routes.js";
 import { registerConnectionTools } from "./connections/tools.js";
 import { validateConnectionsConfig } from "./connections/config.js";
 import { ConnectionService, type ConnectionServiceDeps } from "./connections/service.js";
@@ -751,6 +752,11 @@ export function createAppsPlugin(deps: AppsPluginDeps): PaperclipPlugin {
           onError?.("skill install failed", { companyId: input.companyId, error: String(error) });
           return { status: 500, body: { error: "error: skill install failed", code: "error" } };
         }
+      }
+      // A person's assistant (the core's `/mcp/kyoubeai` bridge) runs the data
+      // and app tools as that person.
+      if (input.routeKey.startsWith("mcp.")) {
+        return (await handleMcpApiRequest({ data: dataService, apps: appService }, input, onError))!;
       }
       // The apps dispatcher answers every `apps.*` route and returns null for
       // anything else, so a data route falls through untouched.
