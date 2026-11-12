@@ -54,6 +54,9 @@ export function countMatches(text, pattern) {
  */
 export async function applyPatches(root, patches, { dryRun = false } = {}) {
   const report = [];
+  // A dry run keeps what each patch would have written, so the patches after it
+  // match the same text they would in a real run (some build on another's output).
+  const unwritten = new Map();
   for (const patch of patches) {
     const files = (await Promise.all(patch.files.map((glob) => expandGlob(root, glob)))).flat();
     let total = 0;
@@ -61,7 +64,7 @@ export async function applyPatches(root, patches, { dryRun = false } = {}) {
     const touched = [];
     const pending = [];
     for (const file of files) {
-      const before = await readFile(file, "utf8");
+      const before = unwritten.get(file) ?? (await readFile(file, "utf8"));
       const { text, count } = applyToText(before, patch);
       if (patch.upstreamFix) fixed += countMatches(before, patch.upstreamFix);
       if (count === 0) continue;
@@ -83,7 +86,10 @@ export async function applyPatches(root, patches, { dryRun = false } = {}) {
             : `. Either the core release changed this code (redo the patch) or it now carries the upstream fix (delete the patch): ${patch.upstream}`),
       );
     }
-    if (!dryRun) for (const { file, text } of pending) await writeFile(file, text);
+    for (const { file, text } of pending) {
+      if (dryRun) unwritten.set(file, text);
+      else await writeFile(file, text);
+    }
   }
   return report;
 }

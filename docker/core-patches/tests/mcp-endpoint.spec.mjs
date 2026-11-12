@@ -3,18 +3,22 @@
 // patches"). Every test runs against core 2026.1023.0's own files, copied verbatim into
 // fixtures/mcp-2026.1023.0/ at their /app-relative paths. The two UI files there are excerpts of the
 // real assets, saved under the real names so the patches' globs find them, and hold every match the
-// real files have, so these counts and the image build's agree.
+// real files have, so these counts and the image build's agree. server/dist/app.js is an excerpt
+// too: its capabilities import and the block that builds the MCP dispatch (lines 811-829).
 import { execFile } from "node:child_process";
 import { cp, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { applyPatches } from "../lib.mjs";
 import { MCP_PUBLIC_TOOL_NAMES, PATCHES } from "../patches.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(HERE, "fixtures", "mcp-2026.1023.0");
+const DOCKERFILE = path.join(HERE, "..", "..", "Dockerfile");
+const BRIDGE = pathToFileURL(path.join(HERE, "..", "mcp-bridge.mjs")).href;
 const MCP_PATCHES = () => PATCHES.filter((entry) => entry.id.startsWith("mcp-"));
 const IDS = [
   "mcp-path-shared",
@@ -26,6 +30,12 @@ const IDS = [
   "mcp-setup-after-approval",
   "mcp-setup-no-headless",
   "mcp-ui-configure-label",
+  "mcp-bridge-register",
+  "mcp-bridge-import-capabilities",
+  "mcp-bridge-executor-removed",
+  "mcp-bridge-executor-find",
+  "mcp-bridge-import-routes",
+  "mcp-bridge-list",
 ];
 const URL_ = "https://k.example/mcp/kyoubeai";
 const CLAUDE_WEB_STEPS = [
@@ -193,5 +203,195 @@ describe("the mcp-* entries", () => {
     const events = path.join(root, "server/dist/services/public-mcp/events.js");
     await writeFile(events, (await readFile(events, "utf8")).replace('"/mcp/paperclip"', '"/mcp/x"'));
     await expect(applyPatches(root, MCP_PATCHES())).rejects.toThrow(/mcp-path-events[\s\S]*standing KyoubeAI patch/);
+  });
+});
+
+// The bridge wiring: the patched core imports /opt/kyoube/core-patches/mcp-bridge.mjs to list and
+// run KyoubeAI's table and app tools. The behaviour tests run the patched executor, tool listing and
+// dispatch hand-over themselves, lifted out of the patched files into modules of their own (the
+// files' other imports, such as express and the database, do not resolve here), with the bridge
+// path pointed at the real mcp-bridge.mjs.
+describe("the bridge wiring", () => {
+  const CAPABILITIES = "server/dist/services/public-mcp/capabilities.js";
+  const ROUTES = "server/dist/routes/public-mcp.js";
+  const MISSING_BRIDGE = () => pathToFileURL(path.join(root, "no-such-bridge.mjs")).href;
+  const read = (file) => readFile(path.join(root, file), "utf8");
+  const nodeCheck = (file) => promisify(execFile)(process.execPath, ["--check", path.join(root, file)]);
+
+  /** The patched file's kyoubeMcp loader line, pointed at `bridge`. */
+  function loader(text, bridge) {
+    const line = /^\/\* kyoube-mcp \(docs\/mcp\.md\) \*\/ const kyoubeMcp = \(\) => import\("\/opt\/kyoube\/core-patches\/mcp-bridge\.mjs"\);$/m.exec(text)?.[0];
+    if (!line) throw new Error("no kyoubeMcp loader in the patched file");
+    return line.replace("/opt/kyoube/core-patches/mcp-bridge.mjs", bridge);
+  }
+
+  /** Writes `source` as a module in the temp tree (under tests/, so zod resolves) and imports it. */
+  async function load(name, source) {
+    const file = path.join(root, `${name}-${Math.random().toString(36).slice(2)}.mjs`);
+    await writeFile(file, source);
+    return import(pathToFileURL(file).href);
+  }
+
+  /** The patched createPublicMcpExecutor, with the core's other module-scope names stood in for. */
+  async function patchedExecutor() {
+    const text = await read(CAPABILITIES);
+    const fn = text.slice(text.indexOf("export function createPublicMcpExecutor")).replace(/^\/\/# sourceMappingURL=.*$/m, "").replace(/^export /, "");
+    return load("executor-under-test", `import { z } from "zod";\n${loader(text, BRIDGE)}\nexport { kyoubeMcp };\n` +
+      "export default ({ publicMcpCapabilities, McpCapabilityError, McpApiError }) => {\n" +
+      '  const fail = () => { throw new Error("a read must not reach the database"); };\n' +
+      "  const [hashMcpSecret, stable, logActivity, and, eq, mcpMutationReceipts] = [fail, fail, fail, fail, fail, {}];\n" +
+      `${fn}\n  return createPublicMcpExecutor;\n};\n`);
+  }
+
+  /** The route's patched listTools arrow, with its closure handed in. */
+  async function patchedListTools(bridge = BRIDGE) {
+    const text = await read(ROUTES);
+    const start = text.indexOf("const listTools = async () => {");
+    const end = text.indexOf("const callTool = async");
+    if (start < 0 || end < start) throw new Error("no patched listTools in the route");
+    return load("list-under-test", `import { z } from "zod";\n${loader(text, bridge)}\nexport { kyoubeMcp };\n` +
+      `export default ({ agentConnection, publicMcpCapabilities, extension, principal }) => {\n${text.slice(start, end)}\n  return listTools;\n};\n`);
+  }
+
+  class McpCapabilityError extends Error {}
+  class McpApiError extends Error {}
+  const principal = { grant: { id: "g1", companyId: "c1", userId: "u1", scopes: ["paperclip:read"] }, actor: {} };
+  const READ = { name: "kyoubeai_connection", description: "Who", schema: z.object({}).strict(), run: async () => ({ core: true }) };
+  const WRITE = { name: "kyoubeai_create_task", description: "Create", write: true, schema: z.object({}).strict(), run: async () => ({}) };
+  const SEARCH = { name: "kyoubeai_search_api", description: "Search", schema: z.object({}).passthrough(), run: async () => ({}) };
+  const CALL = { name: "kyoubeai_call_api", description: "Call", write: true, destructive: true, schema: z.object({}).passthrough(), run: async () => ({}) };
+  const CORE = [READ, WRITE, SEARCH, CALL];
+  const TABLES = { name: "kyoubeai_data_list_tables", title: "Data list tables", description: "List tables", inputSchema: { type: "object" }, tier: "read", annotations: { readOnlyHint: true } };
+  const TABLES_LISTED = { name: TABLES.name, title: TABLES.title, description: TABLES.description, inputSchema: TABLES.inputSchema, annotations: TABLES.annotations };
+  const catalogue = async (_p, method, url) => {
+    if (method === "GET" && url.startsWith("/plugins/kyoube.apps/api/mcp/tools?")) return { tools: [TABLES] };
+    throw new Error(`unexpected dispatch ${method} ${url}`);
+  };
+
+  /** Runs the patched executor for an OAuth resource, with the bridge's catalogue answered by `dispatch`. */
+  async function execute(name, input, { resource = "https://k.example/mcp/kyoubeai", dispatch = catalogue, api = async () => ({ ran: true }) } = {}) {
+    const mod = await patchedExecutor();
+    const bridge = await mod.kyoubeMcp();
+    bridge.resetForTests();
+    bridge.registerDispatch(dispatch);
+    const oauth = { authenticate: async () => principal, config: { resource, origin: "https://k.example" } };
+    return mod.default({ publicMcpCapabilities: CORE, McpCapabilityError, McpApiError })({}, oauth, api)("token", name, input);
+  }
+
+  it("patches the executor, the tool listing and the app's dispatch, and the files still parse", async () => {
+    await applyPatches(root, MCP_PATCHES());
+    const capabilities = await read(CAPABILITIES);
+    expect(capabilities).toContain("kyoubeMcp()).findTool(");
+    expect(capabilities).toContain("Unknown KyoubeAI operation.");
+    await nodeCheck(CAPABILITIES);
+    const routes = await read(ROUTES);
+    expect(routes).toContain("titleFor(");
+    expect(routes).toContain("bridge.listTools(principal)");
+    await nodeCheck(ROUTES);
+    expect(await read("server/dist/app.js")).toContain("registerDispatch(dispatch)");
+    await nodeCheck("server/dist/app.js");
+    // The lines the Dockerfile's `grep -c 'kyoube-mcp'` checks count.
+    const markers = async (file) => (await read(file)).split("\n").filter((line) => line.includes("kyoube-mcp")).length;
+    expect(await markers(CAPABILITIES)).toBe(3);
+    expect(await markers(ROUTES)).toBe(2);
+    expect(await markers("server/dist/app.js")).toBe(1);
+  });
+
+  it("the executor refuses the generic API tools the bridge declares removed", async () => {
+    await applyPatches(root, MCP_PATCHES());
+    const { REMOVED_TOOLS } = await import(BRIDGE);
+    expect(await read(CAPABILITIES)).toContain(`if (${JSON.stringify(REMOVED_TOOLS).replaceAll(",", ", ")}.includes(name)) throw new McpCapabilityError("Unknown KyoubeAI operation.");`);
+    for (const name of REMOVED_TOOLS) {
+      await expect(execute(name, { companyId: "c1", operationId: "kyoubeai_connection", arguments: {} })).rejects.toThrow("Unknown KyoubeAI operation.");
+    }
+  });
+
+  it("the executor runs a core tool first and a KyoubeAI table tool through the bridge, on /mcp/kyoubeai only", async () => {
+    await applyPatches(root, MCP_PATCHES());
+    expect(await execute("kyoubeai_connection", {})).toEqual({ core: true });
+    const calls = [];
+    const api = async (...args) => { calls.push(args); return { tables: [] }; };
+    expect(await execute("kyoubeai_data_list_tables", { companyId: "c1" }, { api })).toEqual({ tables: [] });
+    expect(calls).toEqual([[principal, "POST", "/plugins/kyoube.apps/api/mcp/call", { companyId: "c1", tool: "kyoubeai_data_list_tables", arguments: {} }]]);
+    // The Dot runner's executor runs the same code but has no KyoubeAI tools.
+    await expect(execute("kyoubeai_data_list_tables", {}, { resource: "https://k.example/mcp/runner" })).rejects.toThrow("Unknown Paperclip operation.");
+    await expect(execute("kyoubeai_nonsense", {})).rejects.toThrow("Unknown Paperclip operation.");
+    // A catalogue that cannot be read says so.
+    const { UNAVAILABLE } = await import(BRIDGE);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(execute("kyoubeai_data_list_tables", {}, { dispatch: async () => { throw new Error("down"); } })).rejects.toThrow(UNAVAILABLE);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("the tool list drops the generic API tools, titles the core tools, adds KyoubeAI's, then the extension's", async () => {
+    await applyPatches(root, MCP_PATCHES());
+    const mod = await patchedListTools();
+    const bridge = await mod.kyoubeMcp();
+    bridge.resetForTests();
+    bridge.registerDispatch(catalogue);
+    const extension = { listTools: async () => [{ name: "ext_tool" }] };
+    const { tools } = await mod.default({ agentConnection: false, publicMcpCapabilities: CORE, extension, principal })();
+    expect(tools.map((tool) => tool.name)).toEqual(["kyoubeai_connection", "kyoubeai_create_task", "kyoubeai_data_list_tables", "ext_tool"]);
+    expect(tools[0]).toEqual({
+      name: "kyoubeai_connection", title: "Connection", description: "Who", inputSchema: z.toJSONSchema(READ.schema),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    });
+    expect(tools[1].title).toBe("Create task");
+    expect(tools[1].annotations).toEqual({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true });
+    expect(tools[2]).toEqual(TABLES_LISTED);
+    // The Dot runner's connection lists only its own tools, as before.
+    const agent = await mod.default({ agentConnection: true, publicMcpCapabilities: CORE, extension, principal })();
+    expect(agent.tools.map((tool) => tool.name)).toEqual(["ext_tool"]);
+  });
+
+  it("a bridge that cannot be loaded leaves the core list, untitled, rather than failing tools/list", async () => {
+    await applyPatches(root, MCP_PATCHES());
+    const mod = await patchedListTools(MISSING_BRIDGE());
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { tools } = await mod.default({ agentConnection: false, publicMcpCapabilities: CORE, extension: undefined, principal })();
+      expect(tools.map((tool) => tool.name)).toEqual(["kyoubeai_connection", "kyoubeai_create_task"]);
+      expect(tools.some((tool) => "title" in tool)).toBe(false);
+      expect(error).toHaveBeenCalledWith("[kyoube] MCP bridge unavailable", expect.anything());
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("the app hands the core's dispatch to the bridge, and carries on when the bridge cannot be loaded", async () => {
+    await applyPatches(root, MCP_PATCHES());
+    const line = (await read("server/dist/app.js")).split("\n").find((text) => text.includes("kyoube-mcp"));
+    const handOver = async (bridge) => (await load("app-under-test", `export default (dispatch) => {\n${line.replace("/opt/kyoube/core-patches/mcp-bridge.mjs", bridge)}\n};\n`)).default;
+    const { resetForTests, listTools } = await import(BRIDGE);
+    resetForTests();
+    // The core does not wait for the import; give it a moment.
+    (await handOver(BRIDGE))(catalogue);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await listTools(principal)).toEqual([TABLES_LISTED]);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      (await handOver(MISSING_BRIDGE()))(catalogue);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(error).toHaveBeenCalledWith("[kyoube] MCP bridge unavailable", expect.anything());
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("is shipped and checked by the Dockerfile", async () => {
+    const dockerfile = await readFile(DOCKERFILE, "utf8");
+    const copy = dockerfile.split("\n").find((line) => line.startsWith("COPY docker/core-patches/apply.mjs "));
+    expect(copy).toContain(" docker/core-patches/mcp-bridge.mjs ");
+    expect(copy).toMatch(/ \/opt\/kyoube\/core-patches\/$/);
+    expect(dockerfile).toContain("test \"$(grep -c 'kyoube-mcp' /app/server/dist/services/public-mcp/capabilities.js)\" -eq 3");
+    expect(dockerfile).toContain("test \"$(grep -c 'kyoube-mcp' /app/server/dist/routes/public-mcp.js)\" -eq 2");
+    expect(dockerfile).toContain("test \"$(grep -c 'kyoube-mcp' /app/server/dist/app.js)\" -eq 1");
+    expect(dockerfile).toContain("node --check dist/services/public-mcp/capabilities.js");
+    expect(dockerfile).toContain("node --check dist/routes/public-mcp.js");
+    expect(dockerfile).toContain('import("/opt/kyoube/core-patches/mcp-bridge.mjs")');
+    expect(dockerfile).toContain("mcp-bridge ok");
   });
 });

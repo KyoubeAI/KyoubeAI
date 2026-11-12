@@ -94,6 +94,18 @@ export const MCP_PUBLIC_TOOL_NAMES = [
   "write_skill_file",
 ];
 
+/**
+ * The bridge wiring's shared pieces. The patched core imports the bridge (mcp-bridge.mjs, shipped
+ * beside this file) at runtime; MCP_REMOVED_TOOLS is its REMOVED_TOOLS as code, which the tests
+ * keep equal. Each mcp-bridge-* replacement carries MCP_MARKER, which the Dockerfile counts.
+ */
+const MCP_MARKER = "/* kyoube-mcp (docs/mcp.md) */";
+const MCP_BRIDGE_MODULE = "/opt/kyoube/core-patches/mcp-bridge.mjs";
+const MCP_REMOVED_TOOLS = '["kyoubeai_search_api", "kyoubeai_call_api"]';
+// A module's top-of-file run of import and export lines, matched whole: the lookahead refuses both a
+// shorter run (the next line is another import) and a run the loader already follows.
+const mcpTopImports = () => /^((?:(?:import|export) [^\n]*\n)+)(?!(?:import|export) |\/\* kyoube-mcp)/g;
+
 /** The setup page's Claude (web, Desktop, mobile) steps that `mcp-setup-claude-web` adds. */
 const MCP_CLAUDE_WEB_STEP_TEXTS = [
   "Open this link to add KyoubeAI as a custom connector in Claude, then choose Connect and approve the connection in KyoubeAI. On Team and Enterprise plans an Owner adds custom connectors for the organization. The instance must be reachable over public HTTPS.",
@@ -795,5 +807,97 @@ export const PATCHES = [
     pattern: /Configure agents, projects and skills/g,
     replacement: "Configure agents, projects, skills, tables and apps",
     expect: 2,
+  },
+  // The bridge wiring: KyoubeAI's table and app tools (kyoubeai_data_*, kyoubeai_apps_*, served by the
+  // kyoube.apps plugin) join the core's own on /mcp/kyoubeai and run through the core's executor, so
+  // its scope checks, viewer refusal and write receipts apply to them unchanged. The patched files
+  // import the bridge, /opt/kyoube/core-patches/mcp-bridge.mjs, at runtime; the Dockerfile checks
+  // each file's MCP_MARKER count, that the files parse, and that the bridge loads. These entries
+  // anchor on names `mcp-tool-names` has already renamed, so they follow it.
+  {
+    id: "mcp-bridge-register",
+    title: "MCP connector: the core's internal dispatch is handed to the KyoubeAI tool bridge",
+    standing: "KyoubeAI MCP connector",
+    files: ["server/dist/app.js"],
+    // In createApp, where the public MCP endpoint is set up (2026.1023.0). The bridge reads its tool
+    // catalogue through this dispatch, as the person. A bridge that cannot be loaded is logged and the
+    // core carries on with its own tools; the executor and the tool list then fail or fall back alone.
+    pattern: /(\n( *)const dispatch = createMcpApiDispatch\(api\);\n)(?! *\/\* kyoube-mcp)/g,
+    replacement:
+      `$1$2${MCP_MARKER} import("${MCP_BRIDGE_MODULE}").then((kyoubeMcpBridge) => kyoubeMcpBridge.registerDispatch(dispatch), ` +
+      '(error) => console.error("[kyoube] MCP bridge unavailable", error));\n',
+    expect: 1,
+  },
+  {
+    id: "mcp-bridge-import-capabilities",
+    title: "MCP connector: the core's MCP executor can load the KyoubeAI tool bridge",
+    standing: "KyoubeAI MCP connector",
+    files: ["server/dist/services/public-mcp/capabilities.js"],
+    // A loader after the file's imports, which `mcp-bridge-executor-find` calls.
+    pattern: mcpTopImports(),
+    replacement: `$1${MCP_MARKER} const kyoubeMcp = () => import("${MCP_BRIDGE_MODULE}");\n`,
+    expect: 1,
+  },
+  {
+    id: "mcp-bridge-executor-removed",
+    title: "MCP connector: the executor refuses the generic search and call API tools",
+    standing: "KyoubeAI MCP connector",
+    files: ["server/dist/services/public-mcp/capabilities.js"],
+    // The executor's call_api unwrapping, in createPublicMcpExecutor (2026.1023.0). The two generic
+    // tools reach every operation by name, mixing reads and writes; the connector lists each tool on
+    // its own instead, so neither is listed (`mcp-bridge-list`) and both are refused here, before the
+    // unwrapping. The unwrapping stays, unreachable, so the code after it is the core's.
+    pattern: /(?<!else )if \(name === "kyoubeai_call_api"\) \{/g,
+    replacement:
+      `${MCP_MARKER} if (${MCP_REMOVED_TOOLS}.includes(name)) throw new McpCapabilityError("Unknown KyoubeAI operation."); ` +
+      'else if (name === "kyoubeai_call_api") {',
+    expect: 1,
+  },
+  {
+    id: "mcp-bridge-executor-find",
+    title: "MCP connector: the executor runs KyoubeAI's table and app tools",
+    standing: "KyoubeAI MCP connector",
+    files: ["server/dist/services/public-mcp/capabilities.js"],
+    // The executor's capability lookup (2026.1023.0). A name the core does not know is looked up in
+    // the bridge, only on the /mcp/kyoubeai connection: app.js builds a second executor for the Dot
+    // runner's /mcp/runner, whose OAuth resource differs. `principal` (the authenticated connection),
+    // `oauth` (the executor's parameter), `z` and McpCapabilityError (the file's imports) are in
+    // scope there. The bridge answers undefined for a name that is not a KyoubeAI tool, so the core's
+    // "Unknown operation" stands, and throws McpCapabilityError when its catalogue cannot be read.
+    pattern: /(?<!\*\/ )const capability = publicMcpCapabilities\.find\(\(c\) => c\.name === name\);/g,
+    replacement:
+      `${MCP_MARKER} const capability = publicMcpCapabilities.find((c) => c.name === name) ?? ` +
+      '(new URL(oauth.config.resource).pathname === "/mcp/kyoubeai" ? await (await kyoubeMcp()).findTool(principal, name, { z, CapabilityError: McpCapabilityError }) : undefined);',
+    expect: 1,
+  },
+  {
+    id: "mcp-bridge-import-routes",
+    title: "MCP connector: the MCP route can load the KyoubeAI tool bridge",
+    standing: "KyoubeAI MCP connector",
+    files: ["server/dist/routes/public-mcp.js"],
+    // A loader after the file's imports, which `mcp-bridge-list` calls.
+    pattern: mcpTopImports(),
+    replacement: `$1${MCP_MARKER} const kyoubeMcp = () => import("${MCP_BRIDGE_MODULE}");\n`,
+    expect: 1,
+  },
+  {
+    id: "mcp-bridge-list",
+    title: "MCP connector: tools/list adds KyoubeAI's table and app tools, with titles, and drops the generic API tools",
+    standing: "KyoubeAI MCP connector",
+    files: ["server/dist/routes/public-mcp.js"],
+    // The endpoint's listTools, in publicMcpIngressRoutes (2026.1023.0). The core tools, without the
+    // two generic API tools and titled by the bridge, whose idempotentHint holds only for reads; then,
+    // on the person's connection (not the Dot runner's agent connection), KyoubeAI's tools from the
+    // bridge; then the extension's tools as before. A bridge that cannot be loaded is logged and the
+    // list is the core's, untitled, so tools/list still answers.
+    pattern: /const listTools = async \(\) => \(\{\n( *)tools: \[\.\.\.\(agentConnection \? \[\] : publicMcpCapabilities\)\.map\(\(c\) => \(\{\n( *)name: c\.name, description: c\.description, inputSchema: z\.toJSONSchema\(c\.schema\),\n *annotations: \{ readOnlyHint: !c\.write && !c\.configure, destructiveHint: !!c\.destructive, idempotentHint: true, openWorldHint: !!c\.write \|\| !!c\.configure \},\n( *)\}\)\), \.\.\.await extension\?\.listTools\(principal\) \?\? \[\]\],\n( *)\}\);/g,
+    replacement:
+      `const listTools = async () => { ${MCP_MARKER} const bridge = await kyoubeMcp().catch((error) => { console.error("[kyoube] MCP bridge unavailable", error); return null; }); return {\n` +
+      `$1tools: [...(agentConnection ? [] : publicMcpCapabilities).filter((c) => !${MCP_REMOVED_TOOLS}.includes(c.name)).map((c) => ({\n` +
+      "$2name: c.name, ...(bridge ? { title: bridge.titleFor(c.name) } : {}), description: c.description, inputSchema: z.toJSONSchema(c.schema),\n" +
+      "$2annotations: { readOnlyHint: !c.write && !c.configure, destructiveHint: !!c.destructive, idempotentHint: !c.write && !c.configure, openWorldHint: !!c.write || !!c.configure },\n" +
+      "$3})), ...(!agentConnection && bridge ? await bridge.listTools(principal) : []), ...await extension?.listTools(principal) ?? []],\n" +
+      "$4}; };",
+    expect: 1,
   },
 ];

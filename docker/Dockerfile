@@ -133,7 +133,7 @@ ENV PATH=/kyoubeai/.local/bin:${PATH} \
 # earlier release), a failure says so before naming the patch.
 # ---------------------------------------------------------------------------
 ARG KYOUBE_CORE_VERSION
-COPY docker/core-patches/apply.mjs docker/core-patches/lib.mjs docker/core-patches/patches.mjs docker/core-patches/ask-level.mjs docker/core-patches/setup-token-screen.mjs /opt/kyoube/core-patches/
+COPY docker/core-patches/apply.mjs docker/core-patches/lib.mjs docker/core-patches/patches.mjs docker/core-patches/ask-level.mjs docker/core-patches/setup-token-screen.mjs docker/core-patches/mcp-bridge.mjs /opt/kyoube/core-patches/
 RUN gosu node node /opt/kyoube/core-patches/apply.mjs --root /app --report --core-version "${KYOUBE_CORE_VERSION}"
 # The licensing hook (a standing core patch above) imports Better Auth's APIError.
 # Check the hook marker is in the served auth module, that the module has exactly
@@ -153,6 +153,22 @@ RUN grep -q 'kyoube-license-seat-limit' /app/server/dist/auth/better-auth.js \
 RUN grep -q 'kyoube-ask-level' /app/server/dist/services/issue-thread-interactions.js \
  && cd /app/server && node --check dist/services/issue-thread-interactions.js \
  && gosu node node --input-type=module -e 'const m = await import("/opt/kyoube/core-patches/ask-level.mjs"); if (typeof m.applyAskLevel !== "function") process.exit(1); console.log("ask-level ok")'
+
+# The MCP connector (standing core patches above) imports
+# /opt/kyoube/core-patches/mcp-bridge.mjs to list and run KyoubeAI's table and
+# app tools on /mcp/kyoubeai. Check each marker is in the served code the
+# expected number of times (capabilities.js has three: the loader, the refusal
+# of the generic API tools and the tool lookup; routes/public-mcp.js two: the
+# loader and the tool list; app.js one: the dispatch hand-over), that the three
+# files still parse, and that the module loads for the runtime user. Without it
+# the connector serves only the core's tools.
+RUN test "$(grep -c 'kyoube-mcp' /app/server/dist/services/public-mcp/capabilities.js)" -eq 3 \
+ && test "$(grep -c 'kyoube-mcp' /app/server/dist/routes/public-mcp.js)" -eq 2 \
+ && test "$(grep -c 'kyoube-mcp' /app/server/dist/app.js)" -eq 1 \
+ && cd /app/server && node --check dist/services/public-mcp/capabilities.js \
+ && node --check dist/routes/public-mcp.js \
+ && node --check dist/app.js \
+ && gosu node node --input-type=module -e 'const m = await import("/opt/kyoube/core-patches/mcp-bridge.mjs"); if (typeof m.findTool !== "function") process.exit(1); console.log("mcp-bridge ok")'
 
 # Work-object visibility (eight standing core patches above) imports
 # /opt/kyoube/visibility/decide.mjs, copied in below with the rest of

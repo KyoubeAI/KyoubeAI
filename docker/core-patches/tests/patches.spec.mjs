@@ -711,6 +711,8 @@ async function writeFullCore(root) {
   }
   // The public MCP files the mcp-* patches change, verbatim (tests/mcp-endpoint.spec.mjs).
   await cp(path.join(HERE, "fixtures", "mcp-2026.1023.0"), root, { recursive: true });
+  // Its app.js excerpt (the MCP dispatch) joins the visibility excerpt rather than replacing it.
+  await writeFile(path.join(root, "server/dist/app.js"), APP_API_2026_1012_0 + await readFile(path.join(HERE, "fixtures", "mcp-2026.1023.0", "server/dist/app.js"), "utf8"));
 }
 
 const licenseImportPatch = patch("license-seat-limit-import");
@@ -919,6 +921,17 @@ describe("applyPatches", () => {
     const report = await applyPatches(root, PATCHES, { dryRun: true });
     expect(report.map((entry) => entry.matched)).toEqual(PATCHES.map((entry) => entry.expect));
     expect(await readFile(file, "utf8")).toBe(FULL_BUNDLE_2026_916_1);
+  });
+
+  it("dry-run matches each patch against the text the patches before it would have written", async () => {
+    // As the mcp-bridge-* entries anchor on names mcp-tool-names renames.
+    const file = path.join(root, "ui/dist/assets/index-AAAA.js");
+    await writeFile(file, "const a = 1;");
+    const rename = { id: "rename", files: ["ui/dist/assets/index-*.js"], pattern: /\ba = /g, replacement: "b = ", expect: 1, standing: "test" };
+    const build = { id: "build-on-rename", files: ["ui/dist/assets/index-*.js"], pattern: /\bb = 1/g, replacement: "b = 2", expect: 1, standing: "test" };
+    const report = await applyPatches(root, [rename, build], { dryRun: true });
+    expect(report.map((entry) => [entry.id, entry.matched])).toEqual([["rename", 1], ["build-on-rename", 1]]);
+    expect(await readFile(file, "utf8")).toBe("const a = 1;");
   });
 });
 
@@ -1182,7 +1195,7 @@ describe("agent-questions-ask-level", () => {
 
   it("is shipped and checked by the Dockerfile", async () => {
     const dockerfile = await readFile(DOCKERFILE, "utf8");
-    expect(dockerfile).toMatch(/^COPY docker\/core-patches\/apply\.mjs docker\/core-patches\/lib\.mjs docker\/core-patches\/patches\.mjs docker\/core-patches\/ask-level\.mjs docker\/core-patches\/setup-token-screen\.mjs \/opt\/kyoube\/core-patches\/$/m);
+    expect(dockerfile).toMatch(/^COPY docker\/core-patches\/apply\.mjs docker\/core-patches\/lib\.mjs docker\/core-patches\/patches\.mjs docker\/core-patches\/ask-level\.mjs docker\/core-patches\/setup-token-screen\.mjs docker\/core-patches\/mcp-bridge\.mjs \/opt\/kyoube\/core-patches\/$/m);
     expect(dockerfile).toContain("grep -q 'kyoube-ask-level' /app/server/dist/services/issue-thread-interactions.js");
     expect(dockerfile).toContain('import("/opt/kyoube/core-patches/ask-level.mjs")');
   });
