@@ -444,7 +444,9 @@ const LOCALHOST_URL = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i
 /**
  * The `assistant connections` line: whether the core's MCP endpoint is on, whether assistants can
  * sign in at the public URL, and whether the KyoubeAI table and app tools reach it. The sign-in
- * metadata is read at the API origin, since doctor runs inside the container.
+ * metadata is read at the API origin, since doctor runs inside the container. At a public URL that
+ * is neither https:// nor loopback the core mounts no MCP routes, so the metadata path falls to the
+ * web app's page; the instance setting then says whether the feature is on.
  */
 export async function assistantConnectionsCheck(input: {
   publicUrl: string;
@@ -455,20 +457,45 @@ export async function assistantConnectionsCheck(input: {
 }): Promise<Check> {
   const name = "assistant connections";
   const doFetch = input.fetchImpl ?? fetch;
+  const off: Check = { name, ok: true, detail: "off — Settings → Experimental → Assistant connections (MCP) to turn on (docs/mcp.md)" };
+  const notHttps: Check = { name, ok: false, detail: "on, but KYOUBE_PUBLIC_URL is not https:// — assistants cannot sign in (docs/mcp.md)" };
+  const unreadable = (why: string): Check => ({ name, ok: false, detail: `could not read the MCP sign-in metadata (${why}) (docs/mcp.md)` });
   const wellKnown = `${new URL(input.apiBase).origin}/.well-known/oauth-protected-resource/mcp/kyoubeai`;
-  let status: number;
+  let response: Response;
   try {
-    status = (await doFetch(wellKnown)).status;
+    response = await doFetch(wellKnown);
   } catch (error) {
-    return { name, ok: false, detail: `could not read the MCP sign-in metadata (${error instanceof Error ? error.message : String(error)}) (docs/mcp.md)` };
+    return unreadable(error instanceof Error ? error.message : String(error));
   }
-  if (status === 503) return { name, ok: true, detail: "off — Settings → Experimental → Assistant connections (MCP) to turn on (docs/mcp.md)" };
-  if (status !== 200) return { name, ok: false, detail: `could not read the MCP sign-in metadata (${status}) (docs/mcp.md)` };
+  if (response.status === 503) return off;
 
   const publicUrl = input.publicUrl.replace(/\/+$/, "");
-  if (!publicUrl.startsWith("https://") && !LOCALHOST_URL.test(publicUrl)) {
-    return { name, ok: false, detail: "on, but KYOUBE_PUBLIC_URL is not https:// — assistants cannot sign in (docs/mcp.md)" };
+  const signInPossible = publicUrl.startsWith("https://") || LOCALHOST_URL.test(publicUrl);
+  let isMetadata = false;
+  if (response.status === 200) {
+    try {
+      const body = (await response.json()) as { resource?: unknown } | null;
+      isMetadata = typeof body?.resource === "string";
+    } catch {
+      // a page, not the metadata
+    }
   }
+  if (!isMetadata) {
+    if (signInPossible) return unreadable(response.status === 200 ? "200, not the metadata" : String(response.status));
+    if (!input.boardKey) return unreadable("no board key");
+    try {
+      const settings = await doFetch(`${input.apiBase}/api/instance/settings/experimental`, { headers: { Authorization: `Bearer ${input.boardKey}` } });
+      if (!settings.ok) return unreadable(`settings ${settings.status}`);
+      const enabled = ((await settings.json()) as { enablePublicMcp?: unknown } | null)?.enablePublicMcp;
+      if (enabled === false) return off;
+      if (enabled === true) return notHttps;
+      return unreadable("settings unreadable");
+    } catch (error) {
+      return unreadable(`settings: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (!signInPossible) return notHttps;
   const endpoint = `${publicUrl}/mcp/kyoubeai`;
   if (!input.companyId) return { name, ok: true, detail: `on at ${endpoint} — no company yet` };
 
@@ -481,8 +508,11 @@ export async function assistantConnectionsCheck(input: {
     if (!response.ok) return unavailable;
     const body = (await response.json()) as { tools?: unknown };
     if (!Array.isArray(body.tools)) return unavailable;
-    const link = `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=KyoubeAI&connectorUrl=${encodeURIComponent(endpoint)}`;
-    return { name, ok: true, detail: `on at ${endpoint}, ${body.tools.length} KyoubeAI tools — Add to Claude: ${link}` };
+    // Claude on the web cannot reach a loopback address; Claude Code on the same machine can.
+    const connect = publicUrl.startsWith("https://")
+      ? `Add to Claude: https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=KyoubeAI&connectorUrl=${encodeURIComponent(endpoint)}`
+      : `Claude Code: claude mcp add --transport http kyoubeai ${endpoint}`;
+    return { name, ok: true, detail: `on at ${endpoint}, ${body.tools.length} KyoubeAI tools — ${connect}` };
   } catch {
     return unavailable;
   }

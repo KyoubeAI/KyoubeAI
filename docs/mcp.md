@@ -47,12 +47,15 @@ but cannot drop a table. The refusal comes back to the assistant as a message, f
 ```
 ok   assistant connections off — Settings → Experimental → Assistant connections (MCP) to turn on (docs/mcp.md)
 ok   assistant connections on at https://kyoube.example.com/mcp/kyoubeai, 25 KyoubeAI tools — Add to Claude: https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=KyoubeAI&connectorUrl=https%3A%2F%2Fkyoube.example.com%2Fmcp%2Fkyoubeai
+ok   assistant connections on at http://localhost:3100/mcp/kyoubeai, 25 KyoubeAI tools — Claude Code: claude mcp add --transport http kyoubeai http://localhost:3100/mcp/kyoubeai
 FAIL assistant connections on, but KYOUBE_PUBLIC_URL is not https:// — assistants cannot sign in (docs/mcp.md)
 FAIL assistant connections on, but the table and app tools are unavailable — see Settings → Plugins → kyoube.apps → Logs
 ```
 
-The last one means the `kyoube.apps` plugin is not answering. The core's own tools still work. On an
-instance with no company yet, the line ends `— no company yet` instead of the link.
+On a `localhost` address the line gives the Claude Code command instead of the **Add to Claude**
+link, since Claude on the web cannot reach `localhost`. The last one means the `kyoube.apps` plugin is
+not answering. The core's own tools still work. On an instance with no company yet, the line ends
+`— no company yet` instead of the link.
 
 ## Connecting an assistant
 

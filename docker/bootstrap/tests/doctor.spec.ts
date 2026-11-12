@@ -580,7 +580,12 @@ describe("assistantConnectionsCheck", () => {
     // The bare origin, as runDoctor passes config.paperclipApiUrl.
     return assistantConnectionsCheck({ publicUrl: "https://kyoube.example.com", apiBase: "http://127.0.0.1:3100", boardKey: "key", companyId: "c1", fetchImpl, ...over }).then((check) => ({ check, calls }));
   };
-  const on = (url: string) => (url.includes("/.well-known/") ? reply(200) : reply(200, { version: 1, tools: [{}, {}, {}] }));
+  const metadata = { resource: "https://kyoube.example.com/mcp/kyoubeai", authorization_servers: ["https://kyoube.example.com"] };
+  const on = (url: string) => (url.includes("/.well-known/") ? reply(200, metadata) : reply(200, { version: 1, tools: [{}, {}, {}] }));
+  // The SPA fallback: what the core answers when it mounted no MCP routes (a public URL that is neither https nor loopback).
+  const page = () => new Response("<!doctype html><html></html>", { status: 200, headers: { "Content-Type": "text/html" } });
+  const spaWithSetting = (enablePublicMcp: unknown, status = 200) => (url: string) =>
+    url.includes("/.well-known/") ? page() : url.endsWith("/api/instance/settings/experimental") ? reply(status, { enablePublicMcp }) : reply(404);
 
   it("is off, and fine, when the core answers 503", async () => {
     const { check, calls } = await run(() => reply(503, { error: "disabled" }));
@@ -600,6 +605,42 @@ describe("assistantConnectionsCheck", () => {
     }
   });
 
+  it("is off, and fine, on a plain-http LAN address when the setting is off (the core mounts no MCP routes there)", async () => {
+    const { check, calls } = await run(spaWithSetting(false), { publicUrl: "http://192.168.1.10:3100" });
+    expect(check).toEqual({ name: "assistant connections", ok: true, detail: "off — Settings → Experimental → Assistant connections (MCP) to turn on (docs/mcp.md)" });
+    expect(calls[1]!.url).toBe("http://127.0.0.1:3100/api/instance/settings/experimental");
+    expect((calls[1]!.init?.headers as Record<string, string>).Authorization).toBe("Bearer key");
+  });
+
+  it("fails on a plain-http LAN address when the setting is on", async () => {
+    const { check } = await run(spaWithSetting(true), { publicUrl: "http://192.168.1.10:3100" });
+    expect(check).toEqual({ name: "assistant connections", ok: false, detail: "on, but KYOUBE_PUBLIC_URL is not https:// — assistants cannot sign in (docs/mcp.md)" });
+  });
+
+  it("cannot tell on a plain-http LAN address when the setting is unreadable", async () => {
+    expect((await run(spaWithSetting(true, 403), { publicUrl: "http://192.168.1.10:3100" })).check).toEqual({
+      name: "assistant connections", ok: false, detail: "could not read the MCP sign-in metadata (settings 403) (docs/mcp.md)",
+    });
+    expect((await run(spaWithSetting("yes"), { publicUrl: "http://192.168.1.10:3100" })).check.detail).toBe("could not read the MCP sign-in metadata (settings unreadable) (docs/mcp.md)");
+    expect((await run(spaWithSetting(false), { publicUrl: "http://192.168.1.10:3100", boardKey: null })).check.detail).toBe("could not read the MCP sign-in metadata (no board key) (docs/mcp.md)");
+  });
+
+  it("does not take a page for the sign-in metadata at an https address", async () => {
+    const { check, calls } = await run(spaWithSetting(true));
+    expect(check).toEqual({ name: "assistant connections", ok: false, detail: "could not read the MCP sign-in metadata (200, not the metadata) (docs/mcp.md)" });
+    expect(calls).toHaveLength(1);
+    expect((await run((url) => (url.includes("/.well-known/") ? reply(200, { hello: 1 }) : reply(404)))).check.detail).toBe("could not read the MCP sign-in metadata (200, not the metadata) (docs/mcp.md)");
+  });
+
+  it("gives the Claude Code command, not the Add to Claude link, for a localhost address", async () => {
+    const { check } = await run(on, { publicUrl: "http://localhost:3100/" });
+    expect(check).toEqual({
+      name: "assistant connections",
+      ok: true,
+      detail: "on at http://localhost:3100/mcp/kyoubeai, 3 KyoubeAI tools — Claude Code: claude mcp add --transport http kyoubeai http://localhost:3100/mcp/kyoubeai",
+    });
+  });
+
   it("reports the address, the tool count and the Add to Claude link", async () => {
     const { check, calls } = await run(on, { publicUrl: "https://kyoube.example.com/" });
     expect(check).toEqual({
@@ -613,8 +654,8 @@ describe("assistantConnectionsCheck", () => {
 
   it("fails when the catalogue cannot be fetched", async () => {
     const detail = "on, but the table and app tools are unavailable — see Settings → Plugins → kyoube.apps → Logs";
-    expect((await run((url) => (url.includes("/.well-known/") ? reply(200) : reply(403)))).check).toEqual({ name: "assistant connections", ok: false, detail });
-    expect((await run((url) => { if (url.includes("/.well-known/")) return reply(200); throw new Error("boom"); })).check.detail).toBe(detail);
+    expect((await run((url) => (url.includes("/.well-known/") ? reply(200, metadata) : reply(403)))).check).toEqual({ name: "assistant connections", ok: false, detail });
+    expect((await run((url) => { if (url.includes("/.well-known/")) return reply(200, metadata); throw new Error("boom"); })).check.detail).toBe(detail);
     expect((await run(on, { boardKey: null })).check.detail).toBe(detail);
   });
 

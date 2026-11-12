@@ -1322,8 +1322,9 @@ STATUS="$(curl -sS -o "$TMP/mcp-old.json" -w '%{http_code}' -H 'Accept: applicat
   -H 'Content-Type: application/json' -X POST "$BASE_URL/mcp/paperclip" --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')"
 [[ "$STATUS" == 404 ]] || { echo "POST /mcp/paperclip answered $STATUS, not 404: $(cat "$TMP/mcp-old.json")" >&2; exit 1; }
 compose exec -T app kyoube doctor >"$TMP/doctor-mcp.log" || true
-grep -Eq '^ok +assistant connections +on at' "$TMP/doctor-mcp.log" \
-  || { echo "doctor does not report assistant connections on:" >&2; grep 'assistant connections' "$TMP/doctor-mcp.log" >&2; exit 1; }
+# A localhost public URL: doctor gives the Claude Code command, since Claude on the web cannot reach it.
+grep -Eq "^ok +assistant connections +on at $MCP_URL, [0-9]+ KyoubeAI tools — Claude Code: claude mcp add --transport http kyoubeai $MCP_URL\$" "$TMP/doctor-mcp.log" \
+  || { echo "doctor does not report assistant connections on, with the Claude Code command:" >&2; grep 'assistant connections' "$TMP/doctor-mcp.log" >&2; exit 1; }
 echo "    /mcp/paperclip is 404; doctor: $(grep -E '^ok +assistant connections' "$TMP/doctor-mcp.log" | sed 's/^ok *assistant connections *//')"
 
 # The operator leaves again, so doctor's user count after the restore is the one admin's.
