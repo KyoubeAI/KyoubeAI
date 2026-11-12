@@ -1211,6 +1211,121 @@ JS
   groups_action groups.delete "{\"id\":\"$GROUP_ID\"}"
   compose exec -T app kyoube license clear >/dev/null
 fi
+
+echo "==> assistant connections (MCP): sign in as a person, the directory rules, the table tools"
+# The core's OAuth MCP server, served at /mcp/kyoubeai with kyoubeai_* tools (docs/mcp.md). An
+# assistant signs in as a person with the device grant: it registers, asks for a code, the person
+# approves the code in their browser session (the consent route), and the assistant takes the token.
+# The admin's session is $COOKIES and the operator's $OP_COOKIES, so this runs before the operator leaves.
+MCP_URL="$BASE_URL/mcp/kyoubeai"
+STATUS="$(curl -sS -o "$TMP/mcp-settings.json" -w '%{http_code}' -b "$COOKIES" -c "$COOKIES" -H 'Content-Type: application/json' -H "Origin: $BASE_URL" \
+  -X PATCH "$BASE_URL/api/instance/settings/experimental" --data '{"enablePublicMcp":true}')"
+[[ "$STATUS" == 200 ]] && jq -e '.enablePublicMcp == true' "$TMP/mcp-settings.json" >/dev/null \
+  || { echo "could not turn assistant connections on: $STATUS $(cat "$TMP/mcp-settings.json")" >&2; exit 1; }
+for i in $(seq 1 30); do
+  STATUS="$(curl -sS -o "$TMP/mcp-resource.json" -w '%{http_code}' "$BASE_URL/.well-known/oauth-protected-resource/mcp/kyoubeai")"
+  [[ "$STATUS" == 200 ]] && break
+  sleep 1
+  [[ $i -eq 30 ]] && { echo "the MCP sign-in metadata never answered 200 (last $STATUS): $(cat "$TMP/mcp-resource.json")" >&2; exit 1; }
+done
+jq -e --arg r "$MCP_URL" '.resource == $r' "$TMP/mcp-resource.json" >/dev/null \
+  || { echo "the MCP sign-in metadata does not name $MCP_URL: $(cat "$TMP/mcp-resource.json")" >&2; exit 1; }
+mcp_token() { # cookie-jar allowWrites allowConfiguration -> prints an access token for that person in Smoke Co
+  local status client device code _
+  status="$(curl -sS -o "$TMP/mcp-oauth.json" -w '%{http_code}' -H 'Content-Type: application/json' -X POST "$BASE_URL/mcp/oauth/register" \
+    --data '{"client_name":"kyoube-smoke","grant_types":["urn:ietf:params:oauth:grant-type:device_code"]}')"
+  client="$(jq -r '.client_id' "$TMP/mcp-oauth.json")"
+  [[ "$status" == 201 && -n "$client" && "$client" != "null" ]] || { echo "MCP client registration answered $status: $(cat "$TMP/mcp-oauth.json")" >&2; exit 1; }
+  status="$(curl -sS -o "$TMP/mcp-oauth.json" -w '%{http_code}' -X POST "$BASE_URL/mcp/oauth/device_authorization" \
+    --data-urlencode "client_id=$client" --data-urlencode "resource=$MCP_URL" --data-urlencode "scope=paperclip:read paperclip:write paperclip:configure")"
+  device="$(jq -r '.device_code' "$TMP/mcp-oauth.json")"; code="$(jq -r '.user_code' "$TMP/mcp-oauth.json")"
+  [[ "$status" == 200 && "$device" != "null" && "$code" != "null" ]] || { echo "MCP device authorization answered $status: $(cat "$TMP/mcp-oauth.json")" >&2; exit 1; }
+  status="$(curl -sS -o "$TMP/mcp-oauth.json" -w '%{http_code}' -b "$1" -c "$1" -H 'Content-Type: application/json' -H "Origin: $BASE_URL" \
+    -X POST "$BASE_URL/api/mcp/device/consent" --data "$(jq -cn --arg u "$code" --arg c "$COMPANY_ID" --argjson w "$2" --argjson k "$3" \
+      '{userCode: $u, decision: "approve", companyId: $c, allowWrites: $w, allowConfiguration: $k}')")"
+  [[ "$status" == 200 ]] && jq -e '.status == "approved"' "$TMP/mcp-oauth.json" >/dev/null \
+    || { echo "the MCP consent answered $status: $(cat "$TMP/mcp-oauth.json")" >&2; exit 1; }
+  for _ in 1 2 3 4 5 6; do
+    status="$(curl -sS -o "$TMP/mcp-oauth.json" -w '%{http_code}' -X POST "$BASE_URL/mcp/oauth/token" --data-urlencode "client_id=$client" \
+      --data-urlencode "resource=$MCP_URL" --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:device_code" --data-urlencode "device_code=$device")"
+    jq -e '.error == "authorization_pending" or .error == "slow_down"' "$TMP/mcp-oauth.json" >/dev/null || break
+    sleep 6
+  done
+  [[ "$status" == 200 ]] && jq -e '.access_token | type == "string" and length > 0' "$TMP/mcp-oauth.json" >/dev/null \
+    || { echo "the MCP token request answered $status: $(cat "$TMP/mcp-oauth.json")" >&2; exit 1; }
+  jq -r '.access_token' "$TMP/mcp-oauth.json"
+}
+mcp_call() { # token method params-json -> the JSON-RPC result in $TMP/mcp.json; exits on a transport or protocol error
+  local status
+  status="$(curl -sS -o "$TMP/mcp.json" -w '%{http_code}' -H "Authorization: Bearer $1" -H 'Accept: application/json, text/event-stream' \
+    -H 'Content-Type: application/json' -X POST "$MCP_URL" --data "$(jq -cn --arg m "$2" --argjson p "$3" '{jsonrpc: "2.0", id: 1, method: $m, params: $p}')")"
+  [[ "$status" == 200 ]] && jq -e 'has("result")' "$TMP/mcp.json" >/dev/null || { echo "MCP $2 answered $status: $(cat "$TMP/mcp.json")" >&2; exit 1; }
+  jq '.result' "$TMP/mcp.json" >"$TMP/mcp-result.json" && mv "$TMP/mcp-result.json" "$TMP/mcp.json"
+}
+mcp_tool() { # token tool arguments-json -> the tool's result in $TMP/mcp.json
+  mcp_call "$1" tools/call "$(jq -cn --arg n "$2" --argjson a "$3" '{name: $n, arguments: $a}')"
+}
+
+MCP_TOKEN="$(mcp_token "$COOKIES" true true)"
+mcp_call "$MCP_TOKEN" initialize '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"kyoube-smoke","version":"1"}}'
+jq -e '.capabilities.tools != null' "$TMP/mcp.json" >/dev/null || { echo "MCP initialize offered no tools: $(cat "$TMP/mcp.json")" >&2; exit 1; }
+mcp_call "$MCP_TOKEN" tools/list '{}'
+cp "$TMP/mcp.json" "$TMP/mcp-tools.json"
+# The directory's rules: no upstream name, a title, a read-only or destructive hint, names of at most 64 characters.
+MCP_BAD="$(jq -c '[.tools[] | select((.name | contains("paperclip")) or ((.title | type) != "string") or (.title == "")
+  or (((.annotations.readOnlyHint | type) != "boolean") and ((.annotations.destructiveHint | type) != "boolean"))
+  or ((.name | length) > 64)) | .name]' "$TMP/mcp-tools.json")"
+[[ "$MCP_BAD" == "[]" ]] || { echo "MCP tools break the directory rules (paperclip name, no title, no hint, or > 64 chars): $MCP_BAD" >&2; exit 1; }
+jq -e '.tools | map(.name) | index("kyoubeai_call_api") == null and index("kyoubeai_search_api") == null
+  and index("kyoubeai_data_list_tables") != null and index("kyoubeai_apps_publish") != null' "$TMP/mcp-tools.json" >/dev/null \
+  || { echo "the MCP tool list still has the generic API tools or lacks the table and app tools: $(jq -c '.tools | map(.name)' "$TMP/mcp-tools.json")" >&2; exit 1; }
+echo "    tools/list: $(jq '.tools | length' "$TMP/mcp-tools.json") tools, each titled and hinted, none named paperclip, the generic API tools gone"
+
+mcp_tool "$MCP_TOKEN" kyoubeai_connection '{}'
+jq -e --arg c "$COMPANY_ID" '.isError != true and .structuredContent.companyId == $c
+  and (.structuredContent.scopes | index("paperclip:write") != null and index("paperclip:configure") != null)' "$TMP/mcp.json" >/dev/null \
+  || { echo "kyoubeai_connection does not show Smoke Co with write and configure: $(cat "$TMP/mcp.json")" >&2; exit 1; }
+mcp_tool "$MCP_TOKEN" kyoubeai_data_create_table '{"requestId":"00000000-0000-4000-8000-000000000001","name":"mcp_smoke","fields":[{"name":"note","kind":"text"}]}'
+jq -e '.isError != true and .structuredContent.outcome == "completed"' "$TMP/mcp.json" >/dev/null \
+  || { echo "kyoubeai_data_create_table failed: $(cat "$TMP/mcp.json")" >&2; exit 1; }
+# The same requestId with the same arguments is answered from the core's receipt, not run again.
+MCP_INSERT='{"requestId":"00000000-0000-4000-8000-000000000002","table":"mcp_smoke","rows":[{"note":"from an assistant"}]}'
+for _ in 1 2; do
+  mcp_tool "$MCP_TOKEN" kyoubeai_data_insert "$MCP_INSERT"
+  jq -e '.isError != true and .structuredContent.outcome == "completed"' "$TMP/mcp.json" >/dev/null \
+    || { echo "kyoubeai_data_insert failed: $(cat "$TMP/mcp.json")" >&2; exit 1; }
+done
+mcp_tool "$MCP_TOKEN" kyoubeai_data_count '{"table":"mcp_smoke"}'
+jq -e '.isError != true and .structuredContent.data.count == 1' "$TMP/mcp.json" >/dev/null \
+  || { echo "after the same insert twice mcp_smoke does not hold exactly 1 row: $(cat "$TMP/mcp.json")" >&2; exit 1; }
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/companies/$COMPANY_ID/activity?limit=200" >"$TMP/mcp-activity.json"
+jq -e 'map(select((.action // "") == "mcp.tool_called")) | length >= 1' "$TMP/mcp-activity.json" >/dev/null \
+  || { echo "no mcp.tool_called entry in the activity log: $(jq -c 'map(.action)' "$TMP/mcp-activity.json")" >&2; exit 1; }
+echo "    as the admin: connection, create_table, insert (repeated, one row), count; the activity log has mcp.tool_called"
+
+# A connection approved without writes is refused a write by the core, before the plugin sees it.
+MCP_READ_TOKEN="$(mcp_token "$COOKIES" false false)"
+mcp_tool "$MCP_READ_TOKEN" kyoubeai_data_insert '{"requestId":"00000000-0000-4000-8000-000000000003","table":"mcp_smoke","rows":[{"note":"refused"}]}'
+jq -e '.isError == true and (.content[0].text | contains("paperclip:write permission is required"))' "$TMP/mcp.json" >/dev/null \
+  || { echo "a read-only connection's insert was not refused for want of paperclip:write: $(cat "$TMP/mcp.json")" >&2; exit 1; }
+# The operator may configure over MCP, but the plugin still holds them to their data level (write, not schema).
+MCP_OP_TOKEN="$(mcp_token "$OP_COOKIES" true true)"
+mcp_tool "$MCP_OP_TOKEN" kyoubeai_data_drop_table '{"requestId":"00000000-0000-4000-8000-000000000004","table":"mcp_smoke"}'
+jq -e '.isError == true and .structuredContent.outcome == "rejected" and .structuredContent.code == "forbidden"' "$TMP/mcp.json" >/dev/null \
+  || { echo "the operator's kyoubeai_data_drop_table was not rejected as forbidden: $(cat "$TMP/mcp.json")" >&2; exit 1; }
+mcp_tool "$MCP_TOKEN" kyoubeai_data_count '{"table":"mcp_smoke"}'
+jq -e '.structuredContent.data.count == 1' "$TMP/mcp.json" >/dev/null || { echo "mcp_smoke changed after the operator's refused drop: $(cat "$TMP/mcp.json")" >&2; exit 1; }
+echo "    a read-only connection is refused paperclip:write; the operator's drop_table is rejected as forbidden"
+
+# Without a token: the core's actor middleware answers any path 401 for a bearer that is not a board or agent key.
+STATUS="$(curl -sS -o "$TMP/mcp-old.json" -w '%{http_code}' -H 'Accept: application/json, text/event-stream' \
+  -H 'Content-Type: application/json' -X POST "$BASE_URL/mcp/paperclip" --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')"
+[[ "$STATUS" == 404 ]] || { echo "POST /mcp/paperclip answered $STATUS, not 404: $(cat "$TMP/mcp-old.json")" >&2; exit 1; }
+compose exec -T app kyoube doctor >"$TMP/doctor-mcp.log" || true
+grep -Eq '^ok +assistant connections +on at' "$TMP/doctor-mcp.log" \
+  || { echo "doctor does not report assistant connections on:" >&2; grep 'assistant connections' "$TMP/doctor-mcp.log" >&2; exit 1; }
+echo "    /mcp/paperclip is 404; doctor: $(grep -E '^ok +assistant connections' "$TMP/doctor-mcp.log" | sed 's/^ok *assistant connections *//')"
+
 # The operator leaves again, so doctor's user count after the restore is the one admin's.
 compose exec -T app kyoube users remove smoke-op@kyoube.local --yes >/dev/null
 
