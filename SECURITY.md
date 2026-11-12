@@ -57,9 +57,10 @@ KyoubeAI's design rests on three zones of trust, each with a different guarantee
    Test route fix that 1.1 also carried, `adapter-test-unsaved-harness-switch`, is upstream since core
    2026.1001, upstream commit 9335b7d, and was deleted.) Each patch has to match the core's code exactly once, or
    the image build fails and names the patch, so a core bump cannot carry one over silently. A flaw in
-   one of these patches is in scope here. The standing patches for licensing, user groups and agent
-   questions are described in their own sections ([Groups](#groups), and `docs/licensing.md` for the
-   user limit), and a flaw in any of them is in scope too.
+   one of these patches is in scope here. The standing patches for licensing, user groups, agent
+   questions and assistant connections are described in their own sections ([Groups](#groups),
+   [Assistant connections](#assistant-connections), and `docs/licensing.md` for the user limit), and a
+   flaw in any of them is in scope too.
 2. **Kyoube plugins — trusted code.** `kyoube.terminal`, `kyoube.apps` and `kyoube.files` are first-party
    code, reviewed and shipped with the image, running as core plugin workers. The apps plugin holds its
    **own** database credential — the `kyoube` Postgres login role (`LOGIN NOSUPERUSER NOCREATEDB CREATEROLE NOINHERIT`,
@@ -668,6 +669,51 @@ docked panel then goes through exactly the same actions and checks as the projec
 
 **What is logged.** Every mutation writes one line to the company's activity log — the operation, the
 path, the workspace and the user — and never file content. Reads are not logged.
+
+## Assistant connections
+
+Assistant connections (`docs/mcp.md`) let a person's own AI assistant (Claude, Claude Code, Codex,
+OpenCode) work with their company over MCP. The server, its OAuth sign-in, the consent page, the
+connection grants, the scope checks and the receipts are the core's. KyoubeAI changes them at build
+time with the standing `mcp-*` patches in `docker/core-patches/patches.mjs`: the endpoint is served at
+`/mcp/kyoubeai` instead of `/mcp/paperclip`, the tools are renamed `kyoubeai_*` and titled, the two
+generic tools (`kyoubeai_search_api`, `kyoubeai_call_api`) are removed from the list and refused by
+the executor, and a bridge (`docker/core-patches/mcp-bridge.mjs`) adds the `kyoube.apps` table and app
+tools. The feature is off until an instance admin turns it on (Settings → Experimental), and sign-in
+needs an `https://` public URL or localhost.
+
+- **A call acts as the signed-in person, and only as them.** The bridge adds no authority of its own.
+  It reads the tool list and runs a tool through the core's internal dispatch, as the connection's
+  principal, so a Kyoube tool reaches `kyoube.apps` as that person's board request. The plugin builds
+  the actor from the host-authenticated `input.actor` only, and the company from the connection;
+  `companyId` and `requestId` in the arguments are dropped.
+- **Kyoube tools take the core's path.** A `kyoubeai_data_*` or `kyoubeai_apps_*` call goes through
+  the core's executor like the core's own tools: the token is re-checked (membership, pause, archive,
+  expiry, revocation), the company must be the connection's, `paperclip:read` is needed for every
+  call and `paperclip:write` or `paperclip:configure` for the write and configure tiers, and the
+  core's viewers are refused writes. Only the endpoint at `/mcp/kyoubeai` looks tools up in the
+  bridge; the Dot runner's `/mcp/runner` does not.
+- **Then the person's own access decides.** The plugin runs the same tool definitions agents use, so
+  `DataService` applies the person's data level (role, adjusted by groups) and `AppService` its
+  visibility and publish checks. A connection's tier can only narrow what the person may do.
+- **Agents are refused.** The plugin's MCP routes (`GET /mcp/tools`, `POST /mcp/call`) are declared
+  board-only, and refuse an agent actor again with 403 before doing anything.
+- **Receipts and the activity log.** The core keeps a receipt per write and configure call, keyed by
+  its `requestId` (a UUID): the same id with the same arguments replays the stored result, and with
+  different arguments it is refused. Each such call writes an `mcp.tool_called` entry to the
+  company's activity log with the tool name. Table changes are also audited in `kyoube_meta.audit` as
+  they are from the Data page. Reads are not logged.
+- **Errors do not leak.** A Kyoube refusal (a `DataError` below 500) comes back as
+  `outcome: "rejected"` with its caller-safe message. Any other error is a 500, which the core reports
+  as `outcome: unknown`; the real error goes to the operator log only.
+- **Residual: the person-only app gates.** Publishing or rolling back an app version that adds or
+  changes decision sets, connections or task templates needs a person, and agents are refused. A call
+  over an assistant connection counts as the person, so the assistant can send the
+  `*Confirmed: true` flags itself. The only check between the model and that publish is the
+  assistant's own tool-approval prompt. `docs/mcp.md` tells people this.
+- **Residual: data leaves through the assistant.** Whatever the person can read, the assistant can
+  read and send to its provider. That is the purpose of the feature; the connection's company, tier and
+  revocation (`/assistant-connections`) are the controls.
 
 ## Studio
 

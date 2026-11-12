@@ -77,6 +77,24 @@ A plugin stuck in another status has its own log under **Settings → Plugins �
 If a plugin is deliberately disabled by an operator, `ensure-plugins` leaves it alone and says so —
 that is not a failure, but `doctor` will not call it `ready` either.
 
+## Moving to 1.17
+
+1.17 serves the core's assistant connections (MCP) as KyoubeAI's own, with the data table and app
+tools added ([mcp.md](mcp.md)). The core and its database are unchanged, and `kyoube.apps` moves to
+0.15.0 on the next start.
+
+- **The address is now `/mcp/kyoubeai`.** `/mcp/paperclip` answers 404. A connection made at the old
+  address must be made again: remove it in the assistant, add `<KYOUBE_PUBLIC_URL>/mcp/kyoubeai`, and
+  sign in. If the old connection is still listed under `/assistant-connections`, revoke it there.
+- **Tool names changed.** Every tool is `kyoubeai_*` (it was `paperclip_*`), so a prompt or saved
+  instruction that names a tool needs the new name. `paperclip_search_api` and `paperclip_call_api` are
+  gone; use the named tools.
+- **Nothing turns on by itself.** An instance that had **Assistant connections (MCP)** off keeps it off.
+  Turn it on under **Settings → Experimental**. `kyoube doctor` has a new `assistant connections` line
+  that says whether it is on and prints the **Add to Claude** link.
+- **The scope names stay** `paperclip:read`, `paperclip:write` and `paperclip:configure`, since
+  connections store them.
+
 ## The team page is an org chart (Studio 0.7.0)
 
 `/<company>/team` now shows a living org chart: agent cards with live state, team panels, and a

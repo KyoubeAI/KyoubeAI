@@ -189,6 +189,40 @@ to `handleConnectionsApiRequest` (`src/connections/api-routes.ts`), the tools ar
 An app's calls run on the same bridge budget as data calls, with a ceiling of 30 connection calls per
 10 seconds. See [`connections.md`](connections.md).
 
+### Assistant → MCP
+
+A person's assistant (Claude, Claude Code, Codex, OpenCode) calls the core's MCP endpoint, which the
+`mcp-*` core patches serve at `/mcp/kyoubeai`, with an OAuth token bound to one person and one company.
+
+1. **Claude → `/mcp/kyoubeai`.** The core's route (`server/dist/routes/public-mcp.js`) answers
+   `tools/list` with the core's own tools, renamed `kyoubeai_*` and titled, followed by KyoubeAI's 25
+   from the bridge. The bridge, `/opt/kyoube/core-patches/mcp-bridge.mjs`, fetches them through the
+   core's internal dispatch as the person, from `GET /api/plugins/kyoube.apps/api/mcp/tools`, and keeps
+   them for 60 seconds per company, a failed fetch included.
+2. **The executor.** `tools/call` goes to the core's executor (`createPublicMcpExecutor` in
+   `services/public-mcp/capabilities.js`). A name the core does not know is looked up in the bridge,
+   on `/mcp/kyoubeai` only. From there a Kyoube tool takes the core's path: token re-check, company
+   check, the `paperclip:read`, `paperclip:write` or `paperclip:configure` scope its tier needs, the
+   viewer refusal, the receipt keyed by `requestId`, and an `mcp.tool_called` activity entry for a
+   write.
+3. **Internal dispatch.** The bridge's `run` replays the call into the core's `/api` router as the
+   person (`req.actor` is the connection's principal), as
+   `POST /api/plugins/kyoube.apps/api/mcp/call` with `{ companyId, tool, arguments }`. The company is
+   the connection's.
+4. **`kyoube.apps` `/mcp/call`.** `handleMcpApiRequest` (`plugins/kyoube-apps/src/mcp/api-routes.ts`)
+   refuses an agent actor with 403, finds the tool in the catalogue (`src/mcp/catalogue.ts`, built from
+   the agent tool definitions plus `MCP_SETTINGS`), drops `requestId` and `companyId` from the
+   arguments, and runs the agent definition through `runTool` (`src/tool-runtime.ts`) with the actor
+   `{ kind: "user", id }` taken from the host-authenticated `input.actor`.
+5. **`DataService` / `AppService`.** The same services as every other path, so the person's data level,
+   groups and app checks decide.
+
+The answer is shaped for the core's executor. Success is `{ outcome: "completed", data }`, or
+`{ outcome: "completed", truncated: true, content }` past 20,000 characters. A `DataError` below 500 is
+a 200 `{ outcome: "rejected", status, code, message }`, because the internal dispatch replaces a 4xx
+body with a generic message. Anything else is a 500, which the executor reports as `outcome: unknown`.
+See [`mcp.md`](mcp.md).
+
 ### App task → agent
 
 A running app sends `tasks.start` over the bridge (`apps.task_start`; `get`, `list` and `cancel` are
@@ -360,8 +394,12 @@ The third is for agent questions (`docs/agent-rules.md`): `agent-questions-ask-l
 `/opt/kyoube/core-patches/ask-level.mjs` when the core creates a question card an agent addresses to
 another agent, which refuses it or makes it answerable by that agent, depending on the asker's ask
 level.
+The `mcp-*` entries serve the core's assistant MCP endpoint as `/mcp/kyoubeai` (`docs/mcp.md`): they
+rename its tools `kyoubeai_*`, title them, drop the two generic API tools, rewrite the setup page, and
+wire in `docker/core-patches/mcp-bridge.mjs`, which adds the `kyoube.apps` table and app tools
+([Assistant → MCP](#assistant--mcp)).
 `docker/core-patches/patches.mjs` carries fixes to upstream bugs that had to ship here first, and the
-standing entries (licensing, user groups and work-object visibility, agent questions). The temporary fixes are nine in the served UI (the first-run wizard's "Skip
+standing entries (licensing, user groups and work-object visibility, agent questions, the MCP connector). The temporary fixes are nine in the served UI (the first-run wizard's "Skip
 for now", and the pi and Hermes task-chat transcript fixes), one in the Hermes adapter's server source
 (`hermes-quiet-default`, upstream PR #12016, in `packages/adapters/hermes/src/server/execute.ts`), and
 one in the adapters' shared process runner (`child-stdin-closed-early`, upstream PR #14057, in
@@ -382,7 +420,7 @@ that code or already carries the fix fails the build with the patch's id — the
 entry. The one exception: an entry may also declare the shape of the upstream fix (`upstreamFix`), and
 on a core that carries it exactly once the entry is skipped with `<id>: already fixed upstream` in the
 build log, so the weekly build against the core's pre-releases keeps working; the entry is still deleted
-at the first stable core that carries the fix. The temporary entries are meant to go away, the standing ones (licensing, user groups, agent questions) stay; `CONTRIBUTING.md` ("Never patch the core") has the rules, and
+at the first stable core that carries the fix. The temporary entries are meant to go away, the standing ones (licensing, user groups, agent questions, the MCP connector) stay; `CONTRIBUTING.md` ("Never patch the core") has the rules, and
 `docs/upgrading.md` what to do when the step fails at a bump.
 
 ### Plugin hot reload

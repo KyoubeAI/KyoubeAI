@@ -4,6 +4,32 @@ All notable changes to KyoubeAI are recorded here, in terms of what changed for 
 building on it. The format is loosely [Keep a Changelog](https://keepachangelog.com/); versioning is
 [SemVer](https://semver.org/).
 
+## 1.17.0 - 2026-11-12
+
+### Added
+
+- **Data tables and apps over MCP.** An assistant connected to KyoubeAI (Claude, Claude Code, Codex,
+  OpenCode) gets 25 `kyoubeai_data_*` and `kyoubeai_apps_*` tools beside the core's own: list, query
+  and change tables and rows, run read-only SQL, and create, publish, roll back and archive apps. They
+  run as the signed-in person, so their Kyoube data level, groups and app checks decide, and agents
+  are refused. Each tool is in a read, write or configure tier. Writes carry a `requestId`, and a
+  refusal comes back with its reason. See [docs/mcp.md](docs/mcp.md).
+- **Add to Claude.** The setup page has a Claude (web, Desktop, mobile) section with a link that opens
+  Claude's custom connector form with KyoubeAI filled in.
+- **`kyoube doctor` checks assistant connections**: off, on with the tool count and the Add to Claude
+  link, or what stops assistants signing in.
+
+### Changed
+
+- **The MCP endpoint is `/mcp/kyoubeai`** (was `/mcp/paperclip`, which now answers 404). Connections
+  made at the old address must be made again ([docs/upgrading.md](docs/upgrading.md#moving-to-117)).
+- Every assistant tool is named `kyoubeai_*` (was `paperclip_*`) and has a title. Only read tools are
+  marked idempotent. The setup page names the server `kyoubeai` in each client's commands.
+- The generic `search_api` and `call_api` tools are removed; each operation is its own tool.
+- The setup page's Headless section is gone. It needs a CLI KyoubeAI does not ship.
+- `kyoube.apps` is 0.15.0. Agent tools and MCP calls share one tool runner, so agent behaviour is
+  unchanged.
+
 ## 1.16.0 - 2026-11-07
 
 ### Added
