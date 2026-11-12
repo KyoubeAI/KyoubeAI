@@ -475,7 +475,7 @@ export async function assistantConnectionsCheck(input: {
   const unavailable: Check = { name, ok: false, detail: "on, but the table and app tools are unavailable — see Settings → Plugins → kyoube.apps → Logs" };
   if (!input.boardKey) return unavailable;
   try {
-    const response = await doFetch(`${input.apiBase}/plugins/kyoube.apps/api/mcp/tools?companyId=${encodeURIComponent(input.companyId)}`, {
+    const response = await doFetch(`${input.apiBase}/api/plugins/kyoube.apps/api/mcp/tools?companyId=${encodeURIComponent(input.companyId)}`, {
       headers: { Authorization: `Bearer ${input.boardKey}` },
     });
     if (!response.ok) return unavailable;

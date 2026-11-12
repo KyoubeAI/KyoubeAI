@@ -577,7 +577,8 @@ describe("assistantConnectionsCheck", () => {
       calls.push({ url: String(input), init });
       return handler(String(input), init);
     }) as typeof fetch;
-    return assistantConnectionsCheck({ publicUrl: "https://kyoube.example.com", apiBase: "http://127.0.0.1:3100/api", boardKey: "key", companyId: "c1", fetchImpl, ...over }).then((check) => ({ check, calls }));
+    // The bare origin, as runDoctor passes config.paperclipApiUrl.
+    return assistantConnectionsCheck({ publicUrl: "https://kyoube.example.com", apiBase: "http://127.0.0.1:3100", boardKey: "key", companyId: "c1", fetchImpl, ...over }).then((check) => ({ check, calls }));
   };
   const on = (url: string) => (url.includes("/.well-known/") ? reply(200) : reply(200, { version: 1, tools: [{}, {}, {}] }));
 
