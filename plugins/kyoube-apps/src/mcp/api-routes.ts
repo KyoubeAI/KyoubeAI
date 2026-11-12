@@ -4,7 +4,7 @@ import { route, statusForError } from "../api-routes.js";
 import type { AppService } from "../apps/service.js";
 import type { DataActor } from "../data/permissions.js";
 import type { DataService } from "../data/service.js";
-import { runTool } from "../tool-runtime.js";
+import { MAX_CONTENT_CHARS, runTool } from "../tool-runtime.js";
 import { PLUGIN_VERSION } from "../version.js";
 import { buildCatalogue, type McpTool } from "./catalogue.js";
 
@@ -13,9 +13,6 @@ export const MCP_API_ROUTES: PluginApiRouteDeclaration[] = [
   route("mcp.tools", "GET", "/mcp/tools", "board"),
   route("mcp.call", "POST", "/mcp/call", "board"),
 ];
-
-/** The data larger than this goes back as the agent's truncated text instead. */
-const MAX_DATA_CHARS = 20_000;
 
 const callBody = z.object({ companyId: z.string(), tool: z.string(), arguments: z.record(z.string(), z.unknown()) });
 
@@ -79,10 +76,11 @@ async function call(
       }
       return INTERNAL_ERROR;
     }
-    const size = (JSON.stringify(result.data) ?? "null").length;
-    return size <= MAX_DATA_CHARS
-      ? { status: 200, body: { outcome: "completed", data: result.data } }
-      : { status: 200, body: { outcome: "completed", truncated: true, content: result.content } };
+    // Truncated exactly when an agent's result would be: `formatToolResult` only
+    // grows the text past the limit by appending its truncation note.
+    return result.content.length > MAX_CONTENT_CHARS
+      ? { status: 200, body: { outcome: "completed", truncated: true, content: result.content } }
+      : { status: 200, body: { outcome: "completed", data: result.data } };
   } catch (error) {
     log?.("mcp call failed", { tool: tool.entry.name, companyId: input.companyId, error: String(error) });
     return INTERNAL_ERROR;

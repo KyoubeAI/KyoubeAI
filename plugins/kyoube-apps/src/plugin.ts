@@ -754,9 +754,11 @@ export function createAppsPlugin(deps: AppsPluginDeps): PaperclipPlugin {
         }
       }
       // A person's assistant (the core's `/mcp/kyoubeai` bridge) runs the data
-      // and app tools as that person.
+      // and app tools as that person. A refused tool call is ordinary, so it logs
+      // at warn, as the agent tool path does.
       if (input.routeKey.startsWith("mcp.")) {
-        return (await handleMcpApiRequest({ data: dataService, apps: appService }, input, onError))!;
+        const onWarn = log ? (message: string, meta?: Record<string, unknown>) => log.warn(message, meta) : undefined;
+        return (await handleMcpApiRequest({ data: dataService, apps: appService }, input, onWarn))!;
       }
       // The apps dispatcher answers every `apps.*` route and returns null for
       // anything else, so a data route falls through untouched.

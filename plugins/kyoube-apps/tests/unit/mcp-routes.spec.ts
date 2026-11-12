@@ -117,6 +117,31 @@ describe("handleMcpApiRequest", () => {
     expect(body).not.toHaveProperty("data");
   });
 
+  // `{ value: "x" * k }` pretty-prints to k + 17 characters and compacts to k + 12,
+  // so these two sit either side of the agents' 20,000-character limit on the
+  // pretty text while both compact forms stay under it.
+  async function queryReturning(result: unknown) {
+    const data = { query: async () => result } as unknown as DataService;
+    const response = await handleMcpApiRequest({ data, apps: {} as AppService }, request("mcp.call", { companyId: COMPANY, tool: "kyoubeai_data_query", arguments: { table: "deals" } }));
+    return response!.body as { outcome: string; truncated?: boolean; content?: string; data?: unknown };
+  }
+
+  it("truncates exactly when an agent's result would be truncated", async () => {
+    const over = { value: "x".repeat(19_984) };
+    expect(JSON.stringify(over).length).toBeLessThan(20_000);
+    expect(JSON.stringify(over, null, 2).length).toBe(20_001);
+    const body = await queryReturning(over);
+    expect(body).toMatchObject({ outcome: "completed", truncated: true });
+    expect(body.content).toContain("truncated");
+    expect(body).not.toHaveProperty("data");
+  });
+
+  it("returns the full data when an agent's result would not be truncated", async () => {
+    const under = { value: "x".repeat(19_983) };
+    expect(JSON.stringify(under, null, 2).length).toBe(20_000);
+    expect(await queryReturning(under)).toEqual({ outcome: "completed", data: under });
+  });
+
   it("leaves other routes to the other dispatchers", async () => {
     expect(await handleMcpApiRequest(services().services, request("tables.list", undefined))).toBeNull();
   });

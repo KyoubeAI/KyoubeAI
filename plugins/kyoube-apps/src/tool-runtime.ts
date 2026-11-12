@@ -18,7 +18,8 @@ export interface ToolDefinition<S> {
   run: (service: S, companyId: string, actor: DataActor, params: any) => Promise<unknown>;
 }
 
-const MAX_CONTENT_CHARS = 20_000;
+/** The longest tool text an agent (or a person's assistant) gets before the truncation note. */
+export const MAX_CONTENT_CHARS = 20_000;
 
 export function formatToolResult(data: unknown): string {
   const text = JSON.stringify(data, null, 2) ?? "null";
