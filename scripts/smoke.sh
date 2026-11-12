@@ -1269,6 +1269,7 @@ mcp_tool() { # token tool arguments-json -> the tool's result in $TMP/mcp.json
 MCP_TOKEN="$(mcp_token "$COOKIES" true true)"
 mcp_call "$MCP_TOKEN" initialize '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"kyoube-smoke","version":"1"}}'
 jq -e '.capabilities.tools != null' "$TMP/mcp.json" >/dev/null || { echo "MCP initialize offered no tools: $(cat "$TMP/mcp.json")" >&2; exit 1; }
+jq -e '.serverInfo.name == "kyoubeai"' "$TMP/mcp.json" >/dev/null || { echo "MCP initialize does not announce the server as kyoubeai: $(cat "$TMP/mcp.json")" >&2; exit 1; }
 mcp_call "$MCP_TOKEN" tools/list '{}'
 cp "$TMP/mcp.json" "$TMP/mcp-tools.json"
 # The directory's rules: no upstream name, a title, a read-only or destructive hint, names of at most 64 characters.

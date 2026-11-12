@@ -30,6 +30,7 @@ const IDS = [
   "mcp-setup-after-approval",
   "mcp-setup-no-headless",
   "mcp-ui-configure-label",
+  "mcp-server-info-name",
   "mcp-bridge-register",
   "mcp-bridge-import-capabilities",
   "mcp-bridge-executor-removed",
@@ -192,6 +193,27 @@ describe("the mcp-* entries", () => {
     expect(index).not.toContain("Configure agents, projects and skills");
   });
 
+  it("announces the server as kyoubeai on /mcp/kyoubeai, and leaves the Dot runner's name alone", async () => {
+    const ROUTES = "server/dist/routes/public-mcp.js";
+    const before = await readFile(path.join(root, ROUTES), "utf8");
+    expect(before.split('name: "paperclip", version: "0.1.0" }')).toHaveLength(3);
+    await applyPatches(root, MCP_PATCHES());
+    const text = await readFile(path.join(root, ROUTES), "utf8");
+    expect(text).not.toContain('name: "paperclip", version: "0.1.0" }');
+    // The MCP SDK server's info on initialize, and the serverInfo _meta on the JSON-RPC answers.
+    const announced = 'name: agentConnection ? "paperclip" : "kyoubeai", version: "0.1.0" }';
+    expect(text.split(announced)).toHaveLength(3);
+    expect(text).toContain(`new Server({ ${announced}, { capabilities: { tools: {} } });`);
+    expect(text).toContain(`"io.modelcontextprotocol/serverInfo": { ${announced} }`);
+    // Both sit in publicMcpIngressRoutes, after its agentConnection (true for the Dot runner's /mcp/runner).
+    const fn = text.indexOf("export function publicMcpIngressRoutes(");
+    const declared = text.indexOf("const agentConnection = endpoint === DOT_RUNNER_MCP_PATH;", fn);
+    expect(fn).toBeGreaterThan(-1);
+    expect(declared).toBeGreaterThan(fn);
+    expect(text.indexOf(announced)).toBeGreaterThan(declared);
+    expect(text.slice(fn + 1, text.lastIndexOf(announced)).includes("\nexport function ")).toBe(false);
+  });
+
   it("every patched .js file still parses", async () => {
     await applyPatches(root, MCP_PATCHES());
     const files = (await listFiles(root)).filter((file) => file.endsWith(".js"));
@@ -260,7 +282,8 @@ describe("the bridge wiring", () => {
   const WRITE = { name: "kyoubeai_create_task", description: "Create", write: true, schema: z.object({}).strict(), run: async () => ({}) };
   const SEARCH = { name: "kyoubeai_search_api", description: "Search", schema: z.object({}).passthrough(), run: async () => ({}) };
   const CALL = { name: "kyoubeai_call_api", description: "Call", write: true, destructive: true, schema: z.object({}).passthrough(), run: async () => ({}) };
-  const CORE = [READ, WRITE, SEARCH, CALL];
+  const TITLED = { name: "kyoubeai_list_agents", title: "Agents in this company", description: "Agents", schema: z.object({}).strict(), run: async () => ({}) };
+  const CORE = [READ, WRITE, SEARCH, CALL, TITLED];
   const TABLES = { name: "kyoubeai_data_list_tables", title: "Data list tables", description: "List tables", inputSchema: { type: "object" }, tier: "read", annotations: { readOnlyHint: true } };
   const TABLES_LISTED = { name: TABLES.name, title: TABLES.title, description: TABLES.description, inputSchema: TABLES.inputSchema, annotations: TABLES.annotations };
   const catalogue = async (_p, method, url) => {
@@ -334,14 +357,16 @@ describe("the bridge wiring", () => {
     bridge.registerDispatch(catalogue);
     const extension = { listTools: async () => [{ name: "ext_tool" }] };
     const { tools } = await mod.default({ agentConnection: false, publicMcpCapabilities: CORE, extension, principal })();
-    expect(tools.map((tool) => tool.name)).toEqual(["kyoubeai_connection", "kyoubeai_create_task", "kyoubeai_data_list_tables", "ext_tool"]);
+    expect(tools.map((tool) => tool.name)).toEqual(["kyoubeai_connection", "kyoubeai_create_task", "kyoubeai_list_agents", "kyoubeai_data_list_tables", "ext_tool"]);
     expect(tools[0]).toEqual({
       name: "kyoubeai_connection", title: "Connection", description: "Who", inputSchema: z.toJSONSchema(READ.schema),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     });
     expect(tools[1].title).toBe("Create task");
     expect(tools[1].annotations).toEqual({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true });
-    expect(tools[2]).toEqual(TABLES_LISTED);
+    // A capability's own title wins over the bridge's.
+    expect(tools[2].title).toBe("Agents in this company");
+    expect(tools[3]).toEqual(TABLES_LISTED);
     // The Dot runner's connection lists only its own tools, as before.
     const agent = await mod.default({ agentConnection: true, publicMcpCapabilities: CORE, extension, principal })();
     expect(agent.tools.map((tool) => tool.name)).toEqual(["ext_tool"]);
@@ -353,8 +378,9 @@ describe("the bridge wiring", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const { tools } = await mod.default({ agentConnection: false, publicMcpCapabilities: CORE, extension: undefined, principal })();
-      expect(tools.map((tool) => tool.name)).toEqual(["kyoubeai_connection", "kyoubeai_create_task"]);
-      expect(tools.some((tool) => "title" in tool)).toBe(false);
+      expect(tools.map((tool) => tool.name)).toEqual(["kyoubeai_connection", "kyoubeai_create_task", "kyoubeai_list_agents"]);
+      // Only a capability's own title is left.
+      expect(tools.filter((tool) => "title" in tool).map((tool) => tool.title)).toEqual(["Agents in this company"]);
       expect(error).toHaveBeenCalledWith("[kyoube] MCP bridge unavailable", expect.anything());
     } finally {
       error.mockRestore();

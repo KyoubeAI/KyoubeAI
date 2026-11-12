@@ -808,6 +808,19 @@ export const PATCHES = [
     replacement: "Configure agents, projects, skills, tables and apps",
     expect: 2,
   },
+  {
+    id: "mcp-server-info-name",
+    title: "MCP connector: /mcp/kyoubeai announces itself as kyoubeai",
+    standing: "KyoubeAI MCP connector",
+    files: ["server/dist/routes/public-mcp.js"],
+    // The two serverInfo names in publicMcpIngressRoutes (2026.1023.0): the JSON-RPC answers'
+    // `io.modelcontextprotocol/serverInfo` _meta and the MCP SDK Server that answers initialize. Lower
+    // case, so the rebrand leaves them. The same routes serve the Dot runner's /mcp/runner, where
+    // `agentConnection` is true; that one keeps the core's name.
+    pattern: /\bname: "paperclip", version: "0\.1\.0" \}/g,
+    replacement: 'name: agentConnection ? "paperclip" : "kyoubeai", version: "0.1.0" }',
+    expect: 2,
+  },
   // The bridge wiring: KyoubeAI's table and app tools (kyoubeai_data_*, kyoubeai_apps_*, served by the
   // kyoube.apps plugin) join the core's own on /mcp/kyoubeai and run through the core's executor, so
   // its scope checks, viewer refusal and write receipts apply to them unchanged. The patched files
@@ -886,15 +899,16 @@ export const PATCHES = [
     standing: "KyoubeAI MCP connector",
     files: ["server/dist/routes/public-mcp.js"],
     // The endpoint's listTools, in publicMcpIngressRoutes (2026.1023.0). The core tools, without the
-    // two generic API tools and titled by the bridge, whose idempotentHint holds only for reads; then,
+    // two generic API tools, each with its own title if it has one (none do in 2026.1023.0) or else the
+    // bridge's, and an idempotentHint that holds only for reads; then,
     // on the person's connection (not the Dot runner's agent connection), KyoubeAI's tools from the
     // bridge; then the extension's tools as before. A bridge that cannot be loaded is logged and the
-    // list is the core's, untitled, so tools/list still answers.
+    // list is the core's, untitled but for a capability's own title, so tools/list still answers.
     pattern: /const listTools = async \(\) => \(\{\n( *)tools: \[\.\.\.\(agentConnection \? \[\] : publicMcpCapabilities\)\.map\(\(c\) => \(\{\n( *)name: c\.name, description: c\.description, inputSchema: z\.toJSONSchema\(c\.schema\),\n *annotations: \{ readOnlyHint: !c\.write && !c\.configure, destructiveHint: !!c\.destructive, idempotentHint: true, openWorldHint: !!c\.write \|\| !!c\.configure \},\n( *)\}\)\), \.\.\.await extension\?\.listTools\(principal\) \?\? \[\]\],\n( *)\}\);/g,
     replacement:
       `const listTools = async () => { ${MCP_MARKER} const bridge = await kyoubeMcp().catch((error) => { console.error("[kyoube] MCP bridge unavailable", error); return null; }); return {\n` +
       `$1tools: [...(agentConnection ? [] : publicMcpCapabilities).filter((c) => !${MCP_REMOVED_TOOLS}.includes(c.name)).map((c) => ({\n` +
-      "$2name: c.name, ...(bridge ? { title: bridge.titleFor(c.name) } : {}), description: c.description, inputSchema: z.toJSONSchema(c.schema),\n" +
+      "$2name: c.name, ...(c.title ? { title: c.title } : bridge ? { title: bridge.titleFor(c.name) } : {}), description: c.description, inputSchema: z.toJSONSchema(c.schema),\n" +
       "$2annotations: { readOnlyHint: !c.write && !c.configure, destructiveHint: !!c.destructive, idempotentHint: !c.write && !c.configure, openWorldHint: !!c.write || !!c.configure },\n" +
       "$3})), ...(!agentConnection && bridge ? await bridge.listTools(principal) : []), ...await extension?.listTools(principal) ?? []],\n" +
       "$4}; };",
