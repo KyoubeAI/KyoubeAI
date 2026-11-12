@@ -439,6 +439,55 @@ export async function boardKeyDoctorCheck(input: { env: NodeJS.ProcessEnv; keyPa
   }
 }
 
+const LOCALHOST_URL = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i;
+
+/**
+ * The `assistant connections` line: whether the core's MCP endpoint is on, whether assistants can
+ * sign in at the public URL, and whether the KyoubeAI table and app tools reach it. The sign-in
+ * metadata is read at the API origin, since doctor runs inside the container.
+ */
+export async function assistantConnectionsCheck(input: {
+  publicUrl: string;
+  apiBase: string;
+  boardKey: string | null;
+  companyId: string | null;
+  fetchImpl?: typeof fetch;
+}): Promise<Check> {
+  const name = "assistant connections";
+  const doFetch = input.fetchImpl ?? fetch;
+  const wellKnown = `${new URL(input.apiBase).origin}/.well-known/oauth-protected-resource/mcp/kyoubeai`;
+  let status: number;
+  try {
+    status = (await doFetch(wellKnown)).status;
+  } catch (error) {
+    return { name, ok: false, detail: `could not read the MCP sign-in metadata (${error instanceof Error ? error.message : String(error)}) (docs/mcp.md)` };
+  }
+  if (status === 503) return { name, ok: true, detail: "off — Settings → Experimental → Assistant connections (MCP) to turn on (docs/mcp.md)" };
+  if (status !== 200) return { name, ok: false, detail: `could not read the MCP sign-in metadata (${status}) (docs/mcp.md)` };
+
+  const publicUrl = input.publicUrl.replace(/\/+$/, "");
+  if (!publicUrl.startsWith("https://") && !LOCALHOST_URL.test(publicUrl)) {
+    return { name, ok: false, detail: "on, but KYOUBE_PUBLIC_URL is not https:// — assistants cannot sign in (docs/mcp.md)" };
+  }
+  const endpoint = `${publicUrl}/mcp/kyoubeai`;
+  if (!input.companyId) return { name, ok: true, detail: `on at ${endpoint} — no company yet` };
+
+  const unavailable: Check = { name, ok: false, detail: "on, but the table and app tools are unavailable — see Settings → Plugins → kyoube.apps → Logs" };
+  if (!input.boardKey) return unavailable;
+  try {
+    const response = await doFetch(`${input.apiBase}/plugins/kyoube.apps/api/mcp/tools?companyId=${encodeURIComponent(input.companyId)}`, {
+      headers: { Authorization: `Bearer ${input.boardKey}` },
+    });
+    if (!response.ok) return unavailable;
+    const body = (await response.json()) as { tools?: unknown };
+    if (!Array.isArray(body.tools)) return unavailable;
+    const link = `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=KyoubeAI&connectorUrl=${encodeURIComponent(endpoint)}`;
+    return { name, ok: true, detail: `on at ${endpoint}, ${body.tools.length} KyoubeAI tools — Add to Claude: ${link}` };
+  } catch {
+    return unavailable;
+  }
+}
+
 export function formatCheck(check: Check): string {
   return `${check.ok ? (check.warn ? "WARN" : "ok  ") : "FAIL"} ${check.name.padEnd(20)} ${check.detail}`;
 }
@@ -497,6 +546,14 @@ export async function runDoctor(env: NodeJS.ProcessEnv): Promise<number> {
     } catch (error) {
       checks.push({ name: "plugins", ok: false, detail: error instanceof Error ? error.message : String(error) });
     }
+    let firstCompanyId: string | null = null;
+    try {
+      const authed = createCoreClient({ apiBase: config.paperclipApiUrl, apiKey });
+      firstCompanyId = (await authed.listCompanies())[0]?.id ?? null;
+    } catch {
+      // the skills check below reports an unreachable core
+    }
+    checks.push(await assistantConnectionsCheck({ publicUrl: env.KYOUBE_PUBLIC_URL ?? "", apiBase: config.paperclipApiUrl, boardKey: apiKey, companyId: firstCompanyId }));
     try {
       const authed = createCoreClient({ apiBase: config.paperclipApiUrl, apiKey });
       const companies = await authed.listCompanies();

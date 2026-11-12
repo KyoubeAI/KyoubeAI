@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import {
-  LEGACY_ENV_KEYS, agentQuestionsCheck, boardKeyDoctorCheck, agentQuestionsDoctorCheck, agentRulesChecks, agentRulesDoctorChecks, claudeCredentialDetail, exposureWarning, formatCheck, harnessChecks, harnessesInUseCheck, legacyEnvCheck, legacyHomeLinkCheck, licenceCheck, licenceEnforcementCheck, pushTestEndpointCheck, questionCountsText, skillsCheck, systemPackagesCheck,
+  LEGACY_ENV_KEYS, assistantConnectionsCheck, agentQuestionsCheck, boardKeyDoctorCheck, agentQuestionsDoctorCheck, agentRulesChecks, agentRulesDoctorChecks, claudeCredentialDetail, exposureWarning, formatCheck, harnessChecks, harnessesInUseCheck, legacyEnvCheck, legacyHomeLinkCheck, licenceCheck, licenceEnforcementCheck, pushTestEndpointCheck, questionCountsText, skillsCheck, systemPackagesCheck,
 } from "../src/commands/doctor.js";
 import { licenseStatus } from "@kyoube/license";
 import type { BoardKeyApi } from "../src/board-key-renewal.js";
@@ -562,5 +562,69 @@ describe("boardKeyDoctorCheck", () => {
   it("reports a missing key, and only warns when the core cannot say when a key expires", async () => {
     expect(await check({}, false, null)).toEqual({ name: "board key", ok: false, detail: "missing — run kyoube setup" });
     expect(await check({}, true, new Error("connect ECONNREFUSED"))).toEqual({ name: "board key", ok: true, warn: true, detail: "stored (user u1); could not read when it expires: connect ECONNREFUSED" });
+  });
+});
+
+describe("assistantConnectionsCheck", () => {
+  const link = (url: string) => `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=KyoubeAI&connectorUrl=${encodeURIComponent(`${url}/mcp/kyoubeai`)}`;
+  const reply = (status: number, body: unknown = {}) => new Response(JSON.stringify(body), { status });
+  const run = (
+    handler: (url: string, init?: RequestInit) => Response | Promise<Response>,
+    over: Partial<{ publicUrl: string; boardKey: string | null; companyId: string | null }> = {},
+  ) => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      return handler(String(input), init);
+    }) as typeof fetch;
+    return assistantConnectionsCheck({ publicUrl: "https://kyoube.example.com", apiBase: "http://127.0.0.1:3100/api", boardKey: "key", companyId: "c1", fetchImpl, ...over }).then((check) => ({ check, calls }));
+  };
+  const on = (url: string) => (url.includes("/.well-known/") ? reply(200) : reply(200, { version: 1, tools: [{}, {}, {}] }));
+
+  it("is off, and fine, when the core answers 503", async () => {
+    const { check, calls } = await run(() => reply(503, { error: "disabled" }));
+    expect(check).toEqual({ name: "assistant connections", ok: true, detail: "off — Settings → Experimental → Assistant connections (MCP) to turn on (docs/mcp.md)" });
+    expect(calls[0]!.url).toBe("http://127.0.0.1:3100/.well-known/oauth-protected-resource/mcp/kyoubeai");
+  });
+
+  it("fails when it is on but the public URL is not https", async () => {
+    const { check } = await run(on, { publicUrl: "http://kyoube.lan" });
+    expect(check).toEqual({ name: "assistant connections", ok: false, detail: "on, but KYOUBE_PUBLIC_URL is not https:// — assistants cannot sign in (docs/mcp.md)" });
+  });
+
+  it("accepts localhost public URLs on any port", async () => {
+    for (const publicUrl of ["http://localhost:3100", "http://127.0.0.1", "http://[::1]:3100"]) {
+      const { check } = await run(on, { publicUrl });
+      expect(check.ok, publicUrl).toBe(true);
+    }
+  });
+
+  it("reports the address, the tool count and the Add to Claude link", async () => {
+    const { check, calls } = await run(on, { publicUrl: "https://kyoube.example.com/" });
+    expect(check).toEqual({
+      name: "assistant connections",
+      ok: true,
+      detail: `on at https://kyoube.example.com/mcp/kyoubeai, 3 KyoubeAI tools — Add to Claude: ${link("https://kyoube.example.com")}`,
+    });
+    expect(calls[1]!.url).toBe("http://127.0.0.1:3100/api/plugins/kyoube.apps/api/mcp/tools?companyId=c1");
+    expect((calls[1]!.init?.headers as Record<string, string>).Authorization).toBe("Bearer key");
+  });
+
+  it("fails when the catalogue cannot be fetched", async () => {
+    const detail = "on, but the table and app tools are unavailable — see Settings → Plugins → kyoube.apps → Logs";
+    expect((await run((url) => (url.includes("/.well-known/") ? reply(200) : reply(403)))).check).toEqual({ name: "assistant connections", ok: false, detail });
+    expect((await run((url) => { if (url.includes("/.well-known/")) return reply(200); throw new Error("boom"); })).check.detail).toBe(detail);
+    expect((await run(on, { boardKey: null })).check.detail).toBe(detail);
+  });
+
+  it("stays ok when there is no company yet", async () => {
+    const { check, calls } = await run(on, { companyId: null });
+    expect(check).toEqual({ name: "assistant connections", ok: true, detail: "on at https://kyoube.example.com/mcp/kyoubeai — no company yet" });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("fails when the sign-in metadata cannot be read", async () => {
+    expect((await run(() => reply(500))).check).toEqual({ name: "assistant connections", ok: false, detail: "could not read the MCP sign-in metadata (500) (docs/mcp.md)" });
+    expect((await run(() => { throw new Error("connect ECONNREFUSED"); })).check.detail).toBe("could not read the MCP sign-in metadata (connect ECONNREFUSED) (docs/mcp.md)");
   });
 });
