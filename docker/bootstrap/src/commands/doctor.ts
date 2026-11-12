@@ -553,7 +553,7 @@ export async function runDoctor(env: NodeJS.ProcessEnv): Promise<number> {
     } catch {
       // the skills check below reports an unreachable core
     }
-    checks.push(await assistantConnectionsCheck({ publicUrl: env.KYOUBE_PUBLIC_URL ?? "", apiBase: config.paperclipApiUrl, boardKey: apiKey, companyId: firstCompanyId }));
+    checks.push(await assistantConnectionsCheck({ publicUrl: config.publicUrl, apiBase: config.paperclipApiUrl, boardKey: apiKey, companyId: firstCompanyId }));
     try {
       const authed = createCoreClient({ apiBase: config.paperclipApiUrl, apiKey });
       const companies = await authed.listCompanies();
