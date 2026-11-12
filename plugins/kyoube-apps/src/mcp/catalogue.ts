@@ -54,8 +54,14 @@ export const MCP_SETTINGS: Record<string, { tier: McpTier; destructive?: true; d
   data_drop_table: { tier: "configure", destructive: true },
   data_rename_table: { tier: "configure" },
   data_create_index: { tier: "configure" },
-  apps_publish: { tier: "configure" },
-  apps_rollback: { tier: "configure" },
+  apps_publish: {
+    tier: "configure",
+    description: "Publish a version (default: latest) so company members can open it. Declared tables must exist. Requires schema access. If the version adds or changes decision sets, connections or task templates, the call is refused until you show the person what changed and they agree; then send it again with decisionsConfirmed, connectionsConfirmed or tasksConfirmed set to true.",
+  },
+  apps_rollback: {
+    tier: "configure",
+    description: "Point the published app at an earlier version. Requires schema access. If that version has different decision sets, connections or task templates, the call is refused until you show the person what changed and they agree; then send it again with decisionsConfirmed, connectionsConfirmed or tasksConfirmed set to true.",
+  },
   apps_archive: { tier: "configure", destructive: true },
 };
 

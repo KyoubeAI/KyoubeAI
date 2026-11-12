@@ -77,6 +77,16 @@ describe("the MCP catalogue", () => {
       "List the rows whose AI column answers are waiting for a person to review: row id, field, the model's suggestion and its confidence. No row values; read the rows with kyoubeai_data_get.",
     );
     expect(entries.find((entry) => entry.name === "kyoubeai_apps_create")!.description).toContain("Publish it with kyoubeai_apps_publish.");
+    for (const entry of entries) {
+      expect(entry.description).not.toContain("the person who started the task");
+      expect(entry.description).not.toContain("your task");
+    }
+    expect(entries.find((entry) => entry.name === "kyoubeai_apps_publish")!.description).toBe(
+      "Publish a version (default: latest) so company members can open it. Declared tables must exist. Requires schema access. If the version adds or changes decision sets, connections or task templates, the call is refused until you show the person what changed and they agree; then send it again with decisionsConfirmed, connectionsConfirmed or tasksConfirmed set to true.",
+    );
+    expect(entries.find((entry) => entry.name === "kyoubeai_apps_rollback")!.description).toBe(
+      "Point the published app at an earlier version. Requires schema access. If that version has different decision sets, connections or task templates, the call is refused until you show the person what changed and they agree; then send it again with decisionsConfirmed, connectionsConfirmed or tasksConfirmed set to true.",
+    );
     expect(entries.find((entry) => entry.name === "kyoubeai_data_drop_table")!.description).toBe("Drop a table. Recoverable for 30 days unless the company enabled hard deletes. Requires schema access.");
   });
 
