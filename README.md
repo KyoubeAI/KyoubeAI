@@ -392,8 +392,8 @@ Claude, Claude Code, Codex, OpenCode and other MCP clients can connect to a comp
 then works with tasks, agents, projects, skills, data tables and apps as you, never with more access
 than you have. An instance admin turns it on under **Settings → Experimental → Assistant connections
 (MCP)**. It needs an `https://` address, or `localhost` for a client on the same machine. `kyoube
-doctor` prints an **Add to Claude** link once it is on. [docs/mcp.md](docs/mcp.md) has the setup for
-each assistant, the tools and their tiers, and the limits.
+doctor` prints an **Add to Claude** link once it is on (on `localhost`, the Claude Code command).
+[docs/mcp.md](docs/mcp.md) has the setup for each assistant, the tools and their tiers, and the limits.
 
 ## Development
 

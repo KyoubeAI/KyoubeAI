@@ -17,7 +17,7 @@ building on it. The format is loosely [Keep a Changelog](https://keepachangelog.
 - **Add to Claude.** The setup page has a Claude (web, Desktop, mobile) section with a link that opens
   Claude's custom connector form with KyoubeAI filled in.
 - **`kyoube doctor` checks assistant connections**: off, on with the tool count and the Add to Claude
-  link, or what stops assistants signing in.
+  link (on a `localhost` address, the Claude Code command instead), or what stops assistants signing in.
 
 ### Changed
 

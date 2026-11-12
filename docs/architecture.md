@@ -141,10 +141,10 @@ agent's effective tool profile permits at least one installed `mcp_remote`/`loca
 2026.1005.0, also a Browser Use Cloud connection or the chat's GitHub bot connection) —
 `buildPaperclipRuntimeMcpServers` in upstream's `heartbeat.ts` returns nothing otherwise, and the
 `/mcp/runtime-tools` endpoint serves only the two connection-request tools. On a fresh instance no agent
-has such a connection, so the tools never reach the model. Where a gateway does exist, the same 24
-operations are available as `kyoube.apps:<tool>`: 17 `data_*` tools (`plugins/kyoube-apps/src/tools.ts`, from
-`data_list_tables` through `data_my_access`) and 7 `apps_*` tools (`plugins/kyoube-apps/src/apps/tools.ts`,
-`apps_list` through `apps_archive`). Every tool call is dispatched through the shared runtime in
+has such a connection, so the tools never reach the model. Where a gateway does exist, the same 25
+operations are available as `kyoube.apps:<tool>`: 18 `data_*` tools (`plugins/kyoube-apps/src/tools.ts`, from
+`data_list_tables` through `data_my_access`, including `data_list_review`) and 7 `apps_*` tools
+(`plugins/kyoube-apps/src/apps/tools.ts`, `apps_list` through `apps_archive`). Every tool call is dispatched through the shared runtime in
 `plugins/kyoube-apps/src/tool-runtime.ts`, which validates the params against the tool's own Zod schema,
 builds the actor from the host-authenticated run context alone (`runCtx.agentId`, `runCtx.companyId` —
 never from the model's own arguments), and calls the same `DataService`/`AppService` the browser path
@@ -220,7 +220,8 @@ A person's assistant (Claude, Claude Code, Codex, OpenCode) calls the core's MCP
 The answer is shaped for the core's executor. Success is `{ outcome: "completed", data }`, or
 `{ outcome: "completed", truncated: true, content }` past 20,000 characters. A `DataError` below 500 is
 a 200 `{ outcome: "rejected", status, code, message }`, because the internal dispatch replaces a 4xx
-body with a generic message. Anything else is a 500, which the executor reports as `outcome: unknown`.
+body with a generic message. Anything else is a 500, which the executor reports as `outcome: unknown`
+for a write or configure call; for a read it returns its generic "rejected the operation (HTTP 500)" text.
 See [`mcp.md`](mcp.md).
 
 ### App task → agent

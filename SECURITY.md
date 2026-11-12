@@ -704,8 +704,9 @@ needs an `https://` public URL or localhost.
   company's activity log with the tool name. Table changes are also audited in `kyoube_meta.audit` as
   they are from the Data page. Reads are not logged.
 - **Errors do not leak.** A Kyoube refusal (a `DataError` below 500) comes back as
-  `outcome: "rejected"` with its caller-safe message. Any other error is a 500, which the core reports
-  as `outcome: unknown`; the real error goes to the operator log only.
+  `outcome: "rejected"` with its caller-safe message. Any other error is a 500. On a write or configure
+  call the core reports it as `outcome: unknown`; on a read it returns its generic "rejected the
+  operation (HTTP 500)" text. Either way the real error goes to the operator log only.
 - **Residual: the person-only app gates.** Publishing or rolling back an app version that adds or
   changes decision sets, connections or task templates needs a person, and agents are refused. A call
   over an assistant connection counts as the person, so the assistant can send the

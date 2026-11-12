@@ -156,9 +156,14 @@ Some rules apply to every call:
   again with the same arguments, the stored result is returned and nothing runs twice; with different
   arguments it is refused. Assistants handle this themselves.
 - **The company comes from the connection.** No argument can name another company.
+- **The guardrail does not apply.** The company's guardrail on risky agent actions
+  ([decisions.md](decisions.md#the-guardrail)) checks agents only, and a call over a connection counts
+  as you.
 - **Refusals carry their reason.** A Kyoube refusal comes back as `outcome: "rejected"` with its code
   and message, such as `forbidden` with the level you lack, or `invalid` with the field at fault. A
-  server error comes back as `outcome: unknown`, which tells the assistant to check before acting again.
+  server error on a write or configure call comes back as `outcome: unknown`, which tells the assistant
+  to check before acting again; on a read it comes back as the core's generic "rejected the operation
+  (HTTP 500)" message. The error itself stays in the server log.
 - **Long results are cut** at 20,000 characters, with the same note agents get: narrow the query or
   use `limit` and `offset`.
 
