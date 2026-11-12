@@ -24,6 +24,7 @@ const IDS = [
   "mcp-setup-client-names",
   "mcp-setup-claude-web",
   "mcp-setup-after-approval",
+  "mcp-setup-no-headless",
   "mcp-ui-configure-label",
 ];
 const URL_ = "https://k.example/mcp/kyoubeai";
@@ -146,6 +147,11 @@ describe("the mcp-* entries", () => {
     expect(markdown).not.toContain("## Headless");
     expect(markdown).toContain("then summarize agents, open tasks and data tables.");
     expect(markdown).not.toMatch(/\b(add|login|auth|select|name) paperclip\b/);
+    // Headless is gone, so no step may send anyone to it.
+    const other = setup.mcpSetupSteps(URL_, "other");
+    expect(other[1].text).toContain("If it cannot receive a browser callback, use Claude Code, Codex or OpenCode instead.");
+    expect(JSON.stringify(other)).not.toContain("Headless");
+    expect(markdown).not.toContain("Headless");
   });
 
   it("the minified UI copy of the setup steps gets the same changes", async () => {
@@ -158,6 +164,8 @@ describe("the mcp-* entries", () => {
     expect(KX(URL_, "claude_web")).toEqual(CLAUDE_WEB_STEPS);
     expect(KX(URL_, "claude")[0].code).toContain("claude mcp add --transport http kyoubeai");
     expect(KX(URL_, "opencode")[1].code).toBe("opencode mcp auth kyoubeai");
+    expect(KX(URL_, "other")[1].text).toContain("If it cannot receive a browser callback, use Claude Code, Codex or OpenCode instead.");
+    expect(JSON.stringify(KX(URL_, "other"))).not.toContain("Headless");
     expect(Object.keys(JSON.parse(KX(URL_, "opencode")[0].code).mcp)).toEqual(["kyoubeai"]);
     const index = await readFile(path.join(root, "ui/dist/assets/index-YJY9oyby.js"), "utf8");
     expect(index.split("Configure agents, projects, skills, tables and apps")).toHaveLength(3);

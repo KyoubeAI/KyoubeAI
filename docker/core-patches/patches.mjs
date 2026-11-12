@@ -771,6 +771,17 @@ export const PATCHES = [
     expect: 1,
   },
   {
+    id: "mcp-setup-no-headless",
+    title: "MCP connector: the Other setup steps no longer point to the removed Headless section",
+    standing: "KyoubeAI MCP connector",
+    files: ["packages/shared/dist/mcp-setup.js", "ui/dist/assets/agent-avatar-url-*.js"],
+    // The default (Other) case of `mcpSetupSteps`, in both copies (2026.1023.0). `mcp-setup-client-names`
+    // removes the Headless section this sentence sent people to.
+    pattern: /If it cannot receive a browser callback, use the Headless instructions\./g,
+    replacement: "If it cannot receive a browser callback, use Claude Code, Codex or OpenCode instead.",
+    expect: 2,
+  },
+  {
     id: "mcp-ui-configure-label",
     title: "MCP connector: a configure connection reads \"Configure agents, projects, skills, tables and apps\"",
     standing: "KyoubeAI MCP connector",
