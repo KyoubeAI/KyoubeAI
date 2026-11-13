@@ -4,7 +4,9 @@ import { createPolicyReader, type PolicyReader } from "@kyoube/visibility";
 import { RoleResolver } from "./auth.js";
 import { FilesError } from "./errors.js";
 import { WorkspaceFiles } from "./fs-service.js";
-import { PLUGIN_ID } from "./manifest.js";
+import { filesTabLink } from "./links.js";
+import { handleFilesMcpRequest, type FilesMcpDeps } from "./mcp/api-routes.js";
+import { PLUGIN_ID, PLUGIN_VERSION } from "./manifest.js";
 import { joinRelative, normalizeRelativePath, validateEntryName } from "./paths.js";
 import { resolveSettings, type FilesSettings } from "./settings.js";
 import { projectVisibleFor } from "./visibility.js";
@@ -87,6 +89,9 @@ export async function resolveWorkspaces(projects: PluginContext["projects"], pro
 
 export function createFilesPlugin(deps: FilesPluginDeps): PaperclipPlugin {
   let ready = false;
+  // `onApiRequest` runs outside `setup`, so what it needs is kept here, in this instance's closure.
+  let mcpDeps: FilesMcpDeps | null = null;
+  let warn: ((message: string, meta?: Record<string, unknown>) => void) | null = null;
 
   return definePlugin({
     async setup(ctx: PluginContext) {
@@ -118,18 +123,27 @@ export function createFilesPlugin(deps: FilesPluginDeps): PaperclipPlugin {
         const companyId = companyOf(context, params);
         const actor = context.actor;
         if (actor.type !== "user" || !actor.userId) throw new FilesError("forbidden", "project files require a signed-in user");
-        const settings = resolveSettings(await ctx.config.get(companyId));
-        const role = await roles.assertAllowed(companyId, actor.userId, need === "read" ? settings.readRoles : settings.writeRoles, need === "read" ? "browsing project files" : "changing project files", { fresh: need === "write" });
         const projectId = str(params, "projectId");
-        if (!(await projectVisibleFor(policyReader, companyId, { userId: actor.userId, role }, projectId))) {
+        const wanted = typeof params.workspaceId === "string" && params.workspaceId.length > 0 ? params.workspaceId : null;
+        return authorizePerson({ companyId, userId: actor.userId }, projectId, wanted, need);
+      }
+
+      /**
+       * The checks behind both the Files tab and the assistant connections,
+       * for a person already known to be a signed-in user of `companyId`.
+       */
+      async function authorizePerson(person: { companyId: string; userId: string }, projectId: string, folderId: string | null, need: "read" | "write"): Promise<Authorized> {
+        const { companyId, userId } = person;
+        const settings = resolveSettings(await ctx.config.get(companyId));
+        const role = await roles.assertAllowed(companyId, userId, need === "read" ? settings.readRoles : settings.writeRoles, need === "read" ? "browsing project files" : "changing project files", { fresh: need === "write" });
+        if (!(await projectVisibleFor(policyReader, companyId, { userId, role }, projectId))) {
           throw new FilesError("forbidden", "this project is outside what you can see");
         }
         const workspaces = await resolveWorkspaces(ctx.projects, projectId, companyId);
-        const wanted = typeof params.workspaceId === "string" && params.workspaceId.length > 0 ? params.workspaceId : null;
-        const workspace = wanted ? workspaces.find((item) => item.id === wanted) : workspaces[0];
-        if (!workspace) throw new FilesError("not_found", wanted ? "no such workspace in this project" : "this project has no folder");
+        const workspace = folderId ? workspaces.find((item) => item.id === folderId) : workspaces[0];
+        if (!workspace) throw new FilesError("not_found", folderId ? "no such workspace in this project" : "this project has no folder");
         const files = createFiles(workspace.path, { maxReadBytes: settings.maxDownloadMb * MB, maxWriteBytes: settings.maxUploadMb * MB });
-        return { companyId, userId: actor.userId, role, settings, projectId, workspace, files };
+        return { companyId, userId, role, settings, projectId, workspace, files };
       }
 
       /** One activity-log line per mutation: what and where, never content. */
@@ -143,19 +157,17 @@ export function createFilesPlugin(deps: FilesPluginDeps): PaperclipPlugin {
         });
       };
 
-      ctx.actions.register("files.workspaces", async (params, context) => {
-        const companyId = companyOf(context, params);
-        const actor = context.actor;
-        if (actor.type !== "user" || !actor.userId) throw new FilesError("forbidden", "project files require a signed-in user");
+      /** What the Files tab (and an assistant connection) may know about one project's folders for this person. */
+      async function describeFolders(person: { companyId: string; userId: string }, projectId: string) {
+        const { companyId, userId } = person;
         const settings = resolveSettings(await ctx.config.get(companyId));
-        const role = await roles.resolveRole(companyId, actor.userId);
+        const role = await roles.resolveRole(companyId, userId);
         const mayRead = role !== null && settings.readRoles.includes(role);
         const canWrite = role !== null && settings.writeRoles.includes(role);
-        const projectId = str(params, "projectId");
         // A person who may not browse, or whose groups do not include this
         // project, learns only that the tab is closed to them — not the
         // folder's path.
-        const canRead = mayRead && (await projectVisibleFor(policyReader, companyId, { userId: actor.userId, role }, projectId));
+        const canRead = mayRead && (await projectVisibleFor(policyReader, companyId, { userId, role }, projectId));
         const workspaces = canRead ? await resolveWorkspaces(ctx.projects, projectId, companyId) : [];
         return {
           role,
@@ -164,6 +176,13 @@ export function createFilesPlugin(deps: FilesPluginDeps): PaperclipPlugin {
           limits: { maxEditableBytes: settings.maxEditableKb * KB, maxUploadBytes: settings.maxUploadMb * MB, maxDownloadBytes: settings.maxDownloadMb * MB },
           workspaces,
         };
+      }
+
+      ctx.actions.register("files.workspaces", async (params, context) => {
+        const companyId = companyOf(context, params);
+        const actor = context.actor;
+        if (actor.type !== "user" || !actor.userId) throw new FilesError("forbidden", "project files require a signed-in user");
+        return describeFolders({ companyId, userId: actor.userId }, str(params, "projectId"));
       });
 
       /**
@@ -257,6 +276,40 @@ export function createFilesPlugin(deps: FilesPluginDeps): PaperclipPlugin {
         return { ok: true, ...result };
       });
 
+      // The company's URL prefix for links, looked up once per company; a failed lookup means a bare link.
+      const prefixes = new Map<string, string | null>();
+      async function prefixOf(companyId: string): Promise<string | null> {
+        if (prefixes.has(companyId)) return prefixes.get(companyId) ?? null;
+        try {
+          const prefix = (await ctx.companies.get(companyId))?.issuePrefix || null;
+          prefixes.set(companyId, prefix);
+          return prefix;
+        } catch {
+          return null;
+        }
+      }
+
+      warn = (message, meta) => ctx.logger.warn(message, meta);
+      mcpDeps = {
+        version: PLUGIN_VERSION,
+        async contextFor(person, args, need) {
+          const auth = await authorizePerson(person, args.projectId, args.folderId ?? null, need);
+          return {
+            files: auth.files,
+            settings: auth.settings,
+            projectId: auth.projectId,
+            folder: { id: auth.workspace.id, name: auth.workspace.name },
+            link: filesTabLink(await prefixOf(person.companyId), auth.projectId),
+            audit: (operation, target, extra) => audit(auth, operation, target, extra),
+          };
+        },
+        async describeFolders(person, projectId) {
+          const info = await describeFolders(person, projectId);
+          // A server path is not for an assistant.
+          return { ...info, workspaces: info.workspaces.map(({ path: _path, ...rest }) => rest) };
+        },
+      };
+
       ready = true;
       ctx.logger.info(`${PLUGIN_ID} worker ready`);
     },
@@ -265,8 +318,19 @@ export function createFilesPlugin(deps: FilesPluginDeps): PaperclipPlugin {
       return ready ? { status: "ok", message: `${PLUGIN_ID} ready` } : { status: "degraded", message: `${PLUGIN_ID} not ready` };
     },
 
+    async onApiRequest(input) {
+      const handlers = mcpDeps;
+      if (!handlers) return { status: 503, body: { error: "plugin not ready" } };
+      const response = await handleFilesMcpRequest(handlers, input, warn ?? undefined);
+      if (response === null) return { status: 404, body: { error: `unknown route ${input.routeKey}`, code: "not_found" } };
+      const outcome = (response.body as { outcome?: string } | null)?.outcome;
+      if (outcome === "rejected") warn?.("project-file tool refused", { routeKey: input.routeKey, companyId: input.companyId });
+      return response;
+    },
+
     async onShutdown() {
       ready = false;
+      mcpDeps = null;
     },
   });
 }

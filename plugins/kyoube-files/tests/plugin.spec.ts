@@ -6,7 +6,7 @@ import { createTestHarness } from "@paperclipai/plugin-sdk/testing";
 import { compileCompanyPolicy, compileIndex, createPolicyReader, writePolicyFiles } from "@kyoube/visibility";
 import type { Project } from "@paperclipai/plugin-sdk";
 import type { PluginPerformActionContext } from "@paperclipai/plugin-sdk/protocol";
-import manifest from "../src/manifest.js";
+import manifest, { PLUGIN_VERSION } from "../src/manifest.js";
 import { createFilesPlugin, resolveWorkspaces } from "../src/plugin.js";
 
 const COMPANY = "11111111-1111-4111-8111-111111111111";
@@ -370,5 +370,104 @@ describe("lifecycle", () => {
     ]);
     expect(manifest.capabilities).toContain("ui.action.register");
     expect(manifest.capabilities).toContain("issues.read");
+  });
+});
+
+describe("project-file tools for assistant connections", () => {
+  const PREFIX = "KYO";
+  const REQUEST = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const reqId = (n: number) => `aaaaaaaa-aaaa-4aaa-8aaa-${String(n).padStart(12, "0")}`;
+  type Api = NonNullable<ReturnType<typeof createFilesPlugin>["definition"]["onApiRequest"]>;
+
+  function input(routeKey: string, body: unknown, userId = "admin-1", companyId = COMPANY): Parameters<Api>[0] {
+    return { routeKey, method: routeKey === "mcp.tools" ? "GET" : "POST", path: "/", params: {}, query: {}, body, actor: { actorType: "user", actorId: userId, userId }, companyId, headers: {} };
+  }
+
+  async function mcp() {
+    const made = await setup();
+    made.harness.seed({ companies: [{ id: COMPANY, name: "Kyoube", issuePrefix: PREFIX } as never] });
+    const api = made.plugin.definition.onApiRequest!;
+    const call = (tool: string, args: Record<string, unknown>, userId = "admin-1", companyId = COMPANY) =>
+      api(input("mcp.call", { companyId, tool, arguments: { projectId: PROJECT, requestId: REQUEST, ...args } }, userId, companyId));
+    return { ...made, api, call };
+  }
+
+  it("declares the MCP routes and capabilities", () => {
+    expect(manifest.version).toBe("0.5.0");
+    expect(manifest.apiRoutes?.map((route) => [route.routeKey, route.auth])).toEqual([["mcp.tools", "board"], ["mcp.call", "board"]]);
+    expect(manifest.capabilities).toContain("api.routes.register");
+    expect(manifest.capabilities).toContain("companies.read");
+    expect(PLUGIN_VERSION).toBe("0.5.0");
+  });
+
+  it("answers 503 before setup and 404 for an unknown route", async () => {
+    const fresh = createFilesPlugin({});
+    expect(await fresh.definition.onApiRequest!(input("mcp.tools", undefined))).toMatchObject({ status: 503 });
+    const { api } = await mcp();
+    expect(await api(input("nope", undefined))).toEqual({ status: 404, body: { error: "unknown route nope", code: "not_found" } });
+  });
+
+  it("lists the tools with the plugin version", async () => {
+    const { api } = await mcp();
+    const response = await api(input("mcp.tools", undefined));
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ version: "0.5.0" });
+    expect((response.body as { tools: unknown[] }).tools).toHaveLength(8);
+  });
+
+  it("an admin writes, reads and edits through mcp.call", async () => {
+    const { call, harness } = await mcp();
+    const body = (r: { body?: unknown }) => r.body as { outcome: string; data?: Record<string, unknown> };
+    expect(body(await call("kyoubeai_files_create_folder", { requestId: reqId(1), path: "docs" })).outcome).toBe("completed");
+    expect(body(await call("kyoubeai_files_write", { requestId: reqId(2), path: "docs/a.md", content: "hello secret-word world" })).outcome).toBe("completed");
+    const read = body(await call("kyoubeai_files_read", { path: "docs/a.md" }));
+    expect(read.outcome).toBe("completed");
+    expect(JSON.stringify(read)).toContain("hello secret-word world");
+    expect(body(await call("kyoubeai_files_edit", { requestId: reqId(3), path: "docs/a.md", oldText: "hello", newText: "bye" })).outcome).toBe("completed");
+    expect(await readFile(path.join(root, "docs", "a.md"), "utf8")).toBe("bye secret-word world");
+    const lines = harness.activity.map((entry) => entry.message);
+    expect(lines.some((line) => line.includes("saved docs/a.md"))).toBe(true);
+    expect(lines.some((line) => line.includes("edited docs/a.md"))).toBe(true);
+    expect(lines.some((line) => line.includes("secret-word"))).toBe(false);
+  });
+
+  it("a viewer is refused a write", async () => {
+    const { call } = await mcp();
+    const response = await call("kyoubeai_files_write", { path: "x.md", content: "x" }, "viewer-1");
+    expect(response.body).toMatchObject({ outcome: "rejected", code: "forbidden", status: 403 });
+    expect((response.body as { message: string }).message).toMatch(/owner|admin|operator|member/);
+  });
+
+  it("need-to-know hides a project over MCP without naming its folder", async () => {
+    const { api } = await mcp();
+    await restrict({ [PROJECT]: ["member-1"] });
+    const response = await api(input("mcp.call", { companyId: COMPANY, tool: "kyoubeai_files_list", arguments: { projectId: HIDDEN_PROJECT } }, "member-1"));
+    expect(response.body).toMatchObject({ outcome: "rejected", status: 403, message: "forbidden: this project is outside what you can see" });
+    expect(JSON.stringify(response.body)).not.toContain(hiddenRoot);
+    expect(JSON.stringify(response.body)).not.toContain(base);
+  });
+
+  it("a project from another company is not found, without a path", async () => {
+    const { call } = await mcp();
+    const response = await call("kyoubeai_files_list", { projectId: OTHER_PROJECT });
+    expect(response.body).toMatchObject({ outcome: "rejected", code: "not_found" });
+    expect(JSON.stringify(response.body)).not.toContain(base);
+  });
+
+  it("lists folders for a viewer as read-only, without server paths", async () => {
+    const { call } = await mcp();
+    const response = await call("kyoubeai_files_folders", {}, "viewer-1");
+    const data = (response.body as { data: { canRead: boolean; canWrite: boolean; workspaces: Array<Record<string, unknown>> } }).data;
+    expect(data).toMatchObject({ canRead: true, canWrite: false });
+    expect(data.workspaces.length).toBeGreaterThan(0);
+    for (const workspace of data.workspaces) expect(workspace).not.toHaveProperty("path");
+    expect(JSON.stringify(response.body)).not.toContain(base);
+  });
+
+  it("the link carries the company prefix", async () => {
+    const { call } = await mcp();
+    await writeFile(path.join(root, "pic.bin"), Buffer.from([0, 1, 2, 255, 254, 0, 0, 9]));
+    const response = await call("kyoubeai_files_read", { path: "pic.bin" });
+    expect(JSON.stringify(response.body)).toContain(`/${PREFIX}/projects/${PROJECT}?tab=`);
   });
 });

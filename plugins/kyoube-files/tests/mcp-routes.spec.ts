@@ -33,7 +33,7 @@ beforeEach(async () => {
     audit,
   };
   contextFor = vi.fn<FilesMcpDeps["contextFor"]>(async () => context);
-  deps = { contextFor, describeFolders: vi.fn(async () => ({ folders: [{ id: "f1", name: "Main" }] })) };
+  deps = { version: "9.9.9", contextFor, describeFolders: vi.fn(async () => ({ folders: [{ id: "f1", name: "Main" }] })) };
   log = vi.fn<(message: string, meta?: Record<string, unknown>) => void>();
 });
 
@@ -76,6 +76,7 @@ describe("kyoube.files MCP routes", () => {
     const response = await handleFilesMcpRequest(deps, request("mcp.tools", undefined));
     expect(response?.status).toBe(200);
     expect((response?.body as { tools: unknown[] }).tools).toHaveLength(8);
+    expect((response?.body as { version: string }).version).toBe("9.9.9");
   });
 
   it("refuses an agent and an unauthenticated user", async () => {

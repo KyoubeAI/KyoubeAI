@@ -22,6 +22,8 @@ export const FILES_MCP_ROUTES: PluginApiRouteDeclaration[] = [
 
 /** What the plugin supplies: access checks and the folder, so this module stays free of host calls. */
 export interface FilesMcpDeps {
+  /** The plugin version, answered with the tool list so the core can tell when the catalogue changed. */
+  version: string;
   contextFor(person: { companyId: string; userId: string }, args: { projectId: string; folderId?: string }, need: "read" | "write"): Promise<FilesMcpContext>;
   describeFolders(person: { companyId: string; userId: string }, projectId: string): Promise<unknown>;
 }
@@ -62,7 +64,7 @@ export async function handleFilesMcpRequest(
   if (!input.actor.actorId) return { status: 403, body: { error: "forbidden: unauthenticated", code: "forbidden" } };
   switch (input.routeKey) {
     case "mcp.tools":
-      return { status: 200, body: { tools: buildFilesCatalogue().map((tool) => tool.entry) } };
+      return { status: 200, body: { version: deps.version, tools: buildFilesCatalogue().map((tool) => tool.entry) } };
     case "mcp.call":
       return call(deps, input, log);
     default:

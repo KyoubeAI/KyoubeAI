@@ -1,6 +1,6 @@
 {
   "name": "@kyoube/plugin-files",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Browse and manage the files in a project's working folder from the project page (Paperclip plugin)",
   "license": "BUSL-1.1",
   "type": "module",
