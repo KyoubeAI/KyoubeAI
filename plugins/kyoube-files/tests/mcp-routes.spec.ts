@@ -127,6 +127,17 @@ describe("kyoube.files MCP routes", () => {
     expect(body.content.length).toBeLessThanOrEqual(20_000 + 200);
     expect(body.content).toContain("[Result truncated at 20000 characters.");
     expect(body.content).toContain('"totalLines": 1');
+    expect(body.content).not.toContain("Page shortened");
+  });
+
+  it("answers an over-long first line alone, and says where the next line starts", async () => {
+    await writeFile(path.join(dir, "wide.txt"), `${"x".repeat(30_000)}\nsecond\n`);
+    const response = await call("kyoubeai_files_read", { path: "wide.txt" });
+    const body = response?.body as { truncated?: boolean; content: string };
+    expect(body.truncated).toBe(true);
+    expect(body.content).toContain('"endLine": 1');
+    expect(body.content).toContain("Page shortened to fit: continue with offset 2.");
+    expect(body.content).not.toContain("second");
   });
 
   describe("a read too long for one answer", () => {

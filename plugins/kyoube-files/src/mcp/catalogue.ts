@@ -133,7 +133,7 @@ function clipLines(content: string): { content: string; lines: number; clipped: 
   }
   if (count === lines.length) return { content, lines: count, clipped: false };
   const kept = Math.max(1, count);
-  return { content: lines.slice(0, kept).join(""), lines: kept, clipped: true };
+  return { content: lines.slice(0, kept).join(""), lines: kept, clipped: kept < lines.length };
 }
 
 interface Definition {
