@@ -74,8 +74,10 @@ export interface WorkspaceFilesOptions {
   maxWriteBytes: number;
 }
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+/** The errno code of a failed call, never its message: Node's text carries the absolute path. */
+function codeOf(error: unknown): string {
+  const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined;
+  return typeof code === "string" ? code : "unknown error";
 }
 
 function isErrno(error: unknown, code: string): boolean {
@@ -365,7 +367,7 @@ export class WorkspaceFiles {
       return await fs.realpath(this.root);
     } catch (error) {
       if (isErrno(error, "ENOENT")) return null;
-      throw new FilesError("invalid", `project folder is unreadable: ${messageOf(error)}`);
+      throw new FilesError("invalid", `project folder is unreadable (${codeOf(error)})`);
     }
   }
 

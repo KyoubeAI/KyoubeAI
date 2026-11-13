@@ -129,9 +129,10 @@ describe("kyoube.files MCP routes", () => {
   it("lists with an explicit cap of 500 entries", async () => {
     for (let i = 0; i < 600; i++) await writeFile(path.join(dir, `f${String(i).padStart(3, "0")}.txt`), "");
     const tool = buildFilesCatalogue().find((candidate) => candidate.entry.name === "kyoubeai_files_list")!;
-    const data = (await tool.run(context, { projectId: PROJECT })) as { entries: unknown[]; cut: boolean };
+    const data = (await tool.run(context, { projectId: PROJECT })) as { entries: unknown[]; cut: boolean; note?: string };
     expect(data.entries).toHaveLength(500);
     expect(data.cut).toBe(true);
+    expect(data.note).toBe("More entries than shown: list a subfolder, or use a smaller depth.");
   });
 
   it("lists a subfolder with depth", async () => {
@@ -142,6 +143,18 @@ describe("kyoube.files MCP routes", () => {
     expect(data.entries.map((entry) => entry.path)).toEqual(["sub", "sub/x.txt"]);
     expect(data.entries[0]?.modifiedAt).toMatch(/Z$/);
     expect(data.cut).toBe(false);
+    expect(data).not.toHaveProperty("note");
+  });
+
+  it("never puts the server path in a refusal when the root cannot be read", async () => {
+    // A file where a folder is expected: realpath fails with ENOTDIR, whose Node message holds the path.
+    await writeFile(path.join(dir, "plain"), "x");
+    context.files = new WorkspaceFiles(path.join(dir, "plain", "sub"), { maxReadBytes: 1024, maxWriteBytes: 1024 });
+    const response = await call("kyoubeai_files_list", {});
+    const body = response?.body as { outcome: string; message: string };
+    expect(body.outcome).toBe("rejected");
+    expect(body.message).toContain("ENOTDIR");
+    expect(body.message).not.toContain(dir);
   });
 
   it("runs the folder list outside a folder context", async () => {

@@ -101,7 +101,13 @@ const DEFINITIONS: Definition[] = [
     },
     run: async (ctx, args: { path?: string; depth?: number }) => {
       const listing = await ctx.files.list(args.path ?? "", { depth: args.depth, maxEntries: LIST_MAX_ENTRIES });
-      return { path: listing.path, exists: listing.exists, entries: listing.entries.map(entryOf), cut: listing.cut };
+      return {
+        path: listing.path,
+        exists: listing.exists,
+        entries: listing.entries.map(entryOf),
+        cut: listing.cut,
+        ...(listing.cut ? { note: "More entries than shown: list a subfolder, or use a smaller depth." } : {}),
+      };
     },
   },
   {
