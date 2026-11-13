@@ -51,7 +51,7 @@ ok   assistant connections on at https://kyoube.example.com/mcp/kyoubeai, 37 Kyo
 ok   assistant connections on at http://localhost:3100/mcp/kyoubeai, 37 KyoubeAI tools — Claude Code: claude mcp add --transport http kyoubeai http://localhost:3100/mcp/kyoubeai
 FAIL assistant connections on, but KYOUBE_PUBLIC_URL is not https:// — assistants cannot sign in (docs/mcp.md)
 FAIL assistant connections on, but the table and app tools are unavailable — see Settings → Plugins → kyoube.apps → Logs
-warn assistant connections on at http://localhost:3100/mcp/kyoubeai, 29 KyoubeAI tools; files tools missing (kyoube.files not answering) — Claude Code: claude mcp add …
+WARN assistant connections on at http://localhost:3100/mcp/kyoubeai, 29 KyoubeAI tools; files tools missing (kyoube.files not answering) — Claude Code: claude mcp add …
 ```
 
 On a `localhost` address the line gives the Claude Code command instead of the **Add to Claude**
@@ -142,7 +142,9 @@ approvals, agents, projects and skills. Ask the assistant for its tool list to s
 two generic tools, `search_api` and `call_api`, are removed: they reached every operation through one
 tool, which hides what a call does.
 
-KyoubeAI adds 37 tools for data tables, apps, app tasks and project files. They are the same operations agents use, run as you:
+KyoubeAI adds 37 tools for data tables, apps, app tasks and project files, all run as you. The table
+and app tools are the operations agents use; the app task tools run the checks of an app's task
+button, and the file tools the operations of the Files tab:
 
 | Tier | Tools |
 |---|---|
@@ -180,15 +182,19 @@ ids; `folderId` is only needed when a project has more than one. Paths are relat
 a path that leaves it is refused as invalid. No server path is shown.
 
 - **Listing.** `kyoubeai_files_list` shows size and last-modified time, one level by default and up to
-  three with `depth`. It stops at 500 entries and says so; list a subfolder instead.
+  three with `depth`. A long listing comes in pages of at most 500 entries, fewer when names are long:
+  a page that is not the last says `cut` and gives a `nextOffset` to send back as `offset` for the
+  next one.
 - **Reading.** `kyoubeai_files_read` returns a text file in pages of up to 2000 lines (`offset` and
-  `limit`) with the total line count. A file that is not text, or is larger than the editable size
-  setting, comes back as a link to open in KyoubeAI instead of its content.
+  `limit`) with the total line count. A page too long for one answer is shortened to whole lines, and
+  its note gives the `offset` to continue from. A file that is not text, or is larger than the
+  editable size setting, comes back as a link to open in KyoubeAI instead of its content.
 - **Writing.** `kyoubeai_files_write` creates or replaces a file. `createOnly` refuses when the file
   exists. `kyoubeai_files_edit` replaces a passage and needs it to match exactly once, unless
   `replaceAll` is set, so the assistant reads the file first.
 - **Not overwriting someone's change.** Listings and reads give each file's `modifiedAt`. Send it back
-  as `expectedModifiedAt` on a write or edit and the call is refused if the file changed since.
+  as `expectedModifiedAt` on a write or edit and the call is refused if the file was changed, moved or
+  deleted since.
 - **Moving and deleting.** `kyoubeai_files_create_folder` needs the parent to exist. `kyoubeai_files_move`
   overwrites nothing. `kyoubeai_files_delete` removes a folder and its contents only with `recursive`,
   and cannot be undone.
@@ -245,7 +251,7 @@ tool name. Changes to tables also go to `kyoube_meta.audit`, as they do from the
 
 | What you see | Why, and what to do |
 |---|---|
-| "KyoubeAI's table and app tools are unavailable right now. Try again in a minute." | The `kyoube.apps` plugin did not answer. KyoubeAI does not keep a failed answer, so the next listing asks again. Check `kyoube doctor` and the plugin's logs. |
+| "KyoubeAI's table, app and file tools are unavailable right now. Try again in a minute." | The plugin behind the tool did not answer: `kyoube.apps` for a table or app tool, `kyoube.files` for a file tool. KyoubeAI does not keep a failed answer, so the next call asks again. Check `kyoube doctor` and the plugin's logs. |
 | The assistant lists the `kyoubeai_*` work tools but no `kyoubeai_data_*` or `kyoubeai_apps_*` | The same: the plugin was unavailable when the tools were listed. List the tools again. |
 | The assistant lists the other tools but no `kyoubeai_files_*` | The `kyoube.files` plugin did not answer. Check `kyoube doctor` and its logs. |
 | "paperclip:write permission is required" | The connection was approved without **Write all of your KyoubeAI data**. Connect again with it ticked. |

@@ -679,24 +679,31 @@ time with the standing `mcp-*` patches in `docker/core-patches/patches.mjs`: the
 `/mcp/kyoubeai` instead of `/mcp/paperclip`, the tools are renamed `kyoubeai_*` and titled, the two
 generic tools (`kyoubeai_search_api`, `kyoubeai_call_api`) are removed from the list and refused by
 the executor, and a bridge (`docker/core-patches/mcp-bridge.mjs`) adds the `kyoube.apps` table and app
-tools. The feature is off until an instance admin turns it on (Settings → Experimental), and sign-in
-needs an `https://` public URL or localhost.
+tools and the `kyoube.files` project-file tools. The feature is off until an instance admin turns it
+on (Settings → Experimental), and sign-in needs an `https://` public URL or localhost.
 
 - **A call acts as the signed-in person, and only as them.** The bridge adds no authority of its own.
   It reads the tool list and runs a tool through the core's internal dispatch, as the connection's
-  principal, so a Kyoube tool reaches `kyoube.apps` as that person's board request. The plugin builds
-  the actor from the host-authenticated `input.actor` only, and the company from the connection;
-  `companyId` and `requestId` in the arguments are dropped.
-- **Kyoube tools take the core's path.** A `kyoubeai_data_*` or `kyoubeai_apps_*` call goes through
-  the core's executor like the core's own tools: the token is re-checked (membership, pause, archive,
-  expiry, revocation), the company must be the connection's, `paperclip:read` is needed for every
-  call and `paperclip:write` or `paperclip:configure` for the write and configure tiers, and the
-  core's viewers are refused writes. Only the endpoint at `/mcp/kyoubeai` looks tools up in the
-  bridge; the Dot runner's `/mcp/runner` does not.
-- **Then the person's own access decides.** The plugin runs the same tool definitions agents use, so
-  `DataService` applies the person's data level (role, adjusted by groups) and `AppService` its
-  visibility and publish checks. A connection's tier can only narrow what the person may do.
-- **Agents are refused.** The plugin's MCP routes (`GET /mcp/tools`, `POST /mcp/call`) are declared
+  principal, so a Kyoube tool reaches `kyoube.apps` or `kyoube.files` as that person's board request.
+  The plugin builds the actor from the host-authenticated `input.actor` only, and the company from the
+  connection; `companyId` and `requestId` in the arguments are dropped.
+- **Kyoube tools take the core's path.** A `kyoubeai_data_*`, `kyoubeai_apps_*` or `kyoubeai_files_*`
+  call goes through the core's executor like the core's own tools: the token is re-checked
+  (membership, pause, archive, expiry, revocation), the company must be the connection's,
+  `paperclip:read` is needed for every call and `paperclip:write` or `paperclip:configure` for the
+  write and configure tiers, and the core's viewers are refused writes. Only the endpoint at
+  `/mcp/kyoubeai` looks tools up in the bridge; the Dot runner's `/mcp/runner` does not.
+- **Then the person's own access decides.** For tables and apps, `kyoube.apps` runs the same tool
+  definitions agents use, so `DataService` applies the person's data level (role, adjusted by groups)
+  and `AppService` its visibility and publish checks. A connection's tier can only narrow what the person may do.
+- **Project files.** `kyoube.files` serves its 8 tools over the same two routes (`mcp/tools`,
+  `mcp/call`), as the signed-in person, with the checks of the Files tab: the company roles from the
+  Files settings, a fresh role lookup for every write, and need-to-know project visibility. Paths stay
+  inside the project folder, under the same containment as the tab (no `..`, no absolute paths, no
+  symlinks followed). Only text comes back; a file that is not text, or is too large, is answered with
+  a link to the Files tab instead. Each write is logged in the activity log like a write from the
+  tab, without its content, and a refusal never carries a server path.
+- **Agents are refused.** Both plugins' MCP routes (`GET /mcp/tools`, `POST /mcp/call`) are declared
   board-only, and refuse an agent actor again with 403 before doing anything.
 - **Receipts and the activity log.** The core keeps a receipt per write and configure call, keyed by
   its `requestId` (a UUID): the same id with the same arguments replays the stored result, and with
