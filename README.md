@@ -389,7 +389,7 @@ refuses and what it does not cover. The security model is in
 
 Claude, Claude Code, Codex, OpenCode and other MCP clients can connect to a company at
 `<KYOUBE_PUBLIC_URL>/mcp/kyoubeai`. You sign in and approve the connection in KyoubeAI. The assistant
-then works with tasks, agents, projects, skills, data tables and apps as you, never with more access
+then works with tasks, agents, projects, skills, data tables, apps and project files as you, never with more access
 than you have. An instance admin turns it on under **Settings → Experimental → Assistant connections
 (MCP)**. It needs an `https://` address, or `localhost` for a client on the same machine. `kyoube
 doctor` prints an **Add to Claude** link once it is on (on `localhost`, the Claude Code command).

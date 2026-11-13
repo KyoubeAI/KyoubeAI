@@ -195,10 +195,13 @@ A person's assistant (Claude, Claude Code, Codex, OpenCode) calls the core's MCP
 `mcp-*` core patches serve at `/mcp/kyoubeai`, with an OAuth token bound to one person and one company.
 
 1. **Claude → `/mcp/kyoubeai`.** The core's route (`server/dist/routes/public-mcp.js`) answers
-   `tools/list` with the core's own tools, renamed `kyoubeai_*` and titled, followed by KyoubeAI's 25
-   from the bridge. The bridge, `/opt/kyoube/core-patches/mcp-bridge.mjs`, fetches them through the
-   core's internal dispatch as the person, from `GET /api/plugins/kyoube.apps/api/mcp/tools`, and keeps
-   them for 60 seconds per company, a failed fetch included.
+   `tools/list` with the core's own tools, renamed `kyoubeai_*` and titled, followed by KyoubeAI's 37
+   from the bridge. The bridge, `/opt/kyoube/core-patches/mcp-bridge.mjs`, reaches two plugins, and a
+   tool's name prefix says which: `kyoubeai_data_*` and `kyoubeai_apps_*` are `kyoube.apps`,
+   `kyoubeai_files_*` is `kyoube.files`. It fetches each plugin's tools through the core's internal
+   dispatch as the person, from `GET /api/plugins/<plugin>/api/mcp/tools`, and keeps a good answer for
+   60 seconds per company. A failed fetch is not kept, so the next listing asks again, and a plugin
+   that is down drops only its own tools.
 2. **The executor.** `tools/call` goes to the core's executor (`createPublicMcpExecutor` in
    `services/public-mcp/capabilities.js`). A name the core does not know is looked up in the bridge,
    on `/mcp/kyoubeai` only. From there a Kyoube tool takes the core's path: token re-check, company
@@ -207,9 +210,10 @@ A person's assistant (Claude, Claude Code, Codex, OpenCode) calls the core's MCP
    write.
 3. **Internal dispatch.** The bridge's `run` replays the call into the core's `/api` router as the
    person (`req.actor` is the connection's principal), as
-   `POST /api/plugins/kyoube.apps/api/mcp/call` with `{ companyId, tool, arguments }`. The company is
+   `POST /api/plugins/<owning plugin>/api/mcp/call` with `{ companyId, tool, arguments }`. The company is
    the connection's.
-4. **`kyoube.apps` `/mcp/call`.** `handleMcpApiRequest` (`plugins/kyoube-apps/src/mcp/api-routes.ts`)
+4. **The plugin's `/mcp/call`.** The file tools are `plugins/kyoube-files/src/mcp/catalogue.ts`, run
+   against the project's folder under the person's role. For `kyoube.apps`: `handleMcpApiRequest` (`plugins/kyoube-apps/src/mcp/api-routes.ts`)
    refuses an agent actor with 403, finds the tool in the catalogue (`src/mcp/catalogue.ts`, built from
    the agent tool definitions plus `MCP_SETTINGS`), drops `requestId` and `companyId` from the
    arguments, and runs the agent definition through `runTool` (`src/tool-runtime.ts`) with the actor
@@ -397,7 +401,7 @@ another agent, which refuses it or makes it answerable by that agent, depending 
 level.
 The `mcp-*` entries serve the core's assistant MCP endpoint as `/mcp/kyoubeai` (`docs/mcp.md`): they
 rename its tools `kyoubeai_*`, title them, drop the two generic API tools, rewrite the setup page, and
-wire in `docker/core-patches/mcp-bridge.mjs`, which adds the `kyoube.apps` table and app tools
+wire in `docker/core-patches/mcp-bridge.mjs`, which adds the `kyoube.apps` table, app and app-task tools and the `kyoube.files` file tools
 ([Assistant → MCP](#assistant--mcp)).
 `docker/core-patches/patches.mjs` carries fixes to upstream bugs that had to ship here first, and the
 standing entries (licensing, user groups and work-object visibility, agent questions, the MCP connector). The temporary fixes are nine in the served UI (the first-run wizard's "Skip

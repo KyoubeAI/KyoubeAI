@@ -95,6 +95,19 @@ tools added ([mcp.md](mcp.md)). The core and its database are unchanged, and `ky
 - **The scope names stay** `paperclip:read`, `paperclip:write` and `paperclip:configure`, since
   connections store them.
 
+## Moving to 1.18
+
+1.18 adds project files and app tasks to assistant connections ([mcp.md](mcp.md)): 12 more tools, 37 in
+all. The core and its database are unchanged. `kyoube.apps` moves to 0.16.0 and `kyoube.files` to 0.5.0
+on the next start.
+
+- **Nothing to do.** `kyoube.files` 0.5.0 declares two new capabilities, and `ensure-plugins`
+  reinstalls it on start, keeping its settings. An assistant sees the new tools the next time it lists
+  tools.
+- **Connections stay as they are.** Their company and access do not change, and a read-only connection
+  can use the new read tools only.
+- **`kyoube doctor`** now counts the file tools too, and warns if `kyoube.files` is not answering.
+
 ## The team page is an org chart (Studio 0.7.0)
 
 `/<company>/team` now shows a living org chart: agent cards with live state, team panels, and a

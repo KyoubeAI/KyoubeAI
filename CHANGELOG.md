@@ -4,6 +4,31 @@ All notable changes to KyoubeAI are recorded here, in terms of what changed for 
 building on it. The format is loosely [Keep a Changelog](https://keepachangelog.com/); versioning is
 [SemVer](https://semver.org/).
 
+## 1.18.0 - 2026-11-13
+
+### Added
+
+- **Project files over MCP.** An assistant connected to KyoubeAI gets 8 `kyoubeai_files_*` tools: list a
+  project's folders and files, read a text file in pages of up to 2000 lines, write, edit, create
+  folders, move and delete. `modifiedAt` and `expectedModifiedAt` stop an assistant overwriting a
+  change made since it read the file, `createOnly` refuses to replace a file, and an edit must match
+  exactly once unless `replaceAll` is set. Files that are not text come back as a link. Your role and
+  need-to-know visibility still decide every call. See [docs/mcp.md](docs/mcp.md#project-files).
+- **App tasks over MCP.** 4 `kyoubeai_apps_task_*` tools list, check, start and cancel the tasks an app's
+  templates define, with the same checks as the app's button. See
+  [docs/mcp.md](docs/mcp.md#app-tasks).
+
+### Changed
+
+- 37 tools are KyoubeAI's now (was 25), 72 on the connection with core 2026.1023.0. Starting, writing,
+  editing, moving and creating folders are in the write tier, and `files_write`, `files_edit`,
+  `files_delete` and `apps_task_cancel` are marked destructive.
+- The MCP bridge reaches `kyoube.apps` and `kyoube.files` by tool name prefix, and no longer remembers a
+  failed answer, so a plugin that has just come up is seen on the next listing.
+- `kyoube doctor` counts the file tools and warns when `kyoube.files` is not answering.
+- `kyoube.files` is 0.5.0 (two new capabilities; `ensure-plugins` reinstalls it and keeps its settings)
+  and `kyoube.apps` is 0.16.0.
+
 ## 1.17.0 - 2026-11-13
 
 ### Added

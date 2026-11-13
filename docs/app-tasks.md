@@ -204,6 +204,13 @@ between the task and the app. A start whose wake-up the core refused gets a seco
 records the person who created the task and the plugin that did it. The agent's own writes are
 audited like any other agent write.
 
+## From an assistant
+
+An assistant connected over MCP can start, list, check and cancel app tasks as the person who
+connected it, with the four `kyoubeai_apps_task_*` tools ([mcp.md](mcp.md#app-tasks)). Starting one
+runs the checks above in the same order, so the assistant meets the same refusals as the button, and
+the task shows the person as the one who started it.
+
 ## What app tasks do not do
 
 - They cannot restrict the agent to the named fields by mechanism, only by instructions.

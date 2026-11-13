@@ -2,11 +2,12 @@
 
 An assistant connection lets an AI assistant you already use (Claude, Claude Code, Codex, OpenCode,
 or any MCP client that signs in with OAuth) work with your KyoubeAI company from outside the app. It
-can read and update tasks, agents, projects and skills, and work with your data tables and apps. It
+can read and update tasks, agents, projects and skills, and work with your data tables, apps and
+project files. It
 always acts as you, with your own access, never as a KyoubeAI agent.
 
 The server is the core's own MCP endpoint, served by KyoubeAI at `/mcp/kyoubeai`. KyoubeAI adds its
-table and app tools to it, renames every tool `kyoubeai_*`, and gives each one a title. The connection
+table, app and file tools to it, renames every tool `kyoubeai_*`, and gives each one a title. The connection
 is off until an instance admin turns it on.
 
 ## Two layers of permission
@@ -46,15 +47,17 @@ but cannot drop a table. The refusal comes back to the assistant as a message, f
 
 ```
 ok   assistant connections off — Settings → Experimental → Assistant connections (MCP) to turn on (docs/mcp.md)
-ok   assistant connections on at https://kyoube.example.com/mcp/kyoubeai, 25 KyoubeAI tools — Add to Claude: https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=KyoubeAI&connectorUrl=https%3A%2F%2Fkyoube.example.com%2Fmcp%2Fkyoubeai
-ok   assistant connections on at http://localhost:3100/mcp/kyoubeai, 25 KyoubeAI tools — Claude Code: claude mcp add --transport http kyoubeai http://localhost:3100/mcp/kyoubeai
+ok   assistant connections on at https://kyoube.example.com/mcp/kyoubeai, 37 KyoubeAI tools — Add to Claude: https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=KyoubeAI&connectorUrl=https%3A%2F%2Fkyoube.example.com%2Fmcp%2Fkyoubeai
+ok   assistant connections on at http://localhost:3100/mcp/kyoubeai, 37 KyoubeAI tools — Claude Code: claude mcp add --transport http kyoubeai http://localhost:3100/mcp/kyoubeai
 FAIL assistant connections on, but KYOUBE_PUBLIC_URL is not https:// — assistants cannot sign in (docs/mcp.md)
 FAIL assistant connections on, but the table and app tools are unavailable — see Settings → Plugins → kyoube.apps → Logs
+warn assistant connections on at http://localhost:3100/mcp/kyoubeai, 29 KyoubeAI tools; files tools missing (kyoube.files not answering) — Claude Code: claude mcp add …
 ```
 
 On a `localhost` address the line gives the Claude Code command instead of the **Add to Claude**
-link, since Claude on the web cannot reach `localhost`. The last one means the `kyoube.apps` plugin is
-not answering. The core's own tools still work. On an instance with no company yet, the line ends
+link, since Claude on the web cannot reach `localhost`. The failure means the `kyoube.apps` plugin is
+not answering, and the warning that `kyoube.files` is not (the count then leaves out the 8 file tools).
+The core's own tools still work. On an instance with no company yet, the line ends
 `— no company yet` instead of the link.
 
 ## Connecting an assistant
@@ -139,12 +142,12 @@ approvals, agents, projects and skills. Ask the assistant for its tool list to s
 two generic tools, `search_api` and `call_api`, are removed: they reached every operation through one
 tool, which hides what a call does.
 
-KyoubeAI adds 25 tools for data tables and apps. They are the same operations agents use, run as you:
+KyoubeAI adds 37 tools for data tables, apps, app tasks and project files. They are the same operations agents use, run as you:
 
 | Tier | Tools |
 |---|---|
-| read | `kyoubeai_data_list_tables`, `kyoubeai_data_describe_table`, `kyoubeai_data_list_review`, `kyoubeai_data_get`, `kyoubeai_data_query`, `kyoubeai_data_count`, `kyoubeai_data_sql_select`, `kyoubeai_data_my_access`, `kyoubeai_apps_list`, `kyoubeai_apps_get` |
-| write | `kyoubeai_data_insert`, `kyoubeai_data_update`\*, `kyoubeai_data_delete`\*, `kyoubeai_apps_create`, `kyoubeai_apps_update` |
+| read | `kyoubeai_data_list_tables`, `kyoubeai_data_describe_table`, `kyoubeai_data_list_review`, `kyoubeai_data_get`, `kyoubeai_data_query`, `kyoubeai_data_count`, `kyoubeai_data_sql_select`, `kyoubeai_data_my_access`, `kyoubeai_apps_list`, `kyoubeai_apps_get`, `kyoubeai_apps_task_list`, `kyoubeai_apps_task_get`, `kyoubeai_files_folders`, `kyoubeai_files_list`, `kyoubeai_files_read` |
+| write | `kyoubeai_data_insert`, `kyoubeai_data_update`\*, `kyoubeai_data_delete`\*, `kyoubeai_apps_create`, `kyoubeai_apps_update`, `kyoubeai_apps_task_start`, `kyoubeai_apps_task_cancel`\*, `kyoubeai_files_write`\*, `kyoubeai_files_edit`\*, `kyoubeai_files_create_folder`, `kyoubeai_files_move`, `kyoubeai_files_delete`\* |
 | configure | `kyoubeai_data_create_table`, `kyoubeai_data_add_field`, `kyoubeai_data_update_field`, `kyoubeai_data_remove_field`\*, `kyoubeai_data_drop_table`\*, `kyoubeai_data_rename_table`, `kyoubeai_data_create_index`, `kyoubeai_apps_publish`, `kyoubeai_apps_rollback`, `kyoubeai_apps_archive`\* |
 
 \* Marked destructive, so assistants that ask before a destructive call will ask.
@@ -167,7 +170,43 @@ Some rules apply to every call:
 - **Long results are cut** at 20,000 characters, with the same note agents get: narrow the query or
   use `limit` and `offset`.
 
-App tasks, project files, typed decisions and outside connections are not on the connection yet.
+Typed decisions and outside connections are not on the connection yet.
+
+### Project files
+
+The `kyoubeai_files_*` tools work in a project's folder, the same one agents work in and the Files tab
+shows ([README](../README.md#files)). Start with `kyoubeai_files_folders` to get the project's folder
+ids; `folderId` is only needed when a project has more than one. Paths are relative to the folder, and
+a path that leaves it is refused as invalid. No server path is shown.
+
+- **Listing.** `kyoubeai_files_list` shows size and last-modified time, one level by default and up to
+  three with `depth`. It stops at 500 entries and says so; list a subfolder instead.
+- **Reading.** `kyoubeai_files_read` returns a text file in pages of up to 2000 lines (`offset` and
+  `limit`) with the total line count. A file that is not text, or is larger than the editable size
+  setting, comes back as a link to open in KyoubeAI instead of its content.
+- **Writing.** `kyoubeai_files_write` creates or replaces a file. `createOnly` refuses when the file
+  exists. `kyoubeai_files_edit` replaces a passage and needs it to match exactly once, unless
+  `replaceAll` is set, so the assistant reads the file first.
+- **Not overwriting someone's change.** Listings and reads give each file's `modifiedAt`. Send it back
+  as `expectedModifiedAt` on a write or edit and the call is refused if the file changed since.
+- **Moving and deleting.** `kyoubeai_files_create_folder` needs the parent to exist. `kyoubeai_files_move`
+  overwrites nothing. `kyoubeai_files_delete` removes a folder and its contents only with `recursive`,
+  and cannot be undone.
+
+The Files settings still apply: your company role decides whether you can browse and whether you can
+change files, and need-to-know visibility on the project decides whether you see it at all. The
+assistant gets the same refusals you would in the app.
+
+### App tasks
+
+The `kyoubeai_apps_task_*` tools start and follow the tasks an app's templates define
+([app-tasks.md](app-tasks.md)). `kyoubeai_apps_get` shows an app's templates under `tasks` in its
+manifest, and `kyoubeai_apps_task_start` starts one with the row and the inputs the template declares;
+every declared input is required. The call runs the same checks as the app's button, in the same order
+(access to the app, the row, your data level, the inputs, the agent, the assignment rule, the limits),
+and a refusal comes back with its reason. `kyoubeai_apps_task_list` and `kyoubeai_apps_task_get` show
+the tasks an app started with their status and reply, and `kyoubeai_apps_task_cancel` cancels one; a
+run the agent has already begun may finish its current step.
 
 ### Publishing an app that changes what it sends
 
@@ -206,8 +245,9 @@ tool name. Changes to tables also go to `kyoube_meta.audit`, as they do from the
 
 | What you see | Why, and what to do |
 |---|---|
-| "KyoubeAI's table and app tools are unavailable right now. Try again in a minute." | The `kyoube.apps` plugin did not answer. KyoubeAI keeps the answer for a minute, so a plugin that has just come up is seen within a minute. Check `kyoube doctor` and the plugin's logs. |
-| The assistant lists the `kyoubeai_*` work tools but no `kyoubeai_data_*` or `kyoubeai_apps_*` | The same: the plugin was unavailable when the tools were listed. Reconnect after a minute. |
+| "KyoubeAI's table and app tools are unavailable right now. Try again in a minute." | The `kyoube.apps` plugin did not answer. KyoubeAI does not keep a failed answer, so the next listing asks again. Check `kyoube doctor` and the plugin's logs. |
+| The assistant lists the `kyoubeai_*` work tools but no `kyoubeai_data_*` or `kyoubeai_apps_*` | The same: the plugin was unavailable when the tools were listed. List the tools again. |
+| The assistant lists the other tools but no `kyoubeai_files_*` | The `kyoube.files` plugin did not answer. Check `kyoube doctor` and its logs. |
 | "paperclip:write permission is required" | The connection was approved without **Write all of your KyoubeAI data**. Connect again with it ticked. |
 | `forbidden: … requires schema access` | Your own data level is too low. Ask an admin to raise it, or a group to grant it. |
 | The assistant cannot sign in | Check that `KYOUBE_PUBLIC_URL` is `https://` (or `localhost`), that `kyoube doctor` says `on at …`, and, behind a proxy, `TRUST_PROXY`. |
