@@ -22,7 +22,7 @@ await esbuild.build({
 });
 
 // Browser bundle: everything bundled except what the Paperclip host provides.
-await esbuild.build({
+const ui = await esbuild.build({
   entryPoints: { "ui/index": "src/ui/index.tsx" },
   outdir: "dist",
   bundle: true,
@@ -31,5 +31,16 @@ await esbuild.build({
   target: ["es2022"],
   external: ["react", "react-dom", "react/jsx-runtime", "@paperclipai/plugin-sdk/ui"],
   sourcemap: true,
+  metafile: true,
   logLevel: "info",
 });
+
+// The Files tab must never ship the worker-side MCP code or zod: one stray
+// import from `mcp/` once grew the browser bundle from ~39 KB to ~772 KB.
+const forbidden = Object.keys(ui.metafile.inputs).filter((input) => /(^|\/)src\/mcp\//.test(input) || /\/node_modules\/zod\//.test(input))
+  // Our own modules first: they name the import to remove.
+  .sort((a, b) => Number(b.includes("src/mcp/")) - Number(a.includes("src/mcp/")));
+if (forbidden.length > 0) {
+  console.error(`dist/ui/index.js must not bundle the MCP tools or zod; it pulled in:\n  ${forbidden.slice(0, 10).join("\n  ")}`);
+  process.exit(1);
+}

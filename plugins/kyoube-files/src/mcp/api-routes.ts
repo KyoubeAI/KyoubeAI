@@ -1,24 +1,9 @@
-import type { PluginApiRequestInput, PluginApiResponse, PluginApiRouteDeclaration } from "@paperclipai/plugin-sdk";
+import type { PluginApiRequestInput, PluginApiResponse } from "@paperclipai/plugin-sdk";
 import { z } from "zod";
 import { FilesError, type FilesErrorCode } from "../errors.js";
 import { buildFilesCatalogue, type FilesMcpContext } from "./catalogue.js";
 
-function route(routeKey: string, method: "GET" | "POST", path: string): PluginApiRouteDeclaration {
-  return {
-    routeKey,
-    method,
-    path,
-    auth: "board",
-    capability: "api.routes.register",
-    companyResolution: method === "GET" ? { from: "query", key: "companyId" } : { from: "body", key: "companyId" },
-  };
-}
-
-/** Board-only: an assistant connection always acts as the signed-in person. */
-export const FILES_MCP_ROUTES: PluginApiRouteDeclaration[] = [
-  route("mcp.tools", "GET", "/mcp/tools"),
-  route("mcp.call", "POST", "/mcp/call"),
-];
+export { FILES_MCP_ROUTES } from "./routes.js";
 
 /** What the plugin supplies: access checks and the folder, so this module stays free of host calls. */
 export interface FilesMcpDeps {

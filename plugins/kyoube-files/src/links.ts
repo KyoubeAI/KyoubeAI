@@ -1,4 +1,4 @@
-import { PLUGIN_ID, TAB_SLOT_ID } from "./manifest.js";
+import { PLUGIN_ID, TAB_SLOT_ID } from "./constants.js";
 
 /** The project-page URL that opens this plugin's Files tab. */
 export function filesTabPath(projectRef: string): string {

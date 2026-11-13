@@ -1,10 +1,8 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
-import { FILES_MCP_ROUTES } from "./mcp/api-routes.js";
+import { PLUGIN_ID, PLUGIN_VERSION, TAB_SLOT_ID } from "./constants.js";
+import { FILES_MCP_ROUTES } from "./mcp/routes.js";
 
-export const PLUGIN_ID = "kyoube.files";
-export const PLUGIN_VERSION = "0.5.0";
-/** The `detailTab` slot id; the project sidebar link opens `?tab=plugin:<PLUGIN_ID>:<TAB_SLOT_ID>`. */
-export const TAB_SLOT_ID = "project-files";
+export { PLUGIN_ID, PLUGIN_VERSION, TAB_SLOT_ID };
 
 const ROLES = ["owner", "admin", "operator", "member", "viewer"];
 

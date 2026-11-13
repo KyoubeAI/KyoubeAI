@@ -6,7 +6,7 @@ import { FilesError } from "./errors.js";
 import { WorkspaceFiles } from "./fs-service.js";
 import { filesTabLink } from "./links.js";
 import { handleFilesMcpRequest, type FilesMcpDeps } from "./mcp/api-routes.js";
-import { PLUGIN_ID, PLUGIN_VERSION } from "./manifest.js";
+import { PLUGIN_ID, PLUGIN_VERSION } from "./constants.js";
 import { joinRelative, normalizeRelativePath, validateEntryName } from "./paths.js";
 import { resolveSettings, type FilesSettings } from "./settings.js";
 import { projectVisibleFor } from "./visibility.js";
