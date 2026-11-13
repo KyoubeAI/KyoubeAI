@@ -288,10 +288,13 @@ describe("WorkspaceFiles deep listing", () => {
     ]);
   });
 
-  it("cuts at maxEntries", async () => {
+  it("cuts at maxEntries, and has no cap when none is asked for", async () => {
     for (let i = 0; i < 600; i++) await writeFile(path.join(root, `f${i}.txt`), "");
-    const listing = await files.list("");
-    expect(listing.entries).toHaveLength(500);
-    expect(listing.cut).toBe(true);
+    const capped = await files.list("", { maxEntries: 500 });
+    expect(capped.entries).toHaveLength(500);
+    expect(capped.cut).toBe(true);
+    const all = await files.list("");
+    expect(all.entries).toHaveLength(600);
+    expect(all.cut).toBe(false);
   });
 });

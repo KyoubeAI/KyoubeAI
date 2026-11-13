@@ -43,7 +43,7 @@ export type LinesResult =
 export interface ListOptions {
   /** How many folder levels to show, 1 to 3 (default 1). */
   depth?: number;
-  /** Most entries returned (default 500); more than that sets `cut`. */
+  /** Most entries returned; more than that sets `cut`. Omitted means no cap (`cut` is always false). */
   maxEntries?: number;
 }
 
@@ -107,9 +107,9 @@ export class WorkspaceFiles {
   async list(relative: unknown, options: ListOptions = {}): Promise<Listing & { cut: boolean }> {
     const rel = normalizeRelativePath(relative);
     const depth = options.depth ?? 1;
-    const maxEntries = options.maxEntries ?? 500;
+    const maxEntries = options.maxEntries ?? Number.POSITIVE_INFINITY;
     if (!Number.isInteger(depth) || depth < 1 || depth > 3) throw new FilesError("invalid", "depth must be 1, 2 or 3");
-    if (!Number.isInteger(maxEntries) || maxEntries < 1) throw new FilesError("invalid", "maxEntries must be a positive whole number");
+    if (options.maxEntries !== undefined && (!Number.isInteger(maxEntries) || maxEntries < 1)) throw new FilesError("invalid", "maxEntries must be a positive whole number");
     const abs = await this.resolveExisting(rel, { allowMissingRoot: true });
     if (abs === null) return { path: rel, exists: false, entries: [], cut: false };
     if (rel !== "" && (await fs.lstat(abs)).isSymbolicLink()) throw new FilesError("invalid", `${rel} is a symbolic link; links are not followed`);
