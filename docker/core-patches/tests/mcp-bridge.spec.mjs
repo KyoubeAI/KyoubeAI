@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { findTool, KYOUBE_MCP_PATH, listTools, REMOVED_TOOLS, registerDispatch, resetForTests, titleFor, UNAVAILABLE } from "../mcp-bridge.mjs";
+import { findTool, KYOUBE_MCP_PATH, MCP_PLUGINS, listTools, REMOVED_TOOLS, registerDispatch, resetForTests, titleFor, UNAVAILABLE } from "../mcp-bridge.mjs";
 
 class CapabilityError extends Error {}
 const deps = { z, CapabilityError };
@@ -18,6 +18,7 @@ beforeEach(() => {
   calls = [];
   dispatch = vi.fn(async (...args) => {
     calls.push(args);
+    if (String(args[2]).startsWith("/plugins/kyoube.files/")) return { version: 1, tools: [] };
     return { version: 1, tools: [QUERY, DROP] };
   });
   resetForTests(() => now);
@@ -28,7 +29,11 @@ describe("constants", () => {
   it("exposes the path, removed tools and message", () => {
     expect(KYOUBE_MCP_PATH).toBe("/mcp/kyoubeai");
     expect(REMOVED_TOOLS).toEqual(["kyoubeai_search_api", "kyoubeai_call_api"]);
-    expect(UNAVAILABLE).toBe("KyoubeAI's table and app tools are unavailable right now. Try again in a minute.");
+    expect(MCP_PLUGINS).toEqual([
+      { id: "kyoube.apps", prefixes: ["kyoubeai_data_", "kyoubeai_apps_"] },
+      { id: "kyoube.files", prefixes: ["kyoubeai_files_"] },
+    ]);
+    expect(UNAVAILABLE).toBe("KyoubeAI's table, app and file tools are unavailable right now. Try again in a minute.");
   });
 });
 
@@ -47,33 +52,100 @@ describe("listTools", () => {
       { name: DROP.name, title: DROP.title, description: DROP.description, inputSchema: DROP.inputSchema, annotations: DROP.annotations },
     ]);
     expect(tools[0]).not.toHaveProperty("tier");
-    expect(calls).toEqual([[p, "GET", "/plugins/kyoube.apps/api/mcp/tools?companyId=c1"]]);
+    expect(calls).toEqual([
+      [p, "GET", "/plugins/kyoube.apps/api/mcp/tools?companyId=c1"],
+      [p, "GET", "/plugins/kyoube.files/api/mcp/tools?companyId=c1"],
+    ]);
   });
 
   it("caches for 60 seconds per company", async () => {
     await listTools(p);
     now += 60_000;
     await listTools(p);
-    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledTimes(2);
     now += 1;
     await listTools(p);
-    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch).toHaveBeenCalledTimes(4);
     await listTools({ grant: { companyId: "c2" } });
-    expect(dispatch).toHaveBeenCalledTimes(3);
+    expect(dispatch).toHaveBeenCalledTimes(6);
   });
 
-  it("returns [] and warns once per window when the fetch fails", async () => {
+  it("returns [] and warns on each attempt when every fetch fails, caching nothing", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     dispatch.mockRejectedValue(new Error("down"));
     expect(await listTools(p)).toEqual([]);
     expect(await listTools(p)).toEqual([]);
-    expect(warn).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledTimes(4);
+    expect(warn).toHaveBeenCalledTimes(4);
     warn.mockRestore();
   });
 
   it("returns [] with no dispatch registered", async () => {
     resetForTests(() => now);
     expect(await listTools(p)).toEqual([]);
+  });
+});
+
+const FILE_B = { name: "kyoubeai_files_b", title: "Files b", description: "Read b", inputSchema: { type: "object" }, tier: "write", annotations: {} };
+const byPath = (apps, files) => async (...args) => {
+  calls.push(args);
+  const result = String(args[2]).startsWith("/plugins/kyoube.files/") ? files : apps;
+  if (result instanceof Error) throw result;
+  return { version: 1, tools: result };
+};
+
+describe("two plugins", () => {
+  it("merges both plugins in order", async () => {
+    const a = { ...QUERY, name: "kyoubeai_data_a" };
+    dispatch.mockImplementation(byPath([a], [FILE_B]));
+    const tools = await listTools(p);
+    expect(tools.map((t) => t.name)).toEqual(["kyoubeai_data_a", "kyoubeai_files_b"]);
+    for (const t of tools) expect(t).not.toHaveProperty("tier");
+  });
+
+  it("one plugin failing leaves the other", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    dispatch.mockImplementation(byPath([QUERY], new Error("down")));
+    expect((await listTools(p)).map((t) => t.name)).toEqual([QUERY.name]);
+    const err = await findTool(p, "kyoubeai_files_b", deps).catch((e) => e);
+    expect(err).toBeInstanceOf(CapabilityError);
+    expect(err.message).toBe(UNAVAILABLE);
+    expect((await findTool(p, QUERY.name, deps)).name).toBe(QUERY.name);
+    warn.mockRestore();
+  });
+
+  it("a failure is not cached, a success is", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    dispatch.mockImplementation(byPath([QUERY], new Error("down")));
+    await listTools(p);
+    dispatch.mockImplementation(byPath([QUERY], [FILE_B]));
+    expect((await listTools(p)).map((t) => t.name)).toEqual([QUERY.name, "kyoubeai_files_b"]);
+    const filesCalls = () => calls.filter((c) => String(c[2]).startsWith("/plugins/kyoube.files/")).length;
+    const before = filesCalls();
+    now += 60_000;
+    await listTools(p);
+    expect(filesCalls()).toBe(before);
+    now += 1;
+    await listTools(p);
+    expect(filesCalls()).toBe(before + 1);
+    warn.mockRestore();
+  });
+
+  it("drops an entry outside its plugin's prefixes with one warning", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    dispatch.mockImplementation(byPath([QUERY, { ...FILE_B, name: "kyoubeai_files_x" }], []));
+    expect((await listTools(p)).map((t) => t.name)).toEqual([QUERY.name]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(await findTool(p, "kyoubeai_files_x", deps)).toBeUndefined();
+    warn.mockRestore();
+  });
+
+  it("run reaches the owner", async () => {
+    dispatch.mockImplementation(byPath([QUERY], [FILE_B]));
+    const tool = await findTool(p, "kyoubeai_files_b", deps);
+    const api = vi.fn(async () => ({ ok: true }));
+    await tool.run(p, { requestId: RID, companyId: "evil", path: "a" }, api);
+    expect(api).toHaveBeenCalledWith(p, "POST", "/plugins/kyoube.files/api/mcp/call", { companyId: "c1", tool: "kyoubeai_files_b", arguments: { path: "a" } });
   });
 });
 
