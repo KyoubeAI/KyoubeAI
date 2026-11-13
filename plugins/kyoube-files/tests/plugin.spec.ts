@@ -146,7 +146,7 @@ describe("files.locate", () => {
 describe("files actions", () => {
   it("lists, creates, writes, reads, renames and deletes inside the project folder, auditing each change", async () => {
     const { act, harness } = await setup();
-    expect(await act("files.list", { path: "" })).toEqual({ path: "", exists: true, entries: [] });
+    expect(await act("files.list", { path: "" })).toEqual({ path: "", exists: true, entries: [], cut: false });
     await act("files.create", { dir: "", name: "docs", kind: "dir" });
     await act("files.create", { dir: "docs", name: "plan.md", kind: "file" });
     const saved = await act<{ mtimeMs: number; size: number }>("files.write", { path: "docs/plan.md", content: "# Plan\n", mustExist: true });

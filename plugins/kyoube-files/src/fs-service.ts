@@ -36,6 +36,27 @@ export interface ReadResult {
   tooLarge: boolean;
 }
 
+export type LinesResult =
+  | { kind: "text"; path: string; size: number; mtimeMs: number; content: string; startLine: number; endLine: number; totalLines: number }
+  | { kind: "binary" | "too_large"; path: string; size: number; mtimeMs: number };
+
+export interface ListOptions {
+  /** How many folder levels to show, 1 to 3 (default 1). */
+  depth?: number;
+  /** Most entries returned (default 500); more than that sets `cut`. */
+  maxEntries?: number;
+}
+
+export interface EditOptions {
+  oldText: string;
+  newText: string;
+  replaceAll?: boolean;
+  /** The mtime the caller last saw; a different one on disk means the file changed since. */
+  baseMtimeMs?: number | null;
+  /** Upper bound on the file read and on the file written. */
+  maxBytes: number;
+}
+
 export interface WriteOptions {
   encoding?: "utf8" | "base64";
   /** The mtime the caller last saw; a different one on disk means someone (an agent) changed the file since. */
@@ -83,11 +104,40 @@ export class WorkspaceFiles {
     if (!path.isAbsolute(root)) throw new FilesError("invalid", "workspace root must be an absolute path");
   }
 
-  async list(relative: unknown): Promise<Listing> {
+  async list(relative: unknown, options: ListOptions = {}): Promise<Listing & { cut: boolean }> {
     const rel = normalizeRelativePath(relative);
+    const depth = options.depth ?? 1;
+    const maxEntries = options.maxEntries ?? 500;
+    if (!Number.isInteger(depth) || depth < 1 || depth > 3) throw new FilesError("invalid", "depth must be 1, 2 or 3");
+    if (!Number.isInteger(maxEntries) || maxEntries < 1) throw new FilesError("invalid", "maxEntries must be a positive whole number");
     const abs = await this.resolveExisting(rel, { allowMissingRoot: true });
-    if (abs === null) return { path: rel, exists: false, entries: [] };
+    if (abs === null) return { path: rel, exists: false, entries: [], cut: false };
     if (rel !== "" && (await fs.lstat(abs)).isSymbolicLink()) throw new FilesError("invalid", `${rel} is a symbolic link; links are not followed`);
+    const entries: FileEntry[] = [];
+    let cut = false;
+    // Breadth first: every folder of one level is listed before any of the next.
+    let level: { abs: string; rel: string }[] = [{ abs, rel }];
+    for (let current = 1; current <= depth && level.length > 0 && !cut; current++) {
+      const next: { abs: string; rel: string }[] = [];
+      for (const folder of level) {
+        const children = await this.readFolder(folder.abs, folder.rel);
+        for (const child of children) {
+          if (entries.length >= maxEntries) {
+            cut = true;
+            break;
+          }
+          entries.push(child);
+          if (child.kind === "dir") next.push({ abs: path.join(folder.abs, child.name), rel: child.path });
+        }
+        if (cut) break;
+      }
+      level = next;
+    }
+    return { path: rel, exists: true, entries, cut };
+  }
+
+  /** The sorted entries of one folder: folders first, then names case-insensitively. */
+  private async readFolder(abs: string, rel: string): Promise<FileEntry[]> {
     let dirents;
     try {
       dirents = await fs.readdir(abs, { withFileTypes: true });
@@ -118,7 +168,7 @@ export class WorkspaceFiles {
       const bDir = b.kind === "dir" ? 0 : 1;
       return aDir - bDir || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.name.localeCompare(b.name);
     });
-    return { path: rel, exists: true, entries };
+    return entries;
   }
 
   async stat(relative: unknown): Promise<FileEntry> {
@@ -159,6 +209,77 @@ export class WorkspaceFiles {
     return { ...base, encoding: "utf8", content: bytes.toString("utf8"), binary: false, tooLarge: false };
   }
 
+  /**
+   * Reads a window of lines from a text file. Lines split on `\n` (a final
+   * `\n` does not start another); `content` is the exact text of the window,
+   * line endings included, so what is read can be edited exactly.
+   */
+  async readLines(relative: unknown, options: { offset?: number; limit?: number; maxBytes: number }): Promise<LinesResult> {
+    const rel = normalizeRelativePath(relative);
+    if (rel === "") throw new FilesError("invalid", "the project folder itself is not a file");
+    const offset = options.offset ?? 1;
+    const limit = options.limit ?? 2000;
+    if (!Number.isInteger(offset) || offset < 1) throw new FilesError("invalid", "offset must be a whole number of 1 or more");
+    if (!Number.isInteger(limit) || limit < 1 || limit > 2000) throw new FilesError("invalid", "limit must be a whole number from 1 to 2000");
+    const maxBytes = Math.min(this.opts.maxReadBytes, options.maxBytes);
+    const { abs, stat } = await this.existingFile(rel);
+    const base = { path: rel, size: stat.size, mtimeMs: stat.mtimeMs };
+    if (stat.size > maxBytes) return { kind: "too_large", ...base };
+    const bytes = await fs.readFile(abs);
+    if (!looksLikeText(bytes)) return { kind: "binary", ...base };
+    const text = bytes.toString("utf8");
+    const starts: number[] = [];
+    if (text.length > 0) starts.push(0);
+    for (let at = text.indexOf("\n"); at !== -1 && at + 1 < text.length; at = text.indexOf("\n", at + 1)) starts.push(at + 1);
+    const totalLines = starts.length;
+    if (offset > totalLines) return { kind: "text", ...base, content: "", startLine: offset, endLine: offset - 1, totalLines };
+    const endLine = Math.min(totalLines, offset + limit - 1);
+    const from = starts[offset - 1] as number;
+    const to = endLine < totalLines ? (starts[endLine] as number) : text.length;
+    return { kind: "text", ...base, content: text.slice(from, to), startLine: offset, endLine, totalLines };
+  }
+
+  /**
+   * Replaces an exact passage in a text file. The passage must match once
+   * unless `replaceAll`; nothing is guessed. The write carries the mtime this
+   * call read, so a change in between fails as `conflict`.
+   */
+  async edit(relative: unknown, options: EditOptions): Promise<FileEntry & { replacements: number }> {
+    const rel = normalizeRelativePath(relative);
+    if (rel === "") throw new FilesError("invalid", "the project folder itself is not a file");
+    if (typeof options.oldText !== "string" || typeof options.newText !== "string") throw new FilesError("invalid", "oldText and newText must be strings");
+    if (options.oldText === "") throw new FilesError("invalid", "oldText must not be empty");
+    const { abs, stat } = await this.existingFile(rel);
+    if (stat.size > options.maxBytes) throw new FilesError("limit", `${rel} is ${stat.size} bytes; the limit is ${options.maxBytes}`);
+    if (options.baseMtimeMs !== undefined && options.baseMtimeMs !== null && Math.floor(stat.mtimeMs) !== Math.floor(options.baseMtimeMs)) {
+      throw new FilesError("conflict", `${rel} changed on disk since it was read`);
+    }
+    const bytes = await fs.readFile(abs);
+    if (!looksLikeText(bytes)) throw new FilesError("invalid", `${rel} is not a text file`);
+    const text = bytes.toString("utf8");
+    let count = 0;
+    for (let at = text.indexOf(options.oldText); at !== -1; at = text.indexOf(options.oldText, at + options.oldText.length)) count++;
+    if (count === 0) throw new FilesError("invalid", "the passage was not found");
+    if (count > 1 && !options.replaceAll) {
+      throw new FilesError("invalid", `the passage matches ${count} times: add surrounding text or set replaceAll`);
+    }
+    const next = text.split(options.oldText).join(options.newText);
+    const nextBytes = Buffer.byteLength(next, "utf8");
+    if (nextBytes > options.maxBytes) throw new FilesError("limit", `the result is ${nextBytes} bytes; the limit is ${options.maxBytes}`);
+    const written = await this.write(rel, next, { baseMtimeMs: stat.mtimeMs, mustExist: true });
+    return { ...written, replacements: count };
+  }
+
+  /** An existing regular file's absolute path and `lstat`; links, folders and the like are refused. */
+  private async existingFile(rel: string) {
+    const abs = await this.resolveExisting(rel);
+    const stat = await fs.lstat(abs);
+    if (stat.isSymbolicLink()) throw new FilesError("invalid", `${rel} is a symbolic link; links are not followed`);
+    if (stat.isDirectory()) throw new FilesError("invalid", `${rel} is a folder`);
+    if (!stat.isFile()) throw new FilesError("invalid", `${rel} is not a regular file`);
+    return { abs, stat };
+  }
+
   async write(relative: unknown, content: string, options: WriteOptions = {}): Promise<FileEntry> {
     const rel = normalizeRelativePath(relative);
     if (rel === "") throw new FilesError("invalid", "the project folder itself is not a file");
@@ -174,7 +295,7 @@ export class WorkspaceFiles {
       if (existing.isSymbolicLink()) throw new FilesError("invalid", `${rel} is a symbolic link; links are not followed`);
       if (existing.isDirectory()) throw new FilesError("invalid", `${rel} is a folder`);
       if (!existing.isFile()) throw new FilesError("invalid", `${rel} is not a regular file`);
-      if (options.baseMtimeMs !== undefined && options.baseMtimeMs !== null && existing.mtimeMs !== options.baseMtimeMs) {
+      if (options.baseMtimeMs !== undefined && options.baseMtimeMs !== null && Math.floor(existing.mtimeMs) !== Math.floor(options.baseMtimeMs)) {
         throw new FilesError("conflict", `${rel} changed on disk since it was opened`);
       }
     } else if (options.mustExist) {

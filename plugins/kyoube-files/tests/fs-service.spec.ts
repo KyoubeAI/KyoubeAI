@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -42,7 +42,7 @@ describe("WorkspaceFiles listing and reading", () => {
 
   it("reports a folder that does not exist yet instead of failing", async () => {
     const missing = new WorkspaceFiles(path.join(base, "never"), { maxReadBytes: 1024, maxWriteBytes: 1024 });
-    expect(await missing.list("")).toEqual({ path: "", exists: false, entries: [] });
+    expect(await missing.list("")).toEqual({ path: "", exists: false, entries: [], cut: false });
     await expect(missing.read("a.txt")).rejects.toThrow("not_found");
   });
 
@@ -157,5 +157,141 @@ describe("WorkspaceFiles writing", () => {
     expect(await files.remove("link")).toEqual({ path: "link", kind: "symlink" });
     expect(await files.remove("dirlink", { recursive: true })).toEqual({ path: "dirlink", kind: "symlink" });
     expect(await readFile(path.join(outside, "secret.txt"), "utf8")).toBe("top secret");
+  });
+});
+
+async function codeOf(promise: Promise<unknown>): Promise<{ code: string; message: string }> {
+  try {
+    await promise;
+  } catch (error) {
+    return { code: (error as { code: string }).code, message: (error as Error).message };
+  }
+  throw new Error("expected a rejection");
+}
+
+describe("WorkspaceFiles readLines", () => {
+  it("pages a file", async () => {
+    await writeFile(path.join(root, "a.txt"), "a\nb\nc\n");
+    expect(await files.readLines("a.txt", { offset: 2, limit: 1, maxBytes: 1000 })).toMatchObject({
+      kind: "text",
+      content: "b\n",
+      startLine: 2,
+      endLine: 2,
+      totalLines: 3,
+    });
+  });
+
+  it("keeps CRLF and a missing final newline", async () => {
+    await writeFile(path.join(root, "c.txt"), "x\r\ny");
+    const first = await files.readLines("c.txt", { limit: 1, maxBytes: 1000 });
+    const second = await files.readLines("c.txt", { offset: 2, maxBytes: 1000 });
+    expect(first).toMatchObject({ totalLines: 2, content: "x\r\n" });
+    expect(second).toMatchObject({ content: "y", startLine: 2, endLine: 2 });
+  });
+
+  it("handles multi-byte text", async () => {
+    await writeFile(path.join(root, "m.txt"), "é😀\n漢字\n");
+    expect(await files.readLines("m.txt", { offset: 2, maxBytes: 1000 })).toMatchObject({ totalLines: 2, content: "漢字\n" });
+  });
+
+  it("handles an empty file and an offset past the end", async () => {
+    await writeFile(path.join(root, "e.txt"), "");
+    expect(await files.readLines("e.txt", { maxBytes: 1000 })).toMatchObject({ totalLines: 0, content: "", startLine: 1, endLine: 0 });
+    await writeFile(path.join(root, "a.txt"), "a\nb\nc\n");
+    expect(await files.readLines("a.txt", { offset: 9, maxBytes: 1000 })).toMatchObject({ content: "", startLine: 9, endLine: 8, totalLines: 3 });
+  });
+
+  it("refuses bad paging, flags binary and too large", async () => {
+    await writeFile(path.join(root, "a.txt"), "a\nb\nc\n");
+    expect((await codeOf(files.readLines("a.txt", { offset: 0, maxBytes: 1000 }))).code).toBe("invalid");
+    expect((await codeOf(files.readLines("a.txt", { limit: 2001, maxBytes: 1000 }))).code).toBe("invalid");
+    await writeFile(path.join(root, "img.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2]));
+    expect(await files.readLines("img.png", { maxBytes: 1000 })).toMatchObject({ kind: "binary" });
+    expect(await files.readLines("a.txt", { maxBytes: 3 })).toMatchObject({ kind: "too_large", size: 6 });
+  });
+});
+
+describe("WorkspaceFiles edit", () => {
+  it("replaces one exact passage", async () => {
+    await writeFile(path.join(root, "f.txt"), "one\r\ntwo\r\nthree");
+    const result = await files.edit("f.txt", { oldText: "two", newText: "2", maxBytes: 1000 });
+    expect(result.replacements).toBe(1);
+    expect(await readFile(path.join(root, "f.txt"), "utf8")).toBe("one\r\n2\r\nthree");
+  });
+
+  it("counts matches", async () => {
+    await writeFile(path.join(root, "f.txt"), "a a");
+    const failure = await codeOf(files.edit("f.txt", { oldText: "a", newText: "b", maxBytes: 1000 }));
+    expect(failure.code).toBe("invalid");
+    expect(failure.message).toContain("the passage matches 2 times: add surrounding text or set replaceAll");
+    const result = await files.edit("f.txt", { oldText: "a", newText: "b", replaceAll: true, maxBytes: 1000 });
+    expect(result.replacements).toBe(2);
+    expect(await readFile(path.join(root, "f.txt"), "utf8")).toBe("b b");
+  });
+
+  it("refuses what it cannot do exactly", async () => {
+    await writeFile(path.join(root, "f.txt"), "hello");
+    expect((await codeOf(files.edit("f.txt", { oldText: "", newText: "x", maxBytes: 1000 }))).code).toBe("invalid");
+    const missing = await codeOf(files.edit("f.txt", { oldText: "zzz", newText: "x", maxBytes: 1000 }));
+    expect(missing.code).toBe("invalid");
+    expect(missing.message).toContain("the passage was not found");
+    await writeFile(path.join(root, "img.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2]));
+    expect((await codeOf(files.edit("img.png", { oldText: "a", newText: "b", maxBytes: 1000 }))).code).toBe("invalid");
+    const seen = (await stat(path.join(root, "f.txt"))).mtimeMs;
+    expect((await codeOf(files.edit("f.txt", { oldText: "hello", newText: "x", baseMtimeMs: seen - 1000, maxBytes: 1000 }))).code).toBe("conflict");
+    expect((await codeOf(files.edit("f.txt", { oldText: "hello", newText: "x".repeat(50), maxBytes: 20 }))).code).toBe("limit");
+    expect(await readFile(path.join(root, "f.txt"), "utf8")).toBe("hello");
+  });
+
+  it("refuses a file larger than maxBytes", async () => {
+    await writeFile(path.join(root, "big.txt"), "x".repeat(50));
+    expect((await codeOf(files.edit("big.txt", { oldText: "x", newText: "y", replaceAll: true, maxBytes: 20 }))).code).toBe("limit");
+  });
+});
+
+describe("WorkspaceFiles write mtime and parents", () => {
+  it("accepts a millisecond-rounded baseMtimeMs", async () => {
+    const target = path.join(root, "t.txt");
+    await writeFile(target, "v1");
+    await utimes(target, new Date(1_700_000_000_123.456), new Date(1_700_000_000_123.456));
+    const mtime = (await stat(target)).mtimeMs;
+    await files.write("t.txt", "v2", { baseMtimeMs: Math.floor(mtime) });
+    await utimes(target, new Date(1_700_000_000_123.456), new Date(1_700_000_000_123.456));
+    const again = (await stat(target)).mtimeMs;
+    expect((await codeOf(files.write("t.txt", "v3", { baseMtimeMs: Math.floor(again) - 1 }))).code).toBe("conflict");
+  });
+
+  it("does not create a missing parent folder", async () => {
+    expect((await codeOf(files.write("nope/x.txt", "x"))).code).toBe("not_found");
+    await expect(stat(path.join(root, "nope"))).rejects.toThrow();
+  });
+});
+
+describe("WorkspaceFiles deep listing", () => {
+  it("descends to the depth, breadth first, and refuses a bad depth", async () => {
+    await mkdir(path.join(root, "a", "b", "c"), { recursive: true });
+    await writeFile(path.join(root, "a", "b", "c", "d.txt"), "d");
+    const listing = await files.list("", { depth: 3 });
+    expect(listing.entries.map((entry) => entry.path)).toEqual(["a", "a/b", "a/b/c"]);
+    expect(listing.cut).toBe(false);
+    expect((await codeOf(files.list("", { depth: 4 }))).code).toBe("invalid");
+    expect((await codeOf(files.list("", { depth: 0 }))).code).toBe("invalid");
+  });
+
+  it("lists a symlink and does not follow it", async () => {
+    await mkdir(path.join(root, "a"));
+    await symlink("..", path.join(root, "a", "loop"));
+    const listing = await files.list("", { depth: 3 });
+    expect(listing.entries.map((entry) => [entry.path, entry.kind])).toEqual([
+      ["a", "dir"],
+      ["a/loop", "symlink"],
+    ]);
+  });
+
+  it("cuts at maxEntries", async () => {
+    for (let i = 0; i < 600; i++) await writeFile(path.join(root, `f${i}.txt`), "");
+    const listing = await files.list("");
+    expect(listing.entries).toHaveLength(500);
+    expect(listing.cut).toBe(true);
   });
 });
