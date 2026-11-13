@@ -229,7 +229,7 @@ describe("the mcp-* entries", () => {
 });
 
 // The bridge wiring: the patched core imports /opt/kyoube/core-patches/mcp-bridge.mjs to list and
-// run KyoubeAI's table and app tools. The behaviour tests run the patched executor, tool listing and
+// run KyoubeAI's table, app and file tools. The behaviour tests run the patched executor, tool listing and
 // dispatch hand-over themselves, lifted out of the patched files into modules of their own (the
 // files' other imports, such as express and the database, do not resolve here), with the bridge
 // path pointed at the real mcp-bridge.mjs.

@@ -443,7 +443,7 @@ const LOCALHOST_URL = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i
 
 /**
  * The `assistant connections` line: whether the core's MCP endpoint is on, whether assistants can
- * sign in at the public URL, and whether the KyoubeAI table and app tools reach it. The sign-in
+ * sign in at the public URL, and whether the KyoubeAI table, app and file tools reach it. The sign-in
  * metadata is read at the API origin, since doctor runs inside the container. At a public URL that
  * is neither https:// nor loopback the core mounts no MCP routes, so the metadata path falls to the
  * web app's page; the instance setting then says whether the feature is on.

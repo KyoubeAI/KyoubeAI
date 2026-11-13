@@ -821,9 +821,10 @@ export const PATCHES = [
     replacement: 'name: agentConnection ? "paperclip" : "kyoubeai", version: "0.1.0" }',
     expect: 2,
   },
-  // The bridge wiring: KyoubeAI's table and app tools (kyoubeai_data_*, kyoubeai_apps_*, served by the
-  // kyoube.apps plugin) join the core's own on /mcp/kyoubeai and run through the core's executor, so
-  // its scope checks, viewer refusal and write receipts apply to them unchanged. The patched files
+  // The bridge wiring: KyoubeAI's table, app and file tools (kyoubeai_data_* and kyoubeai_apps_*, served
+  // by the kyoube.apps plugin, and kyoubeai_files_*, served by kyoube.files) join the core's own on
+  // /mcp/kyoubeai and run through the core's executor, so its scope checks, viewer refusal and write
+  // receipts apply to them unchanged. The patched files
   // import the bridge, /opt/kyoube/core-patches/mcp-bridge.mjs, at runtime; the Dockerfile checks
   // each file's MCP_MARKER count, that the files parse, and that the bridge loads. These entries
   // anchor on names `mcp-tool-names` has already renamed, so they follow it.
@@ -868,7 +869,7 @@ export const PATCHES = [
   },
   {
     id: "mcp-bridge-executor-find",
-    title: "MCP connector: the executor runs KyoubeAI's table and app tools",
+    title: "MCP connector: the executor runs KyoubeAI's table, app and file tools",
     standing: "KyoubeAI MCP connector",
     files: ["server/dist/services/public-mcp/capabilities.js"],
     // The executor's capability lookup (2026.1023.0). A name the core does not know is looked up in
@@ -895,7 +896,7 @@ export const PATCHES = [
   },
   {
     id: "mcp-bridge-list",
-    title: "MCP connector: tools/list adds KyoubeAI's table and app tools, with titles, and drops the generic API tools",
+    title: "MCP connector: tools/list adds KyoubeAI's table, app and file tools, with titles, and drops the generic API tools",
     standing: "KyoubeAI MCP connector",
     files: ["server/dist/routes/public-mcp.js"],
     // The endpoint's listTools, in publicMcpIngressRoutes (2026.1023.0). The core tools, without the
