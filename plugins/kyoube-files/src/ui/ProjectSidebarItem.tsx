@@ -1,11 +1,8 @@
 import type { PluginProjectSidebarItemProps } from "@paperclipai/plugin-sdk/ui";
 import { useHostNavigation } from "@paperclipai/plugin-sdk/ui";
-import { PLUGIN_ID, TAB_SLOT_ID } from "../manifest.js";
+import { filesTabPath } from "../links.js";
 
-/** The project-page URL that opens this plugin's Files tab. */
-export function filesTabPath(projectRef: string): string {
-  return `/projects/${encodeURIComponent(projectRef)}?tab=${encodeURIComponent(`plugin:${PLUGIN_ID}:${TAB_SLOT_ID}`)}`;
-}
+export { filesTabPath };
 
 /**
  * Rendered once per project under its row in the sidebar's Projects list, so

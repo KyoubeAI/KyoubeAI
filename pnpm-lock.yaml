@@ -224,6 +224,9 @@ importers:
       '@paperclipai/plugin-sdk':
         specifier: 2026.1023.0
         version: 2026.1023.0(react@19.2.8)
+      zod:
+        specifier: ^4.5.4
+        version: 4.5.4
     devDependencies:
       '@kyoube/visibility':
         specifier: workspace:*

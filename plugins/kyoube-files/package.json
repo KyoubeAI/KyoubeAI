@@ -20,7 +20,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@paperclipai/plugin-sdk": "2026.1023.0"
+    "@paperclipai/plugin-sdk": "2026.1023.0",
+    "zod": "^4.5.4"
   },
   "peerDependencies": {
     "react": ">=18"
