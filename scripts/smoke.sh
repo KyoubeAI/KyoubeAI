@@ -1212,7 +1212,7 @@ JS
   compose exec -T app kyoube license clear >/dev/null
 fi
 
-echo "==> assistant connections (MCP): sign in as a person, the directory rules, the table tools"
+echo "==> assistant connections (MCP): sign in as a person, the directory rules, the table tools, files and app tasks"
 # The core's OAuth MCP server, served at /mcp/kyoubeai with kyoubeai_* tools (docs/mcp.md). An
 # assistant signs in as a person with the device grant: it registers, asks for a code, the person
 # approves the code in their browser session (the consent route), and the assistant takes the token.
@@ -1281,8 +1281,9 @@ MCP_BAD="$(jq -c '[.tools[] | select((.name | contains("paperclip")) or ((.title
   or ((.name | length) > 64)) | .name]' "$TMP/mcp-tools.json")"
 [[ "$MCP_BAD" == "[]" ]] || { echo "MCP tools break the directory rules (paperclip name, no title, no hint, or > 64 chars): $MCP_BAD" >&2; exit 1; }
 jq -e '.tools | map(.name) | index("kyoubeai_call_api") == null and index("kyoubeai_search_api") == null
-  and index("kyoubeai_data_list_tables") != null and index("kyoubeai_apps_publish") != null' "$TMP/mcp-tools.json" >/dev/null \
-  || { echo "the MCP tool list still has the generic API tools or lacks the table and app tools: $(jq -c '.tools | map(.name)' "$TMP/mcp-tools.json")" >&2; exit 1; }
+  and index("kyoubeai_data_list_tables") != null and index("kyoubeai_apps_publish") != null
+  and index("kyoubeai_files_edit") != null and index("kyoubeai_apps_task_start") != null' "$TMP/mcp-tools.json" >/dev/null \
+  || { echo "the MCP tool list still has the generic API tools or lacks the table, app, file and app-task tools: $(jq -c '.tools | map(.name)' "$TMP/mcp-tools.json")" >&2; exit 1; }
 echo "    tools/list: $(jq '.tools | length' "$TMP/mcp-tools.json") tools, each titled and hinted, none named paperclip, the generic API tools gone"
 
 mcp_tool "$MCP_TOKEN" kyoubeai_connection '{}'
@@ -1321,13 +1322,80 @@ mcp_tool "$MCP_TOKEN" kyoubeai_data_count '{"table":"mcp_smoke"}'
 jq -e '.structuredContent.data.count == 1' "$TMP/mcp.json" >/dev/null || { echo "mcp_smoke changed after the operator's refused drop: $(cat "$TMP/mcp.json")" >&2; exit 1; }
 echo "    a read-only connection is refused paperclip:write; the operator's drop_table is rejected as forbidden"
 
+mcp_expect() { # step jq-filter -> fails the smoke, naming the step and the tool's result, unless $TMP/mcp.json matches
+  jq -e "$2" "$TMP/mcp.json" >/dev/null || { echo "$1: $(cat "$TMP/mcp.json")" >&2; exit 1; }
+}
+files_args() { # extra-json -> those arguments with the files smoke project's id
+  jq -cn --arg p "$FILES_PROJECT_ID" --argjson x "$1" '{projectId: $p} + $x'
+}
+# Project files (kyoube.files): the Smoke Files project's folder from the files section, as the admin.
+mcp_tool "$MCP_TOKEN" kyoubeai_files_folders "$(files_args '{}')"
+mcp_expect "kyoubeai_files_folders does not let the admin write" '.isError != true and .structuredContent.outcome == "completed" and .structuredContent.data.canWrite == true'
+mcp_tool "$MCP_TOKEN" kyoubeai_files_create_folder "$(files_args '{"requestId":"00000000-0000-4000-8000-000000000006","path":"mcp"}')"
+mcp_expect "kyoubeai_files_create_folder mcp failed" '.isError != true and .structuredContent.outcome == "completed" and .structuredContent.data.kind == "dir"'
+mcp_tool "$MCP_TOKEN" kyoubeai_files_write "$(files_args '{"requestId":"00000000-0000-4000-8000-000000000007","path":"mcp/notes.md","content":"line one\nline two\n","createOnly":true}')"
+mcp_expect "kyoubeai_files_write of mcp/notes.md failed" '.isError != true and .structuredContent.outcome == "completed" and .structuredContent.data.path == "mcp/notes.md"'
+mcp_tool "$MCP_TOKEN" kyoubeai_files_read "$(files_args '{"path":"mcp/notes.md","offset":2,"limit":1}')"
+mcp_expect "kyoubeai_files_read of line 2 of mcp/notes.md did not answer that line of 2" \
+  '.isError != true and .structuredContent.data.content == "line two\n" and .structuredContent.data.totalLines == 2'
+mcp_tool "$MCP_TOKEN" kyoubeai_files_edit "$(files_args '{"requestId":"00000000-0000-4000-8000-000000000008","path":"mcp/notes.md","oldText":"line two","newText":"line 2"}')"
+mcp_expect "kyoubeai_files_edit did not make exactly one replacement" '.isError != true and .structuredContent.outcome == "completed" and .structuredContent.data.replacements == 1'
+# A write made against a version of the file that is not the current one is refused.
+mcp_tool "$MCP_TOKEN" kyoubeai_files_write "$(files_args '{"requestId":"00000000-0000-4000-8000-000000000009","path":"mcp/notes.md","content":"stale\n","expectedModifiedAt":"2000-01-01T00:00:00.000Z"}')"
+mcp_expect "kyoubeai_files_write over a changed file was not rejected as a conflict" '.structuredContent.outcome == "rejected" and .structuredContent.code == "conflict"'
+mcp_tool "$MCP_TOKEN" kyoubeai_files_move "$(files_args '{"requestId":"00000000-0000-4000-8000-000000000010","path":"mcp/notes.md","newPath":"mcp/renamed.md"}')"
+mcp_expect "kyoubeai_files_move to mcp/renamed.md failed" '.isError != true and .structuredContent.outcome == "completed" and .structuredContent.data.path == "mcp/renamed.md"'
+mcp_tool "$MCP_TOKEN" kyoubeai_files_read "$(files_args '{"path":"mcp/renamed.md"}')"
+mcp_expect "kyoubeai_files_read of mcp/renamed.md does not show the edit" '.isError != true and (.structuredContent.data.content | contains("line 2"))'
+mcp_tool "$MCP_TOKEN" kyoubeai_files_delete "$(files_args '{"requestId":"00000000-0000-4000-8000-000000000011","path":"mcp","recursive":true}')"
+mcp_expect "kyoubeai_files_delete of the mcp folder failed" '.isError != true and .structuredContent.outcome == "completed" and .structuredContent.data.kind == "dir"'
+echo "    files as the admin: folders (writable), create_folder, write, read by lines, edit, a stale write rejected as a conflict, move, read, delete"
+mcp_tool "$MCP_TOKEN" kyoubeai_files_read "$(files_args '{"path":"../x"}')"
+mcp_expect "kyoubeai_files_read of ../x was not rejected as invalid" '.structuredContent.outcome == "rejected" and .structuredContent.code == "invalid"'
+mcp_tool "$MCP_READ_TOKEN" kyoubeai_files_write "$(files_args '{"requestId":"00000000-0000-4000-8000-000000000012","path":"refused.md","content":"refused"}')"
+mcp_expect "a read-only connection's kyoubeai_files_write was not refused for want of paperclip:write" \
+  '.isError == true and (.content[0].text | contains("paperclip:write permission is required"))'
+echo "    files: a path out of the folder is rejected as invalid; a read-only connection is refused paperclip:write"
+
+# App tasks (kyoube.apps): a draft app with one task template for a stand-in agent, published by the
+# admin with the template confirmed, then one task started, read back and cancelled over the connection.
+MCP_TASK_AGENT_ID="$(board_new "/api/companies/$COMPANY_ID/agents" \
+  '{"name":"smoke-mcp-task-agent","adapterType":"process","adapterConfig":{"cwd":"/kyoubeai/workspaces/smoke","command":"node","args":["-e",""]}}')"
+mcp_tool "$MCP_TOKEN" kyoubeai_apps_create "$(jq -cn '{requestId: "00000000-0000-4000-8000-000000000013",
+  manifest: {name: "MCP Tasks", slug: "mcp-tasks", tables: [],
+    tasks: {note: {agent: "smoke-mcp-task-agent", title: "MCP smoke task", instructions: "Reply with done."}}},
+  source: "<!doctype html><html><body><h1>mcp-tasks</h1></body></html>"}')"
+mcp_expect "kyoubeai_apps_create of the mcp-tasks draft failed" '.isError != true and .structuredContent.outcome == "completed"'
+mcp_tool "$MCP_TOKEN" kyoubeai_apps_publish '{"requestId":"00000000-0000-4000-8000-000000000014","slug":"mcp-tasks","tasksConfirmed":true}'
+mcp_expect "kyoubeai_apps_publish of mcp-tasks with its task template confirmed failed" '.isError != true and .structuredContent.outcome == "completed"'
+mcp_tool "$MCP_TOKEN" kyoubeai_apps_task_start '{"requestId":"00000000-0000-4000-8000-000000000015","app":"mcp-tasks","template":"note"}'
+mcp_expect "kyoubeai_apps_task_start of mcp-tasks/note did not start a task" \
+  '.isError != true and .structuredContent.outcome == "completed" and (.structuredContent.data.id | type == "string" and length > 0)'
+MCP_APP_TASK_ID="$(jq -r '.structuredContent.data.id' "$TMP/mcp.json")"
+mcp_tool "$MCP_TOKEN" kyoubeai_apps_task_get "$(jq -cn --arg t "$MCP_APP_TASK_ID" '{app: "mcp-tasks", taskId: $t}')"
+jq -e --arg t "$MCP_APP_TASK_ID" '.isError != true and .structuredContent.outcome == "completed" and .structuredContent.data.id == $t' "$TMP/mcp.json" >/dev/null \
+  || { echo "kyoubeai_apps_task_get does not answer the task just started ($MCP_APP_TASK_ID): $(cat "$TMP/mcp.json")" >&2; exit 1; }
+# The agent's run may still be closing, and the change is refused until it has: retry a conflict, each
+# time with a new requestId (016 to 025), since a retry under the same one is answered from the receipt.
+for i in $(seq 1 10); do
+  mcp_tool "$MCP_TOKEN" kyoubeai_apps_task_cancel "$(jq -cn --arg t "$MCP_APP_TASK_ID" --arg r "00000000-0000-4000-8000-0000000000$((15 + i))" \
+    '{requestId: $r, app: "mcp-tasks", taskId: $t}')"
+  jq -e '.structuredContent.outcome == "rejected" and .structuredContent.code == "conflict"' "$TMP/mcp.json" >/dev/null || break
+  [[ $i -eq 10 ]] && { echo "kyoubeai_apps_task_cancel was still refused as a conflict after 10 tries: $(cat "$TMP/mcp.json")" >&2; exit 1; }
+  sleep 1
+done
+mcp_expect "kyoubeai_apps_task_cancel of $MCP_APP_TASK_ID failed" '.isError != true and .structuredContent.outcome == "completed"'
+# Paused, so no later wake runs the stand-in agent.
+curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X POST "$BASE_URL/api/agents/$MCP_TASK_AGENT_ID/pause" --data '{}' >/dev/null
+echo "    app tasks: create, publish with the template confirmed, task_start, task_get ($MCP_APP_TASK_ID), task_cancel; the stand-in agent paused"
+
 # Without a token: the core's actor middleware answers any path 401 for a bearer that is not a board or agent key.
 STATUS="$(curl -sS -o "$TMP/mcp-old.json" -w '%{http_code}' -H 'Accept: application/json, text/event-stream' \
   -H 'Content-Type: application/json' -X POST "$BASE_URL/mcp/paperclip" --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')"
 [[ "$STATUS" == 404 ]] || { echo "POST /mcp/paperclip answered $STATUS, not 404: $(cat "$TMP/mcp-old.json")" >&2; exit 1; }
 compose exec -T app kyoube doctor >"$TMP/doctor-mcp.log" || true
 # A localhost public URL: doctor gives the Claude Code command, since Claude on the web cannot reach it.
-grep -Eq "^ok +assistant connections +on at $MCP_URL, [0-9]+ KyoubeAI tools — Claude Code: claude mcp add --transport http kyoubeai $MCP_URL\$" "$TMP/doctor-mcp.log" \
+grep -Eq "^ok +assistant connections +on at $MCP_URL, 37 KyoubeAI tools — Claude Code: claude mcp add --transport http kyoubeai $MCP_URL\$" "$TMP/doctor-mcp.log" \
   || { echo "doctor does not report assistant connections on, with the Claude Code command:" >&2; grep 'assistant connections' "$TMP/doctor-mcp.log" >&2; exit 1; }
 echo "    /mcp/paperclip is 404; doctor: $(grep -E '^ok +assistant connections' "$TMP/doctor-mcp.log" | sed 's/^ok *assistant connections *//')"
 
