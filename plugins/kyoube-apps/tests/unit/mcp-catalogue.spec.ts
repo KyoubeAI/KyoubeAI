@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { APP_TOOL_DEFINITIONS } from "../../src/apps/tools.js";
+import { APP_TOOL_DEFINITIONS, appToolDeclarations } from "../../src/apps/tools.js";
 import { buildCatalogue } from "../../src/mcp/catalogue.js";
+import { MCP_TASK_DEFINITIONS } from "../../src/mcp/task-tools.js";
 import { TOOL_DEFINITIONS } from "../../src/tools.js";
 
 // The spec's section 2 lists, verbatim.
-const READ = ["data_list_tables", "data_describe_table", "data_list_review", "data_get", "data_query", "data_count", "data_sql_select", "data_my_access", "apps_list", "apps_get"];
-const WRITE = ["data_insert", "data_update", "data_delete", "apps_create", "apps_update"];
+const READ = ["data_list_tables", "data_describe_table", "data_list_review", "data_get", "data_query", "data_count", "data_sql_select", "data_my_access", "apps_list", "apps_get", "apps_task_list", "apps_task_get"];
+const WRITE = ["data_insert", "data_update", "data_delete", "apps_create", "apps_update", "apps_task_start", "apps_task_cancel"];
 const CONFIGURE = ["data_create_table", "data_add_field", "data_update_field", "data_remove_field", "data_drop_table", "data_rename_table", "data_create_index", "apps_publish", "apps_rollback", "apps_archive"];
-const DESTRUCTIVE = ["data_update", "data_delete", "data_remove_field", "data_drop_table", "apps_archive"];
+const DESTRUCTIVE = ["data_update", "data_delete", "data_remove_field", "data_drop_table", "apps_archive", "apps_task_cancel"];
 
 const kyoube = (names: string[]) => names.map((name) => `kyoubeai_${name}`).sort();
 
@@ -18,10 +19,23 @@ describe("the MCP catalogue", () => {
   const schemaOf = (entry: (typeof entries)[number]) => entry.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
 
   it("has one entry per agent tool definition", () => {
-    expect(entries).toHaveLength(25);
-    expect(entries.map((entry) => entry.name).sort()).toEqual(kyoube([...TOOL_DEFINITIONS, ...APP_TOOL_DEFINITIONS].map((tool) => tool.name)));
+    expect(entries).toHaveLength(29);
+    expect(entries.map((entry) => entry.name).sort()).toEqual(kyoube([...TOOL_DEFINITIONS, ...APP_TOOL_DEFINITIONS, ...MCP_TASK_DEFINITIONS].map((tool) => tool.name)));
     expect(catalogue.filter((tool) => tool.service === "data")).toHaveLength(18);
-    expect(catalogue.filter((tool) => tool.service === "apps")).toHaveLength(7);
+    expect(catalogue.filter((tool) => tool.service === "apps")).toHaveLength(11);
+  });
+
+  it("serves the app task tools over MCP only", () => {
+    const byName = (name: string) => entries.find((entry) => entry.name === `kyoubeai_${name}`)!;
+    expect(byName("apps_task_list").title).toBe("List app tasks");
+    expect(byName("apps_task_get").title).toBe("Check app task");
+    expect(byName("apps_task_start").title).toBe("Start app task");
+    expect(byName("apps_task_cancel").title).toBe("Cancel app task");
+    expect(byName("apps_get").description.endsWith("start one with kyoubeai_apps_task_start.")).toBe(true);
+    expect(byName("apps_task_start").description).toContain("(kyoubeai_apps_get)");
+    expect(MCP_TASK_DEFINITIONS.map((tool) => tool.name)).toEqual(["apps_task_list", "apps_task_get", "apps_task_start", "apps_task_cancel"]);
+    expect(appToolDeclarations().map((tool) => tool.name).filter((name) => name.startsWith("apps_task_"))).toEqual([]);
+    expect(APP_TOOL_DEFINITIONS.map((tool) => tool.name).filter((name) => name.startsWith("apps_task_"))).toEqual([]);
   });
 
   it("names, titles and describes every entry", () => {
@@ -108,7 +122,7 @@ describe("the MCP catalogue", () => {
   });
 
   it("refuses a property description override for a property the tool does not have", () => {
-    const apps = APP_TOOL_DEFINITIONS.map((tool) => (tool.name === "apps_publish" ? { ...tool, schema: z.object({ slug: z.string() }) } : tool));
+    const apps = [...APP_TOOL_DEFINITIONS, ...MCP_TASK_DEFINITIONS].map((tool) => (tool.name === "apps_publish" ? { ...tool, schema: z.object({ slug: z.string() }) } : tool));
     expect(() => buildCatalogue({ data: TOOL_DEFINITIONS, apps })).toThrow("MCP property decisionsConfirmed missing on apps_publish");
   });
 
@@ -120,11 +134,11 @@ describe("the MCP catalogue", () => {
 
   it("refuses an agent tool without MCP settings", () => {
     const extra = { name: "data_x", displayName: "X", description: "x", schema: z.object({}), run: async () => null };
-    expect(() => buildCatalogue({ data: [...TOOL_DEFINITIONS, extra], apps: APP_TOOL_DEFINITIONS })).toThrow("MCP settings missing for data_x");
+    expect(() => buildCatalogue({ data: [...TOOL_DEFINITIONS, extra], apps: [...APP_TOOL_DEFINITIONS, ...MCP_TASK_DEFINITIONS] })).toThrow("MCP settings missing for data_x");
   });
 
   it("refuses MCP settings for a tool that does not exist", () => {
-    expect(() => buildCatalogue({ data: TOOL_DEFINITIONS.filter((tool) => tool.name !== "data_get"), apps: APP_TOOL_DEFINITIONS })).toThrow("MCP settings for unknown tool data_get");
+    expect(() => buildCatalogue({ data: TOOL_DEFINITIONS.filter((tool) => tool.name !== "data_get"), apps: [...APP_TOOL_DEFINITIONS, ...MCP_TASK_DEFINITIONS] })).toThrow("MCP settings for unknown tool data_get");
   });
 
   it("is built once", () => {

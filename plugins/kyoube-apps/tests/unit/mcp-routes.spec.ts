@@ -45,8 +45,8 @@ describe("handleMcpApiRequest", () => {
     const response = await handleMcpApiRequest(services().services, request("mcp.tools", undefined));
     expect(response!.status).toBe(200);
     const body = response!.body as { version: string; tools: Array<{ name: string; tier: string }> };
-    expect(body.version).toBe("0.15.0");
-    expect(body.tools).toHaveLength(25);
+    expect(body.version).toBe("0.16.0");
+    expect(body.tools).toHaveLength(29);
     expect(body.tools.find((tool) => tool.name === "kyoubeai_data_query")).toMatchObject({ tier: "read", title: "Query rows" });
   });
 
@@ -140,6 +140,30 @@ describe("handleMcpApiRequest", () => {
     const under = { value: "x".repeat(19_983) };
     expect(JSON.stringify(under, null, 2).length).toBe(20_000);
     expect(await queryReturning(under)).toEqual({ outcome: "completed", data: under });
+  });
+
+  it("starts an app task as the signed-in person", async () => {
+    const calls: unknown[][] = [];
+    const apps = { runtimeTaskStart: async (...args: unknown[]) => { calls.push(args); return { id: "t1", status: "queued" }; } } as unknown as AppService;
+    const response = await handleMcpApiRequest({ data: {} as DataService, apps }, request("mcp.call", { companyId: COMPANY, tool: "kyoubeai_apps_task_start", arguments: { app: "support-desk", template: "draft_reply", rowId: "r1", inputs: { tone: "formal" }, requestId: "6f1c2b9e-3d4a-4c5b-8e7f-0a1b2c3d4e5f" } }));
+    expect(calls).toEqual([[COMPANY, { kind: "user", id: "u1", runId: null }, "support-desk", "draft_reply", { rowId: "r1", inputs: { tone: "formal" } }]]);
+    expect(response!.body).toMatchObject({ outcome: "completed", data: { id: "t1" } });
+  });
+
+  it("answers a disabled or limited task start as a rejected outcome", async () => {
+    for (const code of ["disabled", "limit"] as const) {
+      const apps = { runtimeTaskStart: async () => { throw new DataError(code, "no"); } } as unknown as AppService;
+      const response = await handleMcpApiRequest({ data: {} as DataService, apps }, request("mcp.call", { companyId: COMPANY, tool: "kyoubeai_apps_task_start", arguments: { app: "support-desk", template: "draft_reply", requestId: "6f1c2b9e-3d4a-4c5b-8e7f-0a1b2c3d4e5f" } }));
+      expect(response!.status).toBe(200);
+      expect(response!.body).toMatchObject({ outcome: "rejected", code });
+    }
+  });
+
+  it("cancels an app task by id", async () => {
+    const calls: unknown[][] = [];
+    const apps = { runtimeTaskCancel: async (...args: unknown[]) => { calls.push(args); return { id: "t1", runMayContinue: false }; } } as unknown as AppService;
+    await handleMcpApiRequest({ data: {} as DataService, apps }, request("mcp.call", { companyId: COMPANY, tool: "kyoubeai_apps_task_cancel", arguments: { app: "support-desk", taskId: "t1", requestId: "6f1c2b9e-3d4a-4c5b-8e7f-0a1b2c3d4e5f" } }));
+    expect(calls).toEqual([[COMPANY, { kind: "user", id: "u1", runId: null }, "support-desk", "t1"]]);
   });
 
   it("leaves other routes to the other dispatchers", async () => {

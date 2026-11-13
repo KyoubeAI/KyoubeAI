@@ -5,7 +5,7 @@ import { declarationsFor, registerToolHandlers, type ToolDefinition } from "../t
 import { APP_MANIFEST_SCHEMA, APP_SLUG_RE, MAX_APP_NOTES } from "./manifest.js";
 import { confirmations, type AppService } from "./service.js";
 
-const slug = z.string().regex(APP_SLUG_RE, "slug must match ^[a-z][a-z0-9-]{1,48}$");
+export const slug = z.string().regex(APP_SLUG_RE, "slug must match ^[a-z][a-z0-9-]{1,48}$");
 const manifestSchema = APP_MANIFEST_SCHEMA.describe("app manifest: which Data tables the app may use and with what access");
 const source = z.string().min(1).describe("one complete HTML document; window.kyoube is injected before it runs (see the kyoube-apps skill)");
 const notes = z.string().max(MAX_APP_NOTES).optional().describe("optional note recorded with this version");

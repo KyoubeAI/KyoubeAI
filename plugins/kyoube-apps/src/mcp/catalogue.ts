@@ -5,6 +5,7 @@ import type { DataService } from "../data/service.js";
 import { GUARD_NOTE } from "../decisions/guardrail.js";
 import { jsonSchemaFor, type ToolDefinition } from "../tool-runtime.js";
 import { TOOL_DEFINITIONS } from "../tools.js";
+import { MCP_TASK_DEFINITIONS } from "./task-tools.js";
 
 /**
  * The agent tools as MCP tools, for a person's assistant connected at
@@ -49,7 +50,14 @@ export const MCP_SETTINGS: Record<string, { tier: McpTier; destructive?: true; d
   data_sql_select: { tier: "read" },
   data_my_access: { tier: "read" },
   apps_list: { tier: "read" },
-  apps_get: { tier: "read" },
+  apps_get: {
+    tier: "read",
+    description: `${APP_TOOL_DEFINITIONS.find((tool) => tool.name === "apps_get")!.description} The app's task templates are under tasks in its manifest; start one with apps_task_start.`,
+  },
+  apps_task_list: { tier: "read" },
+  apps_task_get: { tier: "read" },
+  apps_task_start: { tier: "write" },
+  apps_task_cancel: { tier: "write", destructive: true },
   data_insert: { tier: "write" },
   data_update: { tier: "write", destructive: true },
   data_delete: { tier: "write", destructive: true },
@@ -156,6 +164,6 @@ let memo: McpTool[] | undefined;
  */
 export function buildCatalogue(definitions?: Definitions): McpTool[] {
   if (definitions) return build(definitions);
-  memo ??= build({ data: TOOL_DEFINITIONS, apps: APP_TOOL_DEFINITIONS });
+  memo ??= build({ data: TOOL_DEFINITIONS, apps: [...APP_TOOL_DEFINITIONS, ...MCP_TASK_DEFINITIONS] });
   return memo;
 }
