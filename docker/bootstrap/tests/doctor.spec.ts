@@ -581,7 +581,7 @@ describe("assistantConnectionsCheck", () => {
     return assistantConnectionsCheck({ publicUrl: "https://kyoube.example.com", apiBase: "http://127.0.0.1:3100", boardKey: "key", companyId: "c1", fetchImpl, ...over }).then((check) => ({ check, calls }));
   };
   const metadata = { resource: "https://kyoube.example.com/mcp/kyoubeai", authorization_servers: ["https://kyoube.example.com"] };
-  const on = (url: string) => (url.includes("/.well-known/") ? reply(200, metadata) : reply(200, { version: 1, tools: [{}, {}, {}] }));
+  const on = (url: string) => (url.includes("/.well-known/") ? reply(200, metadata) : reply(200, { version: 1, tools: url.includes("/kyoube.files/") ? [] : [{}, {}, {}] }));
   // The SPA fallback: what the core answers when it mounted no MCP routes (a public URL that is neither https nor loopback).
   const page = () => new Response("<!doctype html><html></html>", { status: 200, headers: { "Content-Type": "text/html" } });
   const spaWithSetting = (enablePublicMcp: unknown, status = 200) => (url: string) =>
@@ -650,6 +650,32 @@ describe("assistantConnectionsCheck", () => {
     });
     expect(calls[1]!.url).toBe("http://127.0.0.1:3100/api/plugins/kyoube.apps/api/mcp/tools?companyId=c1");
     expect((calls[1]!.init?.headers as Record<string, string>).Authorization).toBe("Bearer key");
+  });
+
+  const tools = (n: number) => reply(200, { version: 1, tools: Array.from({ length: n }, () => ({})) });
+
+  it("counts the file tools with the app tools", async () => {
+    const { check, calls } = await run((url) => (url.includes("/.well-known/") ? reply(200, metadata) : url.includes("/kyoube.files/") ? tools(8) : tools(29)));
+    expect(check.ok).toBe(true);
+    expect(check.warn).toBeUndefined();
+    expect(check.detail).toContain("37 KyoubeAI tools —");
+    expect(calls[2]!.url).toBe("http://127.0.0.1:3100/api/plugins/kyoube.files/api/mcp/tools?companyId=c1");
+    expect((calls[2]!.init?.headers as Record<string, string>).Authorization).toBe("Bearer key");
+  });
+
+  it("warns, with the app count, when kyoube.files is not answering", async () => {
+    for (const files of [() => reply(500), () => reply(200, { tools: "no" }), () => { throw new Error("down"); }]) {
+      const { check } = await run((url) => (url.includes("/.well-known/") ? reply(200, metadata) : url.includes("/kyoube.files/") ? files() : tools(29)));
+      expect(check.ok).toBe(true);
+      expect(check.warn).toBe(true);
+      expect(check.detail).toContain("29 KyoubeAI tools; files tools missing (kyoube.files not answering) —");
+    }
+  });
+
+  it("fails without fetching the file tools when kyoube.apps is not answering", async () => {
+    const { check, calls } = await run((url) => (url.includes("/.well-known/") ? reply(200, metadata) : reply(500)));
+    expect(check.ok).toBe(false);
+    expect(calls.some((c) => c.url.includes("kyoube.files"))).toBe(false);
   });
 
   it("fails when the catalogue cannot be fetched", async () => {

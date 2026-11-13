@@ -502,17 +502,30 @@ export async function assistantConnectionsCheck(input: {
   const unavailable: Check = { name, ok: false, detail: "on, but the table and app tools are unavailable — see Settings → Plugins → kyoube.apps → Logs" };
   if (!input.boardKey) return unavailable;
   try {
-    const response = await doFetch(`${input.apiBase}/api/plugins/kyoube.apps/api/mcp/tools?companyId=${encodeURIComponent(input.companyId)}`, {
-      headers: { Authorization: `Bearer ${input.boardKey}` },
-    });
+    const headers = { Authorization: `Bearer ${input.boardKey}` };
+    const catalogue = (plugin: string) => `${input.apiBase}/api/plugins/${plugin}/api/mcp/tools?companyId=${encodeURIComponent(input.companyId!)}`;
+    const response = await doFetch(catalogue("kyoube.apps"), { headers });
     if (!response.ok) return unavailable;
     const body = (await response.json()) as { tools?: unknown };
     if (!Array.isArray(body.tools)) return unavailable;
+    let fileTools: number | null = null;
+    try {
+      const files = await doFetch(catalogue("kyoube.files"), { headers });
+      if (files.ok) {
+        const filesBody = (await files.json()) as { tools?: unknown };
+        if (Array.isArray(filesBody.tools)) fileTools = filesBody.tools.length;
+      }
+    } catch {
+      // reported below as the files tools missing
+    }
     // Claude on the web cannot reach a loopback address; Claude Code on the same machine can.
     const connect = publicUrl.startsWith("https://")
       ? `Add to Claude: https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=KyoubeAI&connectorUrl=${encodeURIComponent(endpoint)}`
       : `Claude Code: claude mcp add --transport http kyoubeai ${endpoint}`;
-    return { name, ok: true, detail: `on at ${endpoint}, ${body.tools.length} KyoubeAI tools — ${connect}` };
+    if (fileTools === null) {
+      return { name, ok: true, warn: true, detail: `on at ${endpoint}, ${body.tools.length} KyoubeAI tools; files tools missing (kyoube.files not answering) — ${connect}` };
+    }
+    return { name, ok: true, detail: `on at ${endpoint}, ${body.tools.length + fileTools} KyoubeAI tools — ${connect}` };
   } catch {
     return unavailable;
   }
