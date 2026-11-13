@@ -305,8 +305,8 @@ export function createFilesPlugin(deps: FilesPluginDeps): PaperclipPlugin {
         },
         async describeFolders(person, projectId) {
           const info = await describeFolders(person, projectId);
-          // A server path is not for an assistant.
-          return { ...info, workspaces: info.workspaces.map(({ path: _path, ...rest }) => rest) };
+          // A server path is not for an assistant, nor a write permission for a project it may not see.
+          return { ...info, canWrite: info.canWrite && info.canRead, workspaces: info.workspaces.map(({ path: _path, ...rest }) => rest) };
         },
       };
 

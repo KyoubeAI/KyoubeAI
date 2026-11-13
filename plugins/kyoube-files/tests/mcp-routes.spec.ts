@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { PluginApiRequestInput } from "@paperclipai/plugin-sdk";
@@ -118,22 +118,107 @@ describe("kyoube.files MCP routes", () => {
     expect(data).not.toHaveProperty("content");
   });
 
-  it("truncates a result over 20,000 characters", async () => {
-    await writeFile(path.join(dir, "big.txt"), `${"x".repeat(99)}\n`.repeat(300));
-    const response = await call("kyoubeai_files_read", { path: "big.txt", limit: 2000 });
+  it("truncates a single line too long to fit, with the line numbers ahead of the cut", async () => {
+    await writeFile(path.join(dir, "big.txt"), "x".repeat(30_000));
+    const response = await call("kyoubeai_files_read", { path: "big.txt" });
     const body = response?.body as { outcome: string; truncated?: boolean; content: string };
+    expect(body.outcome).toBe("completed");
     expect(body.truncated).toBe(true);
     expect(body.content.length).toBeLessThanOrEqual(20_000 + 200);
     expect(body.content).toContain("[Result truncated at 20000 characters.");
+    expect(body.content).toContain('"totalLines": 1');
   });
 
-  it("lists with an explicit cap of 500 entries", async () => {
-    for (let i = 0; i < 600; i++) await writeFile(path.join(dir, `f${String(i).padStart(3, "0")}.txt`), "");
-    const tool = buildFilesCatalogue().find((candidate) => candidate.entry.name === "kyoubeai_files_list")!;
-    const data = (await tool.run(context, { projectId: PROJECT })) as { entries: unknown[]; cut: boolean; note?: string };
-    expect(data.entries).toHaveLength(500);
-    expect(data.cut).toBe(true);
-    expect(data.note).toBe("More entries than shown: list a subfolder, or use a smaller depth.");
+  describe("a read too long for one answer", () => {
+    const line = (n: number) => `${String(n).padStart(4, "0")}${"x".repeat(76)}\n`;
+
+    beforeEach(async () => {
+      let text = "";
+      for (let n = 1; n <= 2000; n++) text += line(n);
+      await writeFile(path.join(dir, "long.txt"), text);
+    });
+
+    it("is shortened to whole lines, says where to continue, and is not truncated", async () => {
+      const response = await call("kyoubeai_files_read", { path: "long.txt" });
+      const body = response?.body as { outcome: string; truncated?: boolean; data: { content: string; startLine: number; endLine: number; totalLines: number; note?: string } };
+      expect(body.outcome).toBe("completed");
+      expect(body.truncated).toBeUndefined();
+      const { data } = body;
+      expect(data.startLine).toBe(1);
+      expect(data.endLine).toBeLessThan(2000);
+      expect(data.totalLines).toBe(2000);
+      expect(data.note).toBe(`Page shortened to fit: continue with offset ${data.endLine + 1}.`);
+      expect(data.content.split("\n").slice(0, -1)).toHaveLength(data.endLine);
+      expect(data.content.endsWith(line(data.endLine))).toBe(true);
+      expect(Object.keys(data)).toEqual(["kind", "path", "size", "modifiedAt", "startLine", "endLine", "totalLines", "note", "content"]);
+      expect(JSON.stringify(data, null, 2).length).toBeLessThanOrEqual(20_000);
+    });
+
+    it("continues from the offset the note gives", async () => {
+      const first = ((await call("kyoubeai_files_read", { path: "long.txt" }))?.body as { data: { endLine: number } }).data;
+      const response = await call("kyoubeai_files_read", { path: "long.txt", offset: first.endLine + 1 });
+      const data = (response?.body as { data: { content: string; startLine: number; endLine: number } }).data;
+      expect(data.startLine).toBe(first.endLine + 1);
+      expect(data.content.startsWith(line(first.endLine + 1))).toBe(true);
+    });
+
+    it("leaves a page that fits as it is, with no note", async () => {
+      const response = await call("kyoubeai_files_read", { path: "long.txt", offset: 1990 });
+      const data = (response?.body as { data: Record<string, unknown> }).data;
+      expect(data).toMatchObject({ startLine: 1990, endLine: 2000 });
+      expect(data).not.toHaveProperty("note");
+    });
+  });
+
+  describe("listing a folder too large for one answer", () => {
+    type Page = { outcome: string; truncated?: boolean; content?: string; data: { path: string; cut: boolean; nextOffset?: number; note?: string; entries: { path: string }[] } };
+    const listPage = async (offset?: number) => (await call("kyoubeai_files_list", offset === undefined ? {} : { offset }))?.body as Page;
+
+    it("pages through 600 files with offset, each once", async () => {
+      for (let i = 0; i < 600; i++) await writeFile(path.join(dir, `f${String(i).padStart(3, "0")}.txt`), "");
+      const seen: string[] = [];
+      let offset: number | undefined;
+      for (let pages = 0; pages < 50; pages++) {
+        const page = await listPage(offset);
+        expect(page.outcome).toBe("completed");
+        expect(page.truncated).toBeUndefined();
+        expect(JSON.stringify(page.data, null, 2).length).toBeLessThanOrEqual(20_000);
+        seen.push(...page.data.entries.map((entry) => entry.path));
+        if (!page.data.cut) {
+          expect(page.data).not.toHaveProperty("nextOffset");
+          break;
+        }
+        expect(page.data.nextOffset).toBe(seen.length);
+        expect(page.data.note).toBe(`More entries than shown: call again with offset ${page.data.nextOffset}, list a subfolder, or use a smaller depth.`);
+        offset = page.data.nextOffset;
+      }
+      expect(seen).toHaveLength(600);
+      expect(new Set(seen).size).toBe(600);
+    });
+
+    it("keeps pages of long names under the cut, with the paging fields first", async () => {
+      for (let i = 0; i < 300; i++) await writeFile(path.join(dir, `${String(i).padStart(3, "0")}-${"n".repeat(56)}`), "");
+      const page = await listPage();
+      expect(page.outcome).toBe("completed");
+      expect(page.truncated).toBeUndefined();
+      expect(page.data.cut).toBe(true);
+      expect(page.data.nextOffset).toBe(page.data.entries.length);
+      expect(page.data.entries.length).toBeGreaterThan(0);
+      expect(JSON.stringify(page.data, null, 2).length).toBeLessThanOrEqual(20_000);
+      expect(Object.keys(page.data)).toEqual(["path", "exists", "cut", "nextOffset", "note", "entries"]);
+    });
+
+    it("asks the folder for one more entry than the page can hold", async () => {
+      const list = vi.spyOn(context.files, "list");
+      await call("kyoubeai_files_list", { offset: 40, depth: 2 });
+      expect(list).toHaveBeenCalledWith("", { depth: 2, maxEntries: 541 });
+    });
+
+    it("answers an offset past the end with no entries", async () => {
+      await writeFile(path.join(dir, "a.txt"), "");
+      const page = await listPage(5);
+      expect(page.data).toMatchObject({ cut: false, entries: [] });
+    });
   });
 
   it("lists a subfolder with depth", async () => {
@@ -189,11 +274,57 @@ describe("kyoube.files MCP routes", () => {
     expect(exists?.body).toMatchObject({ outcome: "rejected", status: 409, code: "exists" });
   });
 
-  it("rejects an expectedModifiedAt that is not a date", async () => {
+  it("rejects an expectedModifiedAt that is not an ISO date", async () => {
     await writeFile(path.join(dir, "a.txt"), "one");
-    const response = await call("kyoubeai_files_write", { path: "a.txt", content: "two", expectedModifiedAt: "yesterday" }, true);
-    expect(response?.body).toMatchObject({ outcome: "rejected", status: 400, code: "invalid" });
-    expect((response?.body as { message: string }).message).toContain("expectedModifiedAt must be an ISO date");
+    for (const expectedModifiedAt of ["yesterday", "2026", "2026-01-01", "Jan 1 2026 00:00:00 GMT"]) {
+      const response = await call("kyoubeai_files_write", { path: "a.txt", content: "two", expectedModifiedAt }, true);
+      expect(response?.body).toMatchObject({ outcome: "rejected", status: 400, code: "invalid" });
+      expect((response?.body as { message: string }).message).toContain("expectedModifiedAt must be an ISO date");
+    }
+    expect(await readFile(path.join(dir, "a.txt"), "utf8")).toBe("one");
+  });
+
+  it("accepts an ISO date with an offset", async () => {
+    await writeFile(path.join(dir, "a.txt"), "one");
+    const when = new Date("2026-01-01T00:00:00.000Z");
+    await utimes(path.join(dir, "a.txt"), when, when);
+    const response = await call("kyoubeai_files_write", { path: "a.txt", content: "two", expectedModifiedAt: "2026-01-01T01:00:00+01:00" }, true);
+    expect(response?.body).toMatchObject({ outcome: "completed" });
+  });
+
+  it("does not recreate a file moved or deleted since it was read", async () => {
+    const response = await call("kyoubeai_files_write", { path: "gone.txt", content: "two", expectedModifiedAt: "2026-01-01T00:00:00.000Z" }, true);
+    expect(response?.body).toMatchObject({ outcome: "rejected", status: 404, code: "not_found" });
+    expect((response?.body as { message: string }).message).toContain("gone.txt no longer exists");
+    await expect(readFile(path.join(dir, "gone.txt"), "utf8")).rejects.toThrow("ENOENT");
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("refuses a new file or folder whose name the Files tab would refuse", async () => {
+    for (const [tool, args] of [
+      ["kyoubeai_files_write", { path: "notes.txt\n", content: "x" }],
+      ["kyoubeai_files_write", { path: " lead.txt", content: "x", createOnly: true }],
+      ["kyoubeai_files_create_folder", { path: "drafts\n" }],
+    ] as const) {
+      const response = await call(tool, args, true);
+      expect(response?.body).toMatchObject({ outcome: "rejected", status: 400, code: "invalid" });
+      expect((response?.body as { message: string }).message).toContain("name must not start or end with whitespace");
+    }
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("still replaces an existing file whose name the Files tab would refuse", async () => {
+    await writeFile(path.join(dir, "odd "), "one");
+    const response = await call("kyoubeai_files_write", { path: "odd ", content: "two" }, true);
+    expect(response?.body).toMatchObject({ outcome: "completed" });
+    expect(await readFile(path.join(dir, "odd "), "utf8")).toBe("two");
+  });
+
+  it("audits a move under its normalized path", async () => {
+    await writeFile(path.join(dir, "b.txt"), "b");
+    const response = await call("kyoubeai_files_move", { path: "./b.txt", newPath: "c.txt" }, true);
+    expect(response?.body).toMatchObject({ outcome: "completed", data: { path: "c.txt" } });
+    expect(audit).toHaveBeenCalledWith("renamed", "b.txt", { to: "c.txt" });
   });
 
   it("maps a FilesError from the context to its status and message", async () => {

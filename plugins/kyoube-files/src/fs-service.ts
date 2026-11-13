@@ -65,6 +65,8 @@ export interface WriteOptions {
   mustCreate?: boolean;
   /** Fail if the file does not exist yet (a save of an open file whose target vanished). */
   mustExist?: boolean;
+  /** When the write creates the file, hold its name to the rules for a new name (`validateEntryName`). */
+  checkNewName?: boolean;
 }
 
 export interface WorkspaceFilesOptions {
@@ -302,15 +304,19 @@ export class WorkspaceFiles {
       }
     } else if (options.mustExist) {
       throw new FilesError("not_found", `${rel} no longer exists`);
+    } else if (options.checkNewName) {
+      validateEntryName(baseName(rel));
     }
     await fs.writeFile(abs, bytes);
     const stat = await fs.lstat(abs);
     return { name: baseName(rel), path: rel, kind: "file", size: stat.size, mtimeMs: stat.mtimeMs };
   }
 
-  async mkdir(relative: unknown): Promise<FileEntry> {
+  /** Creates a folder; `checkNewName` holds its name to the rules for a new name (`validateEntryName`). */
+  async mkdir(relative: unknown, options: { checkNewName?: boolean } = {}): Promise<FileEntry> {
     const rel = normalizeRelativePath(relative);
     if (rel === "") throw new FilesError("invalid", "the project folder already exists");
+    if (options.checkNewName) validateEntryName(baseName(rel));
     const abs = await this.resolveForWrite(rel);
     if (await lstatOrNull(abs)) throw new FilesError("exists", `${rel} already exists`);
     await fs.mkdir(abs);

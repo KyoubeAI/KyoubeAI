@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { FilesError } from "../errors.js";
 import type { FileEntry, WorkspaceFiles } from "../fs-service.js";
+import { normalizeRelativePath } from "../paths.js";
 import type { FilesSettings } from "../settings.js";
 
 /**
@@ -41,6 +42,12 @@ export interface FilesMcpTool {
 
 /** The most entries one `kyoubeai_files_list` returns; the result says when more exist. */
 const LIST_MAX_ENTRIES = 500;
+/**
+ * The characters a list page (pretty-printed, as the route sends it) or a read
+ * page's content may take. The route cuts any result at 20,000; staying under
+ * this keeps the paging fields and line numbers whole.
+ */
+const PAGE_BUDGET_CHARS = 18_000;
 const NOT_SHOWN = "Not shown here: open the link in KyoubeAI to download it.";
 
 // The core's own contract (public-mcp/contracts.js): its receipts store the id as a uuid.
@@ -58,11 +65,75 @@ function entryOf(entry: FileEntry) {
   return { name: entry.name, path: entry.path, kind: entry.kind, size: entry.size, modifiedAt: modifiedAt(entry.mtimeMs) };
 }
 
+// `Date.parse` alone would take "2026" or "Jan 1 2026"; only the ISO form a result carries is accepted.
+const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+
 function baseMtime(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
-  const parsed = Date.parse(value);
+  const parsed = ISO_DATE_TIME.test(value) ? Date.parse(value) : Number.NaN;
   if (Number.isNaN(parsed)) throw new FilesError("invalid", "expectedModifiedAt must be an ISO date");
   return parsed;
+}
+
+type ListedEntry = ReturnType<typeof entryOf>;
+
+/**
+ * One page of a listing: from `offset`, at most `LIST_MAX_ENTRIES` entries and
+ * no more than fit `PAGE_BUDGET_CHARS` pretty-printed. `available` holds the
+ * entries from `offset` on, one past a full page when more exist.
+ */
+function listPage(path: string, exists: boolean, offset: number, available: ListedEntry[], more: boolean) {
+  const page = (count: number, cut: boolean) => ({
+    path,
+    exists,
+    cut,
+    ...(cut
+      ? {
+          nextOffset: offset + count,
+          note: `More entries than shown: call again with offset ${offset + count}, list a subfolder, or use a smaller depth.`,
+        }
+      : {}),
+    entries: available.slice(0, count),
+  });
+  const fits = (result: object) => JSON.stringify(result, null, 2).length <= PAGE_BUDGET_CHARS;
+  const whole = Math.min(available.length, LIST_MAX_ENTRIES);
+  const cut = more || available.length > LIST_MAX_ENTRIES;
+  if (!cut && fits(page(whole, false))) return page(whole, false);
+  if (fits(page(whole, true))) return page(whole, true);
+  // The largest count that fits; at least one entry, so paging always moves on.
+  let low = 1;
+  let high = whole - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (fits(page(middle, true))) low = middle;
+    else high = middle - 1;
+  }
+  return page(Math.max(1, low), true);
+}
+
+/** The characters `text` takes as a JSON string, quotes left out. */
+function jsonChars(text: string): number {
+  return JSON.stringify(text).length - 2;
+}
+
+/**
+ * The whole lines of `content` that fit `PAGE_BUDGET_CHARS` once escaped as
+ * JSON. A first line that alone is too long comes back on its own and the
+ * route's truncation applies to it.
+ */
+function clipLines(content: string): { content: string; lines: number; clipped: boolean } {
+  const lines = content.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+  let used = 0;
+  let count = 0;
+  for (const line of lines) {
+    const size = jsonChars(line);
+    if (used + size > PAGE_BUDGET_CHARS) break;
+    used += size;
+    count += 1;
+  }
+  if (count === lines.length) return { content, lines: count, clipped: false };
+  const kept = Math.max(1, count);
+  return { content: lines.slice(0, kept).join(""), lines: kept, clipped: true };
 }
 
 interface Definition {
@@ -91,29 +162,27 @@ const DEFINITIONS: Definition[] = [
   {
     name: "list",
     title: "List files",
-    description: "List the files and folders in a project folder, with size and last-modified time. Set depth to 2 or 3 to include subfolders; the result says when it was cut short.",
+    description: "List the files and folders in a project folder, with size and last-modified time. Set depth to 2 or 3 to include subfolders. When the result says cut, call again with offset set to its nextOffset for the rest.",
     tier: "read",
     shape: {
       projectId,
       folderId,
       path: z.string().optional().describe("The folder to list, relative to the project folder; leave out for the top."),
       depth: z.number().int().min(1).max(3).optional().describe("How many levels of folders to show (default 1)."),
+      offset: z.number().int().min(0).optional().describe("How many entries to skip, for the next page of a long listing: the nextOffset of the previous result (default 0)."),
     },
-    run: async (ctx, args: { path?: string; depth?: number }) => {
-      const listing = await ctx.files.list(args.path ?? "", { depth: args.depth, maxEntries: LIST_MAX_ENTRIES });
-      return {
-        path: listing.path,
-        exists: listing.exists,
-        entries: listing.entries.map(entryOf),
-        cut: listing.cut,
-        ...(listing.cut ? { note: "More entries than shown: list a subfolder, or use a smaller depth." } : {}),
-      };
+    run: async (ctx, args: { path?: string; depth?: number; offset?: number }) => {
+      const offset = args.offset ?? 0;
+      // One past a full page, so the answer knows whether more exist.
+      const listing = await ctx.files.list(args.path ?? "", { depth: args.depth, maxEntries: offset + LIST_MAX_ENTRIES + 1 });
+      const available = listing.entries.slice(offset).map(entryOf);
+      return listPage(listing.path, listing.exists, offset, available, listing.cut);
     },
   },
   {
     name: "read",
     title: "Read file",
-    description: "Read a text file in pages of lines, from offset for limit lines, along with its total line count. A file that is not text, or is too large, comes back as a link instead.",
+    description: "Read a text file in pages of lines, from offset for limit lines, along with its total line count. A page too long for one answer is shortened to whole lines and says where to continue. A file that is not text, or is too large, comes back as a link instead.",
     tier: "read",
     shape: {
       projectId,
@@ -126,7 +195,18 @@ const DEFINITIONS: Definition[] = [
       const result = await ctx.files.readLines(args.path, { offset: args.offset, limit: args.limit, maxBytes: ctx.settings.maxEditableKb * 1024 });
       const common = { kind: result.kind, path: result.path, size: result.size, modifiedAt: modifiedAt(result.mtimeMs) };
       if (result.kind !== "text") return { ...common, link: ctx.link, note: NOT_SHOWN };
-      return { ...common, content: result.content, startLine: result.startLine, endLine: result.endLine, totalLines: result.totalLines };
+      // The line numbers go ahead of the content, so a cut never loses them.
+      const page = clipLines(result.content);
+      if (!page.clipped) return { ...common, startLine: result.startLine, endLine: result.endLine, totalLines: result.totalLines, content: result.content };
+      const endLine = result.startLine + page.lines - 1;
+      return {
+        ...common,
+        startLine: result.startLine,
+        endLine,
+        totalLines: result.totalLines,
+        note: `Page shortened to fit: continue with offset ${endLine + 1}.`,
+        content: page.content,
+      };
     },
   },
   {
@@ -145,7 +225,13 @@ const DEFINITIONS: Definition[] = [
     },
     run: async (ctx, args: { path: string; content: string; expectedModifiedAt?: string; createOnly?: boolean }) => {
       const baseMtimeMs = baseMtime(args.expectedModifiedAt);
-      const written = await ctx.files.write(args.path, args.content, { baseMtimeMs, mustCreate: args.createOnly });
+      // A file read before must still be there: one moved or deleted since is not quietly recreated.
+      const written = await ctx.files.write(args.path, args.content, {
+        baseMtimeMs,
+        mustCreate: args.createOnly,
+        mustExist: baseMtimeMs !== undefined && args.createOnly !== true,
+        checkNewName: true,
+      });
       await ctx.audit("saved", written.path, { size: written.size });
       return entryOf(written);
     },
@@ -185,7 +271,7 @@ const DEFINITIONS: Definition[] = [
     tier: "write",
     shape: { projectId, folderId, path: z.string().describe("The new folder, relative to the project folder.") },
     run: async (ctx, args: { path: string }) => {
-      const created = await ctx.files.mkdir(args.path);
+      const created = await ctx.files.mkdir(args.path, { checkNewName: true });
       await ctx.audit("created folder", created.path);
       return entryOf(created);
     },
@@ -203,7 +289,7 @@ const DEFINITIONS: Definition[] = [
     },
     run: async (ctx, args: { path: string; newPath: string }) => {
       const moved = await ctx.files.rename(args.path, args.newPath);
-      await ctx.audit("renamed", args.path, { to: moved.path });
+      await ctx.audit("renamed", normalizeRelativePath(args.path), { to: moved.path });
       return entryOf(moved);
     },
   },

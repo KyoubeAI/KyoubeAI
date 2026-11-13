@@ -464,6 +464,15 @@ describe("project-file tools for assistant connections", () => {
     expect(JSON.stringify(response.body)).not.toContain(base);
   });
 
+  it("never answers canWrite for a project hidden from the person", async () => {
+    const { call } = await mcp();
+    await restrict({ [PROJECT]: ["member-1"] });
+    const hidden = await call("kyoubeai_files_folders", { projectId: HIDDEN_PROJECT }, "member-1");
+    expect((hidden.body as { data: unknown }).data).toMatchObject({ role: "member", canRead: false, canWrite: false, workspaces: [] });
+    const visible = await call("kyoubeai_files_folders", {}, "member-1");
+    expect((visible.body as { data: unknown }).data).toMatchObject({ canRead: true, canWrite: true });
+  });
+
   it("the link carries the company prefix", async () => {
     const { call } = await mcp();
     await writeFile(path.join(root, "pic.bin"), Buffer.from([0, 1, 2, 255, 254, 0, 0, 9]));
