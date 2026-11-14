@@ -76,6 +76,7 @@ describe("signUpCheck", () => {
     expect(check.detail).toContain("KYOUBE_AUTH_DISABLE_SIGN_UP=true");
     expect(check.detail).toContain("invite");
     expect(check.detail).toContain("Cloudflare Access");
+    expect(check.detail).toContain("docker compose up -d");
   });
   it("treats an unset switch on a public instance as open", () => {
     expect(signUpCheck({ PAPERCLIP_DEPLOYMENT_EXPOSURE: "public" }).warn).toBe(true);
