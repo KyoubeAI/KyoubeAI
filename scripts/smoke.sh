@@ -116,6 +116,8 @@ echo "==> home and database names"
 APP_HOME="$(compose exec -T app sh -c 'echo "$HOME:$PAPERCLIP_HOME:$HERMES_HOME"; getent passwd node | cut -d: -f6; test -e /paperclip && echo LEGACY_PATH_PRESENT || echo no-legacy-path' | tr -d '\r')"
 [[ "$APP_HOME" == $'/kyoubeai:/kyoubeai:/kyoubeai/.hermes\n/kyoubeai\nno-legacy-path' ]] \
   || { echo "unexpected home layout in app:" >&2; echo "$APP_HOME" >&2; exit 1; }
+SIGN_UP_OFF="$(compose exec -T app printenv PAPERCLIP_AUTH_DISABLE_SIGN_UP | tr -d '\r')"
+[[ "$SIGN_UP_OFF" == "false" ]] || { echo "PAPERCLIP_AUTH_DISABLE_SIGN_UP should default to false, got '$SIGN_UP_OFF'" >&2; exit 1; }
 DBS="$(compose exec -T db psql -U kyoubeai -d postgres -Atc 'select datname from pg_database order by 1' | tr -d '\r')"
 grep -qx kyoubeai <<<"$DBS" || { echo "no kyoubeai database: $DBS" >&2; exit 1; }
 ! grep -qx paperclip <<<"$DBS" || { echo "a paperclip database still exists: $DBS" >&2; exit 1; }

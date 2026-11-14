@@ -45,6 +45,9 @@ services:
       # are accepted as fallbacks for this release only.
       PAPERCLIP_DEPLOYMENT_MODE: authenticated
       PAPERCLIP_DEPLOYMENT_EXPOSURE: ${KYOUBE_DEPLOYMENT_EXPOSURE:-${PAPERCLIP_DEPLOYMENT_EXPOSURE:-private}}
+      # true stops new accounts from being created, including people accepting an invite.
+      # Leave it false until everyone has joined.
+      PAPERCLIP_AUTH_DISABLE_SIGN_UP: ${KYOUBE_AUTH_DISABLE_SIGN_UP:-${PAPERCLIP_AUTH_DISABLE_SIGN_UP:-false}}
       PAPERCLIP_PUBLIC_URL: ${KYOUBE_PUBLIC_URL:-${PAPERCLIP_PUBLIC_URL:-http://localhost:3100}}
       # Which legacy keys are set, so `kyoube doctor` can say so (the container
       # cannot otherwise tell which key supplied a value).

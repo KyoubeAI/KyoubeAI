@@ -44,6 +44,10 @@ Tell it the address people will use:
    also set `TRUST_PROXY=uniquelocal`.
 3. For an instance on the internet, put TLS in front and set `KYOUBE_DEPLOYMENT_EXPOSURE=public`.
    `kyoube doctor` fails a public instance whose address does not start with `https://`.
+   Also set `KYOUBE_AUTH_DISABLE_SIGN_UP=true` once everyone has an account, unless something in front
+   of the instance already limits who reaches it. It stops anyone creating an account, including people
+   accepting an invite. To add someone later, set it to `false`, run `docker compose up -d`, let them
+   join, then set it back.
 4. Apply the changes with `docker compose up -d`.
 
 To use a port other than 3100, set `KYOUBE_PORT` and put the same port in `KYOUBE_PUBLIC_URL`. On a
