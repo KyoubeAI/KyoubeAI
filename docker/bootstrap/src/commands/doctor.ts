@@ -77,15 +77,19 @@ export function exposureWarning(env: NodeJS.ProcessEnv, publicUrl: string): stri
   return null;
 }
 
+/** What doctor says while sign-up is closed, on any instance: an invitee cannot join until it opens. */
+export const SIGN_UP_CLOSED = "closed (to let an invitee in, set KYOUBE_AUTH_DISABLE_SIGN_UP=false and run `docker compose up -d`)";
+
 /**
  * On a public instance, open sign-up lets anyone who reaches the address create an account.
  * Warn (never fail) unless `KYOUBE_AUTH_DISABLE_SIGN_UP=true`; compose passes it as
- * `PAPERCLIP_AUTH_DISABLE_SIGN_UP`. A private instance is not checked.
+ * `PAPERCLIP_AUTH_DISABLE_SIGN_UP`. Closed sign-up is reported on any instance, with how to let an
+ * invitee in; open sign-up on a private instance is not a warning.
  */
 export function signUpCheck(env: NodeJS.ProcessEnv): Check {
   const name = "sign-up";
+  if (env.PAPERCLIP_AUTH_DISABLE_SIGN_UP === "true") return { name, ok: true, detail: SIGN_UP_CLOSED };
   if ((env.PAPERCLIP_DEPLOYMENT_EXPOSURE ?? "private") !== "public") return { name, ok: true, detail: "private instance" };
-  if (env.PAPERCLIP_AUTH_DISABLE_SIGN_UP === "true") return { name, ok: true, detail: "closed" };
   return {
     name, ok: true, warn: true,
     detail: "anyone who reaches this address can create an account. Set KYOUBE_AUTH_DISABLE_SIGN_UP=true once everyone has joined (set false and run `docker compose up -d` to let someone accept an invite). Ignore if something in front, such as Cloudflare Access, already limits who reaches it.",

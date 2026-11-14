@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import {
-  LEGACY_ENV_KEYS, assistantConnectionsCheck, agentQuestionsCheck, boardKeyDoctorCheck, agentQuestionsDoctorCheck, agentRulesChecks, agentRulesDoctorChecks, claudeCredentialDetail, exposureWarning, formatCheck, harnessChecks, harnessesInUseCheck, legacyEnvCheck, legacyHomeLinkCheck, licenceCheck, licenceEnforcementCheck, pushTestEndpointCheck, questionCountsText, signUpCheck, skillsCheck, systemPackagesCheck,
+  LEGACY_ENV_KEYS, assistantConnectionsCheck, agentQuestionsCheck, boardKeyDoctorCheck, agentQuestionsDoctorCheck, agentRulesChecks, agentRulesDoctorChecks, claudeCredentialDetail, exposureWarning, formatCheck, harnessChecks, harnessesInUseCheck, legacyEnvCheck, legacyHomeLinkCheck, licenceCheck, licenceEnforcementCheck, pushTestEndpointCheck, questionCountsText, SIGN_UP_CLOSED, signUpCheck, skillsCheck, systemPackagesCheck,
 } from "../src/commands/doctor.js";
 import { licenseStatus } from "@kyoube/license";
 import type { BoardKeyApi } from "../src/board-key-renewal.js";
@@ -61,14 +61,25 @@ describe("exposureWarning", () => {
 });
 
 describe("signUpCheck", () => {
-  it("is OK on a private instance whatever the switch says", () => {
-    const check = signUpCheck({});
-    expect(check).toMatchObject({ name: "sign-up", ok: true });
-    expect(check.warn).toBeFalsy();
+  it("is OK on a private instance with sign-up open, and says only that it is private", () => {
+    for (const env of [{}, { PAPERCLIP_AUTH_DISABLE_SIGN_UP: "false" }]) {
+      const check = signUpCheck(env);
+      expect(check).toMatchObject({ name: "sign-up", ok: true, detail: "private instance" });
+      expect(check.warn).toBeFalsy();
+    }
   });
-  it("is OK on a public instance with sign-up off", () => {
-    expect(signUpCheck({ PAPERCLIP_DEPLOYMENT_EXPOSURE: "public", PAPERCLIP_AUTH_DISABLE_SIGN_UP: "true" }))
-      .toMatchObject({ ok: true, detail: "closed" });
+  it("reports closed sign-up on a private instance, with how to let an invitee in", () => {
+    const check = signUpCheck({ PAPERCLIP_AUTH_DISABLE_SIGN_UP: "true" });
+    expect(check).toMatchObject({ name: "sign-up", ok: true, detail: SIGN_UP_CLOSED });
+    expect(check.warn).toBeFalsy();
+    expect(check.detail).toMatch(/^closed /);
+    expect(check.detail).toContain("KYOUBE_AUTH_DISABLE_SIGN_UP=false");
+    expect(check.detail).toContain("docker compose up -d");
+  });
+  it("is OK on a public instance with sign-up off, with the same hint", () => {
+    const check = signUpCheck({ PAPERCLIP_DEPLOYMENT_EXPOSURE: "public", PAPERCLIP_AUTH_DISABLE_SIGN_UP: "true" });
+    expect(check).toMatchObject({ ok: true, detail: SIGN_UP_CLOSED });
+    expect(check.warn).toBeFalsy();
   });
   it("warns on a public instance with sign-up open, and says how to close it and let people in", () => {
     const check = signUpCheck({ PAPERCLIP_DEPLOYMENT_EXPOSURE: "public", PAPERCLIP_AUTH_DISABLE_SIGN_UP: "false" });
