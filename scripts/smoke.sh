@@ -1282,6 +1282,10 @@ MCP_BAD="$(jq -c '[.tools[] | select((.name | contains("paperclip")) or ((.title
   or (((.annotations.readOnlyHint | type) != "boolean") and ((.annotations.destructiveHint | type) != "boolean"))
   or ((.name | length) > 64)) | .name]' "$TMP/mcp-tools.json")"
 [[ "$MCP_BAD" == "[]" ]] || { echo "MCP tools break the directory rules (paperclip name, no title, no hint, or > 64 chars): $MCP_BAD" >&2; exit 1; }
+jq -r '.tools[].name' "$TMP/mcp-tools.json" | sort -u > "$TMP/mcp-served.txt"
+grep -oE 'kyoubeai_[a-z_]+' docs/mcp.md | grep -v '_$' | sort -u > "$TMP/mcp-documented.txt"
+MCP_DOC_DRIFT="$(comm -3 "$TMP/mcp-served.txt" "$TMP/mcp-documented.txt")"
+[[ -z "$MCP_DOC_DRIFT" ]] || { echo "docs/mcp.md and tools/list disagree (left: served only, right: documented only):" >&2; echo "$MCP_DOC_DRIFT" >&2; exit 1; }
 jq -e '.tools | map(.name) | index("kyoubeai_call_api") == null and index("kyoubeai_search_api") == null
   and index("kyoubeai_data_list_tables") != null and index("kyoubeai_apps_publish") != null
   and index("kyoubeai_files_edit") != null and index("kyoubeai_apps_task_start") != null' "$TMP/mcp-tools.json" >/dev/null \

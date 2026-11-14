@@ -237,6 +237,112 @@ Connectors.
 Each write or configure call is recorded in the company's activity log as `mcp.tool_called`, with the
 tool name. Changes to tables also go to `kyoube_meta.audit`, as they do from the Data page.
 
+## Every tool
+
+The full list the assistant sees, by group. The titles are what assistants show when they ask before a call.
+
+### Work and agents
+
+| Tool | Title |
+|---|---|
+| `kyoubeai_connection` | Connection |
+| `kyoubeai_list_agents` | List agents |
+| `kyoubeai_get_agent` | Get agent |
+| `kyoubeai_update_agent` | Update agent |
+| `kyoubeai_read_agent_instructions` | Read agent instructions |
+| `kyoubeai_update_agent_instructions` | Update agent instructions |
+| `kyoubeai_list_agent_instruction_revisions` | List agent instruction revisions |
+| `kyoubeai_search_tasks` | Search tasks |
+| `kyoubeai_read_task` | Read task |
+| `kyoubeai_create_task` | Create task |
+| `kyoubeai_update_task` | Update task |
+| `kyoubeai_finish_task` | Finish task |
+| `kyoubeai_block_task` | Block task |
+| `kyoubeai_add_comment` | Add comment |
+| `kyoubeai_list_deliverables` | List deliverables |
+| `kyoubeai_register_deliverable` | Register deliverable |
+| `kyoubeai_update_deliverable` | Update deliverable |
+| `kyoubeai_read_document` | Read document |
+| `kyoubeai_write_document` | Write document |
+| `kyoubeai_list_document_revisions` | List document revisions |
+| `kyoubeai_pending_approvals` | Pending approvals |
+| `kyoubeai_get_upload_url` | Get upload url |
+| `kyoubeai_get_download_url` | Get download url |
+
+### Projects and skills
+
+| Tool | Title |
+|---|---|
+| `kyoubeai_list_projects` | List projects |
+| `kyoubeai_get_project` | Get project |
+| `kyoubeai_create_project` | Create project |
+| `kyoubeai_update_project` | Update project |
+| `kyoubeai_list_project_repositories` | List project repositories |
+| `kyoubeai_set_project_repositories` | Set project repositories |
+| `kyoubeai_list_skills` | List skills |
+| `kyoubeai_get_skill` | Get skill |
+| `kyoubeai_create_skill` | Create skill |
+| `kyoubeai_update_skill` | Update skill |
+| `kyoubeai_read_skill_file` | Read skill file |
+| `kyoubeai_write_skill_file` | Write skill file |
+
+### Data
+
+| Tool | Title |
+|---|---|
+| `kyoubeai_data_list_tables` | List tables |
+| `kyoubeai_data_describe_table` | Describe table |
+| `kyoubeai_data_list_review` | List AI cells to review |
+| `kyoubeai_data_create_table` | Create table |
+| `kyoubeai_data_add_field` | Add field |
+| `kyoubeai_data_update_field` | Update field |
+| `kyoubeai_data_remove_field` | Remove field |
+| `kyoubeai_data_drop_table` | Drop table |
+| `kyoubeai_data_rename_table` | Rename table |
+| `kyoubeai_data_create_index` | Create index |
+| `kyoubeai_data_insert` | Insert rows |
+| `kyoubeai_data_update` | Update rows |
+| `kyoubeai_data_delete` | Delete rows |
+| `kyoubeai_data_get` | Get row |
+| `kyoubeai_data_query` | Query rows |
+| `kyoubeai_data_count` | Count rows |
+| `kyoubeai_data_sql_select` | Read-only SQL |
+| `kyoubeai_data_my_access` | My data access |
+
+### Apps
+
+| Tool | Title |
+|---|---|
+| `kyoubeai_apps_list` | List apps |
+| `kyoubeai_apps_get` | Get app |
+| `kyoubeai_apps_create` | Create app |
+| `kyoubeai_apps_update` | Update app |
+| `kyoubeai_apps_publish` | Publish app |
+| `kyoubeai_apps_rollback` | Roll back app |
+| `kyoubeai_apps_archive` | Archive app |
+
+### App tasks
+
+| Tool | Title |
+|---|---|
+| `kyoubeai_apps_task_list` | List app tasks |
+| `kyoubeai_apps_task_get` | Check app task |
+| `kyoubeai_apps_task_start` | Start app task |
+| `kyoubeai_apps_task_cancel` | Cancel app task |
+
+### Files
+
+| Tool | Title |
+|---|---|
+| `kyoubeai_files_folders` | Project folders |
+| `kyoubeai_files_list` | List files |
+| `kyoubeai_files_read` | Read file |
+| `kyoubeai_files_write` | Write file |
+| `kyoubeai_files_edit` | Edit file |
+| `kyoubeai_files_create_folder` | Create folder |
+| `kyoubeai_files_move` | Move or rename |
+| `kyoubeai_files_delete` | Delete file or folder |
+
 ## Limits
 
 - **The instance must be reachable by the assistant.** Claude on the web, Desktop and mobile reaches
@@ -247,6 +353,19 @@ tool name. Changes to tables also go to `kyoube_meta.audit`, as they do from the
 - **`/mcp/paperclip` is gone.** Connections made before 1.17 used that address and must be made
   again ([upgrading.md](upgrading.md#moving-to-117)).
 
+### Behind an access gateway
+
+Claude on the web, Desktop and mobile connects from Anthropic's servers (`160.79.104.0/21`), which
+cannot sign in to a gateway such as Cloudflare Access. Give these paths a bypass rule:
+
+- `/mcp/kyoubeai`
+- `/.well-known/oauth-protected-resource` (and everything under it)
+- `/.well-known/oauth-authorization-server`
+- `/mcp/oauth/` (register, token, revoke, device authorization, and authorize, which only redirects
+  to the consent page)
+
+The consent page and the rest of the instance stay behind the gateway, so people still sign in to it.
+
 ## Troubleshooting
 
 | What you see | Why, and what to do |
@@ -254,6 +373,6 @@ tool name. Changes to tables also go to `kyoube_meta.audit`, as they do from the
 | "KyoubeAI's table, app and file tools are unavailable right now. Try again in a minute." | The plugin behind the tool did not answer: `kyoube.apps` for a table or app tool, `kyoube.files` for a file tool. KyoubeAI does not keep a failed answer, so the next call asks again. Check `kyoube doctor` and the plugin's logs. |
 | The assistant lists the `kyoubeai_*` work tools but no `kyoubeai_data_*` or `kyoubeai_apps_*` | The same: the plugin was unavailable when the tools were listed. List the tools again. |
 | The assistant lists the other tools but no `kyoubeai_files_*` | The `kyoube.files` plugin did not answer. Check `kyoube doctor` and its logs. |
-| "paperclip:write permission is required" | The connection was approved without **Write all of your KyoubeAI data**. Connect again with it ticked. |
+| `paperclip:write permission is required` | The connection was approved without **Write all of your KyoubeAI data**. Connect again with it ticked. |
 | `forbidden: … requires schema access` | Your own data level is too low. Ask an admin to raise it, or a group to grant it. |
 | The assistant cannot sign in | Check that `KYOUBE_PUBLIC_URL` is `https://` (or `localhost`), that `kyoube doctor` says `on at …`, and, behind a proxy, `TRUST_PROXY`. |
