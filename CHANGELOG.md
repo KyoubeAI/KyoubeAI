@@ -14,7 +14,7 @@ building on it. The format is loosely [Keep a Changelog](https://keepachangelog.
   it back. It defaults to `false`, so nothing changes until you set it. See
   [docs/operations.md](docs/operations.md).
 - `kyoube doctor` has a `sign-up` line. On a public instance it warns when sign-up is open and says how
-  to close it; a private instance is not checked.
+  to close it. When sign-up is closed, on any instance, it says how to let an invitee in.
 - [docs/mcp.md](docs/mcp.md) lists every tool, and the smoke compares that list with what the
   connection serves, so a new or renamed tool fails the run until the page is updated.
 - docs/mcp.md has a "Behind an access gateway" section. Claude on the web, Desktop and mobile connects
@@ -22,16 +22,18 @@ building on it. The format is loosely [Keep a Changelog](https://keepachangelog.
   `/mcp/kyoubeai`, the two `/.well-known/` paths and `/mcp/oauth/`.
 - `scripts/demo/seed-review-company.mjs` builds a "KyoubeAI Review" company for directory reviewers:
   sample tables, an app with a task template, a project with files, an agent and an operator invite.
-  Running it again resets the company between review rounds. The AI column of the Tickets table fills
-  with `--decisions`. A later run keeps an open reviewer invite, because its link may already be with
+  Running it again between review rounds puts back the sample rows, the project files and the agent's
+  budget and instructions. It removes the tables, apps and project files that reviewers added, and
+  cancels open app tasks and the agent's open tasks. Projects, agents, skills and secrets that
+  reviewers created stay, and the run warns when the seeded agent or project looks renamed. It stops
+  without touching any files if the project has been pointed at another folder. The AI column of the
+  Tickets table fills with `--decisions`. A later run keeps an open reviewer invite, because its link may already be with
   someone; pass `--new-invite` to replace it. See
   [docs/operations.md](docs/operations.md#demo-review-company).
 
 ### Fixed
 
-- The troubleshooting table in docs/mcp.md shows the core's missing-write-scope message as code, so it
-  can be found by searching for the text.
-- The smoke reads docs/mcp.md from the repository root, so it no longer depends on where it is run.
+- The troubleshooting table in docs/mcp.md shows the core's exact missing-write-scope message as code.
 
 ## 1.18.0 - 2026-11-13
 
