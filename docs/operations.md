@@ -407,6 +407,30 @@ old one can have minted keys of their own with it.
 If you set `KYOUBE_BOARD_API_KEY` in `.env` instead of storing a key, rotate it there and
 `docker compose up -d app`; the environment variable takes precedence over the stored file.
 
+## Demo review company
+
+`scripts/demo/seed-review-company.mjs` builds the "KyoubeAI Review" company that directory reviewers
+use to test the assistant connection ([docs/mcp.md](mcp.md)). It creates three sample tables, the Lead
+desk app with one task template, the Launch plan project with three files, the Review Assistant agent
+($5 a month), and an operator invite for `reviewer@kyoubeai.com`. It also turns assistant connections
+on for the instance if they are off. Run it from a checkout, with an instance-admin board key:
+
+```bash
+KYOUBE_SEED_API_KEY="$(docker compose exec -T app sh -c 'cat /kyoubeai/kyoube/board-key.json' | jq -r .token)" \
+  node scripts/demo/seed-review-company.mjs --base-url http://localhost:3300
+```
+
+It finds everything by name and works only in "KyoubeAI Review"; it stops if two companies have that
+name. Running it again resets the company between review rounds: the sample rows and files come back,
+tables, top-level project entries and apps that reviewers added are removed, and open app tasks are
+cancelled. It prints one line per object (created, updated, reset or unchanged) and, until the
+reviewer has joined, an invite link to open as `reviewer@kyoubeai.com` while sign-up is open.
+
+The Tickets table has an AI column. It stays empty unless you pass `--decisions` with
+`KYOUBE_SEED_DECISIONS_API_KEY`, `KYOUBE_SEED_DECISIONS_PROVIDER` and `KYOUBE_SEED_DECISIONS_MODEL`
+(and `KYOUBE_SEED_DECISIONS_BASE_URL` for the `custom` provider). The script stores the key as a
+company secret, and some rows then wait for review.
+
 ## Resetting harness credentials
 
 Each harness keeps its login under `/kyoubeai`. Removing its state logs it out; the next login
