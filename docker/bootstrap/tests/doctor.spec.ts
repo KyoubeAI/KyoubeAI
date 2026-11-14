@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import {
-  LEGACY_ENV_KEYS, assistantConnectionsCheck, agentQuestionsCheck, boardKeyDoctorCheck, agentQuestionsDoctorCheck, agentRulesChecks, agentRulesDoctorChecks, claudeCredentialDetail, exposureWarning, formatCheck, harnessChecks, harnessesInUseCheck, legacyEnvCheck, legacyHomeLinkCheck, licenceCheck, licenceEnforcementCheck, pushTestEndpointCheck, questionCountsText, skillsCheck, systemPackagesCheck,
+  LEGACY_ENV_KEYS, assistantConnectionsCheck, agentQuestionsCheck, boardKeyDoctorCheck, agentQuestionsDoctorCheck, agentRulesChecks, agentRulesDoctorChecks, claudeCredentialDetail, exposureWarning, formatCheck, harnessChecks, harnessesInUseCheck, legacyEnvCheck, legacyHomeLinkCheck, licenceCheck, licenceEnforcementCheck, pushTestEndpointCheck, questionCountsText, signUpCheck, skillsCheck, systemPackagesCheck,
 } from "../src/commands/doctor.js";
 import { licenseStatus } from "@kyoube/license";
 import type { BoardKeyApi } from "../src/board-key-renewal.js";
@@ -57,6 +57,28 @@ describe("exposureWarning", () => {
   it("names the offending public URL value in the warning", () => {
     const warning = exposureWarning({ PAPERCLIP_DEPLOYMENT_EXPOSURE: "public" }, "http://ai.example.com");
     expect(warning).toContain("http://ai.example.com");
+  });
+});
+
+describe("signUpCheck", () => {
+  it("is OK on a private instance whatever the switch says", () => {
+    const check = signUpCheck({});
+    expect(check).toMatchObject({ name: "sign-up", ok: true });
+    expect(check.warn).toBeFalsy();
+  });
+  it("is OK on a public instance with sign-up off", () => {
+    expect(signUpCheck({ PAPERCLIP_DEPLOYMENT_EXPOSURE: "public", PAPERCLIP_AUTH_DISABLE_SIGN_UP: "true" }))
+      .toMatchObject({ ok: true, detail: "closed" });
+  });
+  it("warns on a public instance with sign-up open, and says how to close it and let people in", () => {
+    const check = signUpCheck({ PAPERCLIP_DEPLOYMENT_EXPOSURE: "public", PAPERCLIP_AUTH_DISABLE_SIGN_UP: "false" });
+    expect(check).toMatchObject({ name: "sign-up", ok: true, warn: true });
+    expect(check.detail).toContain("KYOUBE_AUTH_DISABLE_SIGN_UP=true");
+    expect(check.detail).toContain("invite");
+    expect(check.detail).toContain("Cloudflare Access");
+  });
+  it("treats an unset switch on a public instance as open", () => {
+    expect(signUpCheck({ PAPERCLIP_DEPLOYMENT_EXPOSURE: "public" }).warn).toBe(true);
   });
 });
 

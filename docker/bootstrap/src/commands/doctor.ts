@@ -77,6 +77,21 @@ export function exposureWarning(env: NodeJS.ProcessEnv, publicUrl: string): stri
   return null;
 }
 
+/**
+ * On a public instance, open sign-up lets anyone who reaches the address create an account.
+ * Warn (never fail) unless `KYOUBE_AUTH_DISABLE_SIGN_UP=true`; compose passes it as
+ * `PAPERCLIP_AUTH_DISABLE_SIGN_UP`. A private instance is not checked.
+ */
+export function signUpCheck(env: NodeJS.ProcessEnv): Check {
+  const name = "sign-up";
+  if ((env.PAPERCLIP_DEPLOYMENT_EXPOSURE ?? "private") !== "public") return { name, ok: true, detail: "private instance" };
+  if (env.PAPERCLIP_AUTH_DISABLE_SIGN_UP === "true") return { name, ok: true, detail: "closed" };
+  return {
+    name, ok: true, warn: true,
+    detail: "anyone who reaches this address can create an account and take a seat. Set KYOUBE_AUTH_DISABLE_SIGN_UP=true once everyone has joined; closing it also stops invite links from working, so set it back to false while someone joins. Ignore this if something in front of the instance, such as Cloudflare Access, already limits who reaches it.",
+  };
+}
+
 /** Marker `scripts/migrate-from-0.1.sh` leaves in the home volume; while it exists the entrypoint keeps the legacy `/paperclip` path resolvable. */
 export const MIGRATION_MARKER = ".migrated-from-paperclip-home";
 
@@ -549,6 +564,7 @@ export async function runDoctor(env: NodeJS.ProcessEnv): Promise<number> {
 
   const warning = exposureWarning(env, config.publicUrl);
   checks.push({ name: "exposure", ok: warning === null, detail: warning ?? "private or https" });
+  checks.push(signUpCheck(env));
   checks.push(legacyEnvCheck(env));
 
   const client = createCoreClient({ apiBase: config.paperclipApiUrl });
