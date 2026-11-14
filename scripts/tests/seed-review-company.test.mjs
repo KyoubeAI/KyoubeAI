@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { COMPANY, SEED, appShape, chunk, extras, fileLayout, findOne, openTasks, parseArgs } from "../demo/seed-review-company.mjs";
+import { COMPANY, SEED, TASK_LIST_LIMIT, appShape, chunk, extras, fileLayout, findOne, inviteDecision, openTasks, parseArgs, taskListFull } from "../demo/seed-review-company.mjs";
 
 test("findOne finds by exact name and refuses duplicates", () => {
   assert.equal(findOne([{ name: "A", id: 1 }, { name: "B", id: 2 }], "B").id, 2);
@@ -31,7 +31,8 @@ test("the seed matches the spec", () => {
 
 test("parseArgs needs the base URL and the key, and the provider settings with --decisions", () => {
   const env = { KYOUBE_SEED_API_KEY: "pcp_board_x" };
-  assert.deepEqual(parseArgs(["--base-url", "http://localhost:3300/"], env), { baseUrl: "http://localhost:3300", key: "pcp_board_x", decisions: false, decisionsConfig: null });
+  assert.deepEqual(parseArgs(["--base-url", "http://localhost:3300/"], env), { baseUrl: "http://localhost:3300", key: "pcp_board_x", decisions: false, newInvite: false, decisionsConfig: null });
+  assert.equal(parseArgs(["--base-url", "http://h", "--new-invite"], env).newInvite, true);
   assert.throws(() => parseArgs([], env), /--base-url is missing/);
   assert.throws(() => parseArgs(["--base-url", "http://localhost:3300"], {}), /KYOUBE_SEED_API_KEY is not set/);
   assert.throws(() => parseArgs(["--base-url", "http://localhost:3300", "--decisions"], env), /KYOUBE_SEED_DECISIONS_API_KEY, KYOUBE_SEED_DECISIONS_PROVIDER, KYOUBE_SEED_DECISIONS_MODEL/);
@@ -44,6 +45,21 @@ test("the CLI exits 1 with a message when the key is missing", () => {
   const run = spawnSync(process.execPath, [script, "--base-url", "http://127.0.0.1:9"], { env: { PATH: process.env.PATH }, encoding: "utf8" });
   assert.equal(run.status, 1);
   assert.match(run.stderr, /KYOUBE_SEED_API_KEY is not set/);
+});
+
+test("inviteDecision keeps an open operator invite unless a new one is asked for", () => {
+  const operator = { id: "op", allowedJoinTypes: "human", humanRole: "operator" };
+  const other = [{ id: "admin", allowedJoinTypes: "human", humanRole: "admin" }, { id: "agent", allowedJoinTypes: "agent", humanRole: null }];
+  assert.deepEqual(inviteDecision([operator, ...other], false), { keep: [operator], revoke: [], create: false });
+  assert.deepEqual(inviteDecision([operator, ...other], true), { keep: [], revoke: [operator], create: true });
+  assert.deepEqual(inviteDecision(other, false), { keep: [], revoke: [], create: true });
+  assert.deepEqual(inviteDecision([], true), { keep: [], revoke: [], create: true });
+});
+
+test("taskListFull flags a page that may hide older tasks", () => {
+  assert.equal(TASK_LIST_LIMIT, 50);
+  assert.equal(taskListFull(Array.from({ length: 49 }, (_, i) => ({ id: String(i) }))), false);
+  assert.equal(taskListFull(Array.from({ length: 50 }, (_, i) => ({ id: String(i) }))), true);
 });
 
 test("fileLayout names the top-level entries and the files in each seeded folder", () =>

@@ -6,7 +6,10 @@
 // tasks. Every call names the review company's id; no other company is read or changed. The script
 // holds no credentials: the instance-admin board key comes from the environment.
 //
-//   KYOUBE_SEED_API_KEY=… node scripts/demo/seed-review-company.mjs --base-url http://localhost:3300 [--decisions]
+//   KYOUBE_SEED_API_KEY=… node scripts/demo/seed-review-company.mjs --base-url http://localhost:3300 [--decisions] [--new-invite]
+//
+// Until the reviewer has joined, it prints an operator invite link. An open invite is kept on a
+// re-run, since its link may already be with a reviewer; --new-invite revokes it and makes another.
 //
 // With --decisions it also stores KYOUBE_SEED_DECISIONS_API_KEY as a company secret and points
 // kyoube.apps at KYOUBE_SEED_DECISIONS_PROVIDER and KYOUBE_SEED_DECISIONS_MODEL
@@ -263,6 +266,25 @@ export function chunk(ids, size = 500) {
   return out;
 }
 
+/** The core lists an app's tasks newest first, at most this many. */
+export const TASK_LIST_LIMIT = 50;
+
+/** A full page: older tasks, open ones among them, may be past its end. */
+export function taskListFull(tasks) {
+  return tasks.length >= TASK_LIST_LIMIT;
+}
+
+/**
+ * What to do about the reviewer's invite, given the company's active invites. An open operator
+ * invite may already be in a reviewer's hands, so it is kept unless `--new-invite` asks for a new
+ * one; then every open operator invite is revoked and one is created.
+ */
+export function inviteDecision(activeInvites, newInvite) {
+  const open = activeInvites.filter((invite) => invite.allowedJoinTypes === "human" && invite.humanRole === "operator");
+  if (open.length > 0 && !newInvite) return { keep: open, revoke: [], create: false };
+  return { keep: [], revoke: open, create: true };
+}
+
 /** The parts of an app version this script sets, for comparing a stored version with the seed. */
 export function appShape(manifest, source) {
   return JSON.stringify({
@@ -289,24 +311,26 @@ export function fileLayout(files) {
   return { top: [...top].sort(), dirs };
 }
 
-const USAGE = "usage: KYOUBE_SEED_API_KEY=<instance-admin board key> node scripts/demo/seed-review-company.mjs --base-url <url> [--decisions]";
+const USAGE = "usage: KYOUBE_SEED_API_KEY=<instance-admin board key> node scripts/demo/seed-review-company.mjs --base-url <url> [--decisions] [--new-invite]";
 
 export function parseArgs(argv, env) {
   let baseUrl = null;
   let decisions = false;
+  let newInvite = false;
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     if (flag === "--base-url") {
       baseUrl = argv[i + 1] ?? null;
       i += 1;
     } else if (flag === "--decisions") decisions = true;
+    else if (flag === "--new-invite") newInvite = true;
     else throw new Error(`unknown argument ${flag}\n${USAGE}`);
   }
   if (!baseUrl) throw new Error(`--base-url is missing\n${USAGE}`);
   if (!/^https?:\/\/[^/]+/.test(baseUrl)) throw new Error(`--base-url must start with http:// or https://, got ${baseUrl}`);
   const key = (env.KYOUBE_SEED_API_KEY ?? "").trim();
   if (!key) throw new Error(`KYOUBE_SEED_API_KEY is not set\n${USAGE}`);
-  const args = { baseUrl: baseUrl.replace(/\/+$/, ""), key, decisions, decisionsConfig: null };
+  const args = { baseUrl: baseUrl.replace(/\/+$/, ""), key, decisions, newInvite, decisionsConfig: null };
   if (decisions) {
     const need = ["KYOUBE_SEED_DECISIONS_API_KEY", "KYOUBE_SEED_DECISIONS_PROVIDER", "KYOUBE_SEED_DECISIONS_MODEL"];
     const missing = need.filter((name) => !(env[name] ?? "").trim());
@@ -346,7 +370,10 @@ function makeClient(baseUrl, key) {
     try { json = text ? JSON.parse(text) : null; } catch { json = null; }
     if (!res.ok) {
       // A plugin action that refuses answers 502 WORKER_ERROR with the worker's "<code>: <text>" in `message`.
-      const message = json?.message ?? json?.error ?? (text.slice(0, 300) || res.statusText);
+      // Only a string is a message; an object-valued `error` would print as [object Object].
+      const message = typeof json?.message === "string" ? json.message
+        : typeof json?.error === "string" ? json.error
+        : (text.slice(0, 300) || res.statusText);
       const code = json?.code === "WORKER_ERROR" ? String(json.message ?? "").split(":")[0] : json?.code ?? null;
       throw new SeedError(`${method} ${path} answered ${res.status}: ${message}`, { status: res.status, code });
     }
@@ -542,33 +569,58 @@ async function seedProject(http, api, companyId, summary) {
   }
 }
 
-async function cancelOpenTasks(api, slug) {
-  let cancelled = 0;
-  for (const task of openTasks(await api.action("kyoube.apps", "apps.task_list", { slug }))) {
-    // The agent's run may still be closing, and the core refuses the change until it has (a
-    // conflict); a conflict on a task that has meanwhile finished needs nothing more.
-    for (let attempt = 1; ; attempt += 1) {
-      try {
-        await api.action("kyoube.apps", "apps.task_cancel", { slug, id: task.id });
-        cancelled += 1;
-        break;
-      } catch (error) {
-        if (!(error instanceof SeedError) || error.code !== "conflict") throw error;
-        const now = await api.action("kyoube.apps", "apps.task_get", { slug, id: task.id });
-        if (!OPEN_TASK_STATUSES.includes(now?.status)) break;
-        if (attempt >= 15) throw error;
-        await sleep(1000);
-      }
+async function cancelOne(api, slug, id) {
+  // The agent's run may still be closing, and the core refuses the change until it has (a
+  // conflict); a conflict on a task that has meanwhile finished needs nothing more.
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await api.action("kyoube.apps", "apps.task_cancel", { slug, id });
+      return 1;
+    } catch (error) {
+      if (!(error instanceof SeedError) || error.code !== "conflict") throw error;
+      const now = await api.action("kyoube.apps", "apps.task_get", { slug, id });
+      if (!OPEN_TASK_STATUSES.includes(now?.status)) return 0;
+      if (attempt >= 15) throw error;
+      await sleep(1000);
     }
   }
-  return cancelled;
+}
+
+/** Cancels the open tasks of one app; `mayRemain` when its task list is a full page even after that. */
+async function cancelOpenTasks(api, slug) {
+  let cancelled = 0;
+  let tasks = await api.action("kyoube.apps", "apps.task_list", { slug });
+  for (const task of openTasks(tasks)) cancelled += await cancelOne(api, slug, task.id);
+  // A full page may hide older tasks: list again, cancel any open one it now shows, and say so.
+  if (taskListFull(tasks)) {
+    tasks = await api.action("kyoube.apps", "apps.task_list", { slug });
+    for (const task of openTasks(tasks)) cancelled += await cancelOne(api, slug, task.id);
+  }
+  return { cancelled, mayRemain: taskListFull(tasks) };
+}
+
+/**
+ * The first reset step that touches data: a task's run can go on after it is cancelled and the
+ * agent may write rows, so tasks stop before the tables are reset. Every published app counts,
+ * including ones archived later in this run (an archived app's tasks can no longer be listed).
+ */
+async function cancelAppTasks(api, summary) {
+  const published = (await api.apps.get("/apps")).filter((a) => a.status === "published");
+  let cancelled = 0;
+  for (const app of published) {
+    const result = await cancelOpenTasks(api, app.slug);
+    cancelled += result.cancelled;
+    if (result.mayRemain) {
+      console.log(`    WARNING: app ${app.slug} has at least ${TASK_LIST_LIMIT} tasks and only the newest ${TASK_LIST_LIMIT} can be listed;`);
+      console.log("             older open tasks may remain. Cancel them from the company's task list.");
+    }
+  }
+  summary.push(["open app tasks", "", cancelled > 0 ? `reset (${cancelled} cancelled)` : "unchanged"]);
 }
 
 async function seedApp(api, agentCreated, summary) {
   const { slug } = SEED.app.manifest;
   const apps = (await api.apps.get("/apps")).filter((a) => a.status !== "archived");
-  let cancelled = 0;
-  for (const app of apps.filter((a) => a.status === "published")) cancelled += await cancelOpenTasks(api, app.slug);
   for (const app of apps.filter((a) => a.slug !== slug)) {
     await api.apps.post(`/apps/${app.slug}/archive`);
     summary.push(["app", `${app.name} (${app.slug})`, "archived (not in the seed)"]);
@@ -593,7 +645,6 @@ async function seedApp(api, agentCreated, summary) {
   }
   if (status !== "unchanged") await api.apps.post(`/apps/${slug}/publish`, { tasksConfirmed: true });
   summary.push(["app", `${SEED.app.manifest.name} (${slug})`, status]);
-  summary.push(["open app tasks", "", cancelled > 0 ? `reset (${cancelled} cancelled)` : "unchanged"]);
 }
 
 async function seedDecisions(http, api, companyId, config, summary) {
@@ -639,28 +690,34 @@ async function seedDecisions(http, api, companyId, config, summary) {
   console.log(`    ${ticketsAi} is filling in the background; rows it is unsure of wait for review`);
 }
 
-async function seedReviewer(http, baseUrl, companyId, summary) {
+/** `{ url }` for a new invite, `{ kept: true }` when an open one stays, `{}` once the reviewer is a member. */
+async function seedReviewer(http, baseUrl, companyId, newInvite, summary) {
   const { members } = await http.get(`/api/companies/${companyId}/members`);
   const member = (members ?? []).find((m) => (m.user?.email ?? "").toLowerCase() === REVIEWER_EMAIL);
   if (member) {
     summary.push(["reviewer", `${REVIEWER_EMAIL} (${member.membershipRole}, ${member.status})`, "unchanged"]);
     if (member.membershipRole !== "operator") console.log(`    WARNING: ${REVIEWER_EMAIL} is ${member.membershipRole}, not operator; change it under Company Settings → Members`);
-    return;
+    return {};
   }
   // The core keeps only a hash of an invite's token, so an open invite's link cannot be printed
-  // again. Instead the open operator invites are withdrawn and one new one is made.
+  // again. It may already be in a reviewer's hands, so it stays unless --new-invite asks otherwise.
   const { invites } = await http.get(`/api/companies/${companyId}/invites?state=active`);
-  let withdrawn = 0;
-  for (const invite of invites ?? []) {
-    if (invite.allowedJoinTypes === "human" && invite.humanRole === "operator") {
-      await http.post(`/api/invites/${invite.id}/revoke`, {});
-      withdrawn += 1;
-    }
+  const decision = inviteDecision(invites ?? [], newInvite);
+  if (!decision.create) {
+    summary.push(["reviewer invite", `${REVIEWER_EMAIL} as operator (open, link given out before)`, "unchanged"]);
+    return { kept: true };
   }
+  for (const invite of decision.revoke) await http.post(`/api/invites/${invite.id}/revoke`, {});
   const created = await http.post(`/api/companies/${companyId}/invites`, { humanRole: "operator", allowedJoinTypes: "human" });
-  summary.push(["reviewer invite", `${REVIEWER_EMAIL} as operator${withdrawn ? `, replacing ${withdrawn} open invite(s)` : ""}`, "created"]);
-  return `${baseUrl}${created.invitePath}`;
+  const replaced = decision.revoke.length ? `, replacing ${decision.revoke.length} open invite(s)` : "";
+  summary.push(["reviewer invite", `${REVIEWER_EMAIL} as operator${replaced}`, "created"]);
+  return { url: `${baseUrl}${created.invitePath}` };
 }
+
+const CREDENTIAL_NOTE = [
+  "    The link is a credential: it is not tied to the email, and anyone who opens it joins as operator.",
+  "    Hand it only to the reviewer.",
+];
 
 export async function main(argv = process.argv.slice(2), env = process.env) {
   const args = parseArgs(argv, env);
@@ -672,16 +729,21 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   console.log(`    company id ${companyId}`);
   await seedMcpSetting(http, summary);
   const { created: agentCreated } = await seedAgent(http, api, companyId, summary);
+  await cancelAppTasks(api, summary);
   await seedTables(api, summary);
   await seedProject(http, api, companyId, summary);
   await seedApp(api, agentCreated, summary);
   await seedDecisions(http, api, companyId, args.decisionsConfig, summary);
-  const inviteUrl = await seedReviewer(http, args.baseUrl, companyId, summary);
+  const invite = await seedReviewer(http, args.baseUrl, companyId, args.newInvite, summary);
   console.log("==> summary");
   for (const [kind, name, status] of summary) console.log(`    ${[kind, name].filter(Boolean).join(" ")}: ${status}`);
-  if (inviteUrl) {
-    console.log(`==> reviewer invite: ${inviteUrl}`);
+  if (invite.url) {
+    console.log(`==> reviewer invite: ${invite.url}`);
     console.log(`    Open this as ${REVIEWER_EMAIL} while sign-up is open.`);
+    for (const line of CREDENTIAL_NOTE) console.log(line);
+  } else if (invite.kept) {
+    console.log("==> An invite is already open; pass --new-invite to replace it.");
+    for (const line of CREDENTIAL_NOTE) console.log(line.replace("The link", "Its link"));
   }
 }
 

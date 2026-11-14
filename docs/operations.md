@@ -423,8 +423,14 @@ KYOUBE_SEED_API_KEY="$(docker compose exec -T app sh -c 'cat /kyoubeai/kyoube/bo
 It finds everything by name and works only in "KyoubeAI Review"; it stops if two companies have that
 name. Running it again resets the company between review rounds: the sample rows and files come back,
 tables, top-level project entries and apps that reviewers added are removed, and open app tasks are
-cancelled. It prints one line per object (created, updated, reset or unchanged) and, until the
-reviewer has joined, an invite link to open as `reviewer@kyoubeai.com` while sign-up is open.
+cancelled (first, so no agent run writes into the tables being reset). It prints one line per object
+(created, updated, reset or unchanged).
+
+Until the reviewer has joined, the first run prints an invite link to open as `reviewer@kyoubeai.com`
+while sign-up is open. The link is a credential: it is not tied to that email, and anyone who opens
+it joins the company as an operator, so hand it only to the reviewer. A later run keeps an open invite,
+because its link may already be with a reviewer, and says "An invite is already open; pass
+--new-invite to replace it." With `--new-invite` the open invite is revoked and a new link printed.
 
 The Tickets table has an AI column. It stays empty unless you pass `--decisions` with
 `KYOUBE_SEED_DECISIONS_API_KEY`, `KYOUBE_SEED_DECISIONS_PROVIDER` and `KYOUBE_SEED_DECISIONS_MODEL`
