@@ -4,15 +4,15 @@
 // (docs/mcp.md). Every object is found by name. A re-run puts back the sample rows, files and agent
 // instructions, removes the tables, top-level project entries and apps reviewers added, and cancels
 // open app tasks and the agent's open tasks. docs/operations.md says what a re-run does not put back.
-// Outside the review company, the script reads only the list of companies (to find it by name) and
-// may turn on assistant connections, which is an instance-wide setting; every other call names the
-// review company's id or one of its objects. It refuses to reset a project folder that is not the
+// Outside the review company, the script reads the list of companies (to find the company by name),
+// may create the company when it is missing, and reads and may turn on the instance-wide assistant
+// connections setting; every other call names the review company's id or one of its objects. It refuses to reset a project folder that is not the
 // project's own managed folder. The script holds no credentials: the instance-admin board key comes
 // from the environment.
 //
 //   KYOUBE_SEED_API_KEY=… node scripts/demo/seed-review-company.mjs --base-url http://localhost:3300 [--decisions] [--new-invite]
 //
-// Until the reviewer has joined, it prints an operator invite link. An open invite is kept on a
+// Until the reviewer has joined, it prints an invite link that joins as admin of the review company. An open invite is kept on a
 // re-run, since its link may already be with a reviewer; --new-invite revokes it and makes another.
 //
 // With --decisions it also stores KYOUBE_SEED_DECISIONS_API_KEY as a company secret and points
@@ -23,6 +23,8 @@ import { pathToFileURL } from "node:url";
 
 export const COMPANY = "KyoubeAI Review";
 export const REVIEWER_EMAIL = "reviewer@kyoubeai.com";
+/** The reviewer is a company admin, so every tool works, schema-level ones included. */
+export const REVIEWER_ROLE = "admin";
 export const AGENT_CWD = "/kyoubeai/workspaces/kyoubeai-review";
 export const DECISIONS_SECRET = "kyoube-decisions-key";
 export const OPEN_TASK_STATUSES = ["waiting", "working", "needs_review", "blocked"];
@@ -285,12 +287,12 @@ export function taskListFull(tasks) {
 }
 
 /**
- * What to do about the reviewer's invite, given the company's active invites. An open operator
+ * What to do about the reviewer's invite, given the company's active invites. An open admin
  * invite may already be in a reviewer's hands, so it is kept unless `--new-invite` asks for a new
- * one; then every open operator invite is revoked and one is created.
+ * one; then every open reviewer invite is revoked and one is created.
  */
 export function inviteDecision(activeInvites, newInvite) {
-  const open = activeInvites.filter((invite) => invite.allowedJoinTypes === "human" && invite.humanRole === "operator");
+  const open = activeInvites.filter((invite) => invite.allowedJoinTypes === "human" && invite.humanRole === REVIEWER_ROLE);
   if (open.length > 0 && !newInvite) return { keep: open, revoke: [], create: false };
   return { keep: [], revoke: open, create: true };
 }
@@ -808,7 +810,9 @@ async function seedReviewer(http, baseUrl, companyId, newInvite, summary) {
   const member = (members ?? []).find((m) => (m.user?.email ?? "").toLowerCase() === REVIEWER_EMAIL);
   if (member) {
     summary.push(["reviewer", `${REVIEWER_EMAIL} (${member.membershipRole}, ${member.status})`, "unchanged"]);
-    if (member.membershipRole !== "operator") console.log(`    WARNING: ${REVIEWER_EMAIL} is ${member.membershipRole}, not operator; change it under Company Settings → Members`);
+    if (member.membershipRole !== REVIEWER_ROLE) {
+      console.log(`    WARNING: ${REVIEWER_EMAIL} is ${member.membershipRole}, not ${REVIEWER_ROLE}, so schema-level tools answer "forbidden"; the script does not change roles, so set it under Company Settings → Members`);
+    }
     return {};
   }
   // The core keeps only a hash of an invite's token, so an open invite's link cannot be printed
@@ -816,18 +820,18 @@ async function seedReviewer(http, baseUrl, companyId, newInvite, summary) {
   const { invites } = await http.get(`/api/companies/${companyId}/invites?state=active`);
   const decision = inviteDecision(invites ?? [], newInvite);
   if (!decision.create) {
-    summary.push(["reviewer invite", `${REVIEWER_EMAIL} as operator (open, link given out before)`, "unchanged"]);
+    summary.push(["reviewer invite", `${REVIEWER_EMAIL} as ${REVIEWER_ROLE} (open, link given out before)`, "unchanged"]);
     return { kept: true };
   }
   for (const invite of decision.revoke) await http.post(`/api/invites/${invite.id}/revoke`, {});
-  const created = await http.post(`/api/companies/${companyId}/invites`, { humanRole: "operator", allowedJoinTypes: "human" });
+  const created = await http.post(`/api/companies/${companyId}/invites`, { humanRole: REVIEWER_ROLE, allowedJoinTypes: "human" });
   const replaced = decision.revoke.length ? `, replacing ${decision.revoke.length} open invite(s)` : "";
-  summary.push(["reviewer invite", `${REVIEWER_EMAIL} as operator${replaced}`, "created"]);
+  summary.push(["reviewer invite", `${REVIEWER_EMAIL} as ${REVIEWER_ROLE}${replaced}`, "created"]);
   return { url: `${baseUrl}${created.invitePath}` };
 }
 
 const CREDENTIAL_NOTE = [
-  "    The link is a credential: it is not tied to the email, and anyone who opens it joins as operator.",
+  `    The link is a credential: it is not tied to the email, and anyone who opens it joins as ${REVIEWER_ROLE} of the review company.`,
   "    Hand it only to the reviewer.",
 ];
 

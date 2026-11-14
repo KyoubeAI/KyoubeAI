@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { AGENT_INSTRUCTIONS, COMPANY, SEED, TASK_LIST_LIMIT, appShape, chunk, extras, fileLayout, findOne, inviteDecision, managedFolder, openIssues, openTasks, parseArgs, renameWarning, taskListFull } from "../demo/seed-review-company.mjs";
+import { AGENT_INSTRUCTIONS, COMPANY, REVIEWER_ROLE, SEED, TASK_LIST_LIMIT, appShape, chunk, extras, fileLayout, findOne, inviteDecision, managedFolder, openIssues, openTasks, parseArgs, renameWarning, taskListFull } from "../demo/seed-review-company.mjs";
 
 test("findOne finds by exact name and refuses duplicates", () => {
   assert.equal(findOne([{ name: "A", id: 1 }, { name: "B", id: 2 }], "B").id, 2);
@@ -47,11 +47,12 @@ test("the CLI exits 1 with a message when the key is missing", () => {
   assert.match(run.stderr, /KYOUBE_SEED_API_KEY is not set/);
 });
 
-test("inviteDecision keeps an open operator invite unless a new one is asked for", () => {
-  const operator = { id: "op", allowedJoinTypes: "human", humanRole: "operator" };
-  const other = [{ id: "admin", allowedJoinTypes: "human", humanRole: "admin" }, { id: "agent", allowedJoinTypes: "agent", humanRole: null }];
-  assert.deepEqual(inviteDecision([operator, ...other], false), { keep: [operator], revoke: [], create: false });
-  assert.deepEqual(inviteDecision([operator, ...other], true), { keep: [], revoke: [operator], create: true });
+test("inviteDecision keeps an open reviewer invite unless a new one is asked for", () => {
+  assert.equal(REVIEWER_ROLE, "admin");
+  const open = { id: "op", allowedJoinTypes: "human", humanRole: REVIEWER_ROLE };
+  const other = [{ id: "old", allowedJoinTypes: "human", humanRole: "operator" }, { id: "agent", allowedJoinTypes: "agent", humanRole: null }];
+  assert.deepEqual(inviteDecision([open, ...other], false), { keep: [open], revoke: [], create: false });
+  assert.deepEqual(inviteDecision([open, ...other], true), { keep: [], revoke: [open], create: true });
   assert.deepEqual(inviteDecision(other, false), { keep: [], revoke: [], create: true });
   assert.deepEqual(inviteDecision([], true), { keep: [], revoke: [], create: true });
 });

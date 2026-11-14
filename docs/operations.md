@@ -412,7 +412,7 @@ If you set `KYOUBE_BOARD_API_KEY` in `.env` instead of storing a key, rotate it 
 `scripts/demo/seed-review-company.mjs` builds the "KyoubeAI Review" company that directory reviewers
 use to test the assistant connection ([docs/mcp.md](mcp.md)). It creates three sample tables, the Lead
 desk app with one task template, the Launch plan project with three files, the Review Assistant agent
-($5 a month), and an operator invite for `reviewer@kyoubeai.com`. It also turns assistant connections
+($5 a month), and an invite for `reviewer@kyoubeai.com` as admin of the company, so every tool works for them, schema changes included. It also turns assistant connections
 on for the instance if they are off. Run it from a checkout, with an instance-admin board key:
 
 ```bash
@@ -430,6 +430,9 @@ name. Run it again between review rounds. A re-run:
 - removes the tables and apps that reviewers added, extra top-level entries in the project folder, and
   files added inside `notes/` and `data/`.
 
+If `reviewer@kyoubeai.com` is already a member with another role, the run prints a WARNING and leaves
+the role alone; change it under Company Settings, Members.
+
 A re-run leaves in place the projects, agents, skills and secrets that reviewers created, tasks that
 are not assigned to Review Assistant, and the comments and documents on tasks. Of the agent's
 settings, only the budget and the harness are put back, so a changed model stays. The agent and the
@@ -444,7 +447,7 @@ reset or unchanged).
 
 Until the reviewer has joined, the first run prints an invite link to open as `reviewer@kyoubeai.com`
 while sign-up is open. The link is a credential: it is not tied to that email, and anyone who opens
-it joins the company as an operator, so hand it only to the reviewer. A later run keeps an open invite,
+it joins the review company as an admin, so hand it only to the reviewer. Run the script against an instance that holds nothing else you care about. A later run keeps an open invite,
 because its link may already be with a reviewer, and says "An invite is already open; pass
 --new-invite to replace it." With `--new-invite` the open invite is revoked and a new link printed.
 
