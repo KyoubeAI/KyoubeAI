@@ -421,10 +421,26 @@ KYOUBE_SEED_API_KEY="$(docker compose exec -T app sh -c 'cat /kyoubeai/kyoube/bo
 ```
 
 It finds everything by name and works only in "KyoubeAI Review"; it stops if two companies have that
-name. Running it again resets the company between review rounds: the sample rows and files come back,
-tables, top-level project entries and apps that reviewers added are removed, and open app tasks are
-cancelled (first, so no agent run writes into the tables being reset). It prints one line per object
-(created, updated, reset or unchanged).
+name. Run it again between review rounds. A re-run:
+
+- cancels open app tasks first, so no agent run writes into the tables being reset, then cancels any
+  other open task assigned to Review Assistant;
+- puts back the sample rows, the three project files, and the agent's budget and instructions
+  (`AGENTS.md`; any other instruction file is deleted);
+- removes the tables and apps that reviewers added, extra top-level entries in the project folder, and
+  files added inside `notes/` and `data/`.
+
+A re-run leaves in place the projects, agents, skills and secrets that reviewers created, tasks that
+are not assigned to Review Assistant, and the comments and documents on tasks. Of the agent's
+settings, only the budget and the harness are put back, so a changed model stays. The agent and the
+project are found by name. If a reviewer renamed Review Assistant or Launch plan, the run prints a
+WARNING that names what the company has and creates a new one; remove the renamed one by hand.
+
+The project files are reset only in the folder the instance manages for Launch plan. If someone has
+given the project a primary workspace somewhere else, the run stops at the project step with exit
+code 1 and names that folder, before it lists, writes or deletes anything there. Remove the workspace
+from the project, then run the script again. The script prints one line per object (created, updated,
+reset or unchanged).
 
 Until the reviewer has joined, the first run prints an invite link to open as `reviewer@kyoubeai.com`
 while sign-up is open. The link is a credential: it is not tied to that email, and anyone who opens

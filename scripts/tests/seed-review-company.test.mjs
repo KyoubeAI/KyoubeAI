@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { COMPANY, SEED, TASK_LIST_LIMIT, appShape, chunk, extras, fileLayout, findOne, inviteDecision, openTasks, parseArgs, taskListFull } from "../demo/seed-review-company.mjs";
+import { AGENT_INSTRUCTIONS, COMPANY, SEED, TASK_LIST_LIMIT, appShape, chunk, extras, fileLayout, findOne, inviteDecision, managedFolder, openIssues, openTasks, parseArgs, renameWarning, taskListFull } from "../demo/seed-review-company.mjs";
 
 test("findOne finds by exact name and refuses duplicates", () => {
   assert.equal(findOne([{ name: "A", id: 1 }, { name: "B", id: 2 }], "B").id, 2);
@@ -69,4 +69,50 @@ test("appShape ignores what the core adds to a stored manifest", () => {
   const stored = { ...SEED.app.manifest, description: null, icon: null, connections: [], tasks: { summarise: { ...SEED.app.manifest.tasks.summarise, inputs: {} } } };
   assert.equal(appShape(stored, SEED.app.source), appShape(SEED.app.manifest, SEED.app.source));
   assert.notEqual(appShape(SEED.app.manifest, `${SEED.app.source} `), appShape(SEED.app.manifest, SEED.app.source));
+});
+
+test("managedFolder accepts only the project's own managed folder", () => {
+  const managed = { id: "p1:managed", name: "Launch plan", path: "/kyoubeai/instances/default/projects/c1/p1/_default", isPrimary: true, source: "managed" };
+  assert.deepEqual(managedFolder({ canRead: true, workspaces: [managed] }, "c1", "p1"), { id: "p1:managed", path: managed.path });
+  // A configured primary workspace, wherever it points, is refused and named.
+  for (const path of ["/kyoubeai", "/tmp/elsewhere", "/kyoubeai/instances/default/projects/c1/p1/_default"]) {
+    const result = managedFolder({ workspaces: [{ id: "w1", name: "x", path, isPrimary: true, source: "configured" }, { ...managed, isPrimary: false }] }, "c1", "p1");
+    assert.match(result.problem, new RegExp(`works in ${path}`));
+    assert.equal(result.id, undefined);
+  }
+  // Another project's or company's managed folder is not this one.
+  assert.ok(managedFolder({ workspaces: [{ ...managed, id: "p2:managed", path: "/kyoubeai/instances/default/projects/c1/p2/_default" }] }, "c1", "p1").problem);
+  assert.ok(managedFolder({ workspaces: [{ ...managed, path: "/kyoubeai/instances/default/projects/c2/p1/_default" }] }, "c1", "p1").problem);
+  assert.ok(managedFolder({ workspaces: [{ ...managed, path: "/x/projects/c1/p1/_default/../../../../.." }] }, "c1", "p1").problem);
+  // No folder at all (kyoube.files refused or answered nothing).
+  assert.match(managedFolder({ canRead: false, workspaces: [] }, "c1", "p1").problem, /no folder/);
+  assert.match(managedFolder(null, "c1", "p1").problem, /no folder/);
+});
+
+test("openIssues keeps the agent's unfinished tasks in this company only", () => {
+  const issues = [
+    { id: "a", companyId: "c1", assigneeAgentId: "g1", status: "todo" },
+    { id: "b", companyId: "c1", assigneeAgentId: "g1", status: "in_progress" },
+    { id: "c", companyId: "c1", assigneeAgentId: "g1", status: "done" },
+    { id: "d", companyId: "c1", assigneeAgentId: "g1", status: "cancelled" },
+    { id: "e", companyId: "c1", assigneeAgentId: "g2", status: "todo" },
+    { id: "f", companyId: "c2", assigneeAgentId: "g1", status: "todo" },
+    { id: "g", companyId: "c1", assigneeAgentId: "g1", status: "backlog" },
+    { id: "h", companyId: "c1", assigneeAgentId: "g1", status: "in_review" },
+    { id: "i", companyId: "c1", assigneeAgentId: "g1", status: "blocked" },
+  ];
+  assert.deepEqual(openIssues(issues, "c1", "g1").map((i) => i.id), ["a", "b", "g", "h", "i"]);
+});
+
+test("renameWarning speaks up only when others of that kind exist", () => {
+  assert.equal(renameWarning("agent", "Review Assistant", []), null);
+  const agent = renameWarning("agent", "Review Assistant", ["Renamed bot"]);
+  assert.match(agent, /^WARNING: no agent named "Review Assistant", but the company has agents "Renamed bot"\./);
+  assert.match(agent, /renamed/);
+  assert.match(renameWarning("project", "Launch plan", ["Plan B", "Another"]), /projects "Another", "Plan B"/);
+});
+
+test("the seeded instructions are one short AGENTS.md", () => {
+  assert.ok(AGENT_INSTRUCTIONS.startsWith("You are Review Assistant"));
+  assert.ok(AGENT_INSTRUCTIONS.endsWith("\n"));
 });

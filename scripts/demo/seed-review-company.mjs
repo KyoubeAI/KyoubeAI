@@ -1,10 +1,14 @@
 // scripts/demo/seed-review-company.mjs
 // Builds the "KyoubeAI Review" company on an instance through its HTTP API, and resets it when run
 // again: the company that directory reviewers use when they test the assistant connection
-// (docs/mcp.md). Every object is found by name. A re-run puts back the sample rows and files,
-// removes the tables, top-level project entries and apps reviewers added, and cancels open app
-// tasks. Every call names the review company's id; no other company is read or changed. The script
-// holds no credentials: the instance-admin board key comes from the environment.
+// (docs/mcp.md). Every object is found by name. A re-run puts back the sample rows, files and agent
+// instructions, removes the tables, top-level project entries and apps reviewers added, and cancels
+// open app tasks and the agent's open tasks. docs/operations.md says what a re-run does not put back.
+// Outside the review company, the script reads only the list of companies (to find it by name) and
+// may turn on assistant connections, which is an instance-wide setting; every other call names the
+// review company's id or one of its objects. It refuses to reset a project folder that is not the
+// project's own managed folder. The script holds no credentials: the instance-admin board key comes
+// from the environment.
 //
 //   KYOUBE_SEED_API_KEY=… node scripts/demo/seed-review-company.mjs --base-url http://localhost:3300 [--decisions] [--new-invite]
 //
@@ -22,6 +26,12 @@ export const REVIEWER_EMAIL = "reviewer@kyoubeai.com";
 export const AGENT_CWD = "/kyoubeai/workspaces/kyoubeai-review";
 export const DECISIONS_SECRET = "kyoube-decisions-key";
 export const OPEN_TASK_STATUSES = ["waiting", "working", "needs_review", "blocked"];
+/** Core task (issue) statuses that are not finished; done and cancelled are. */
+export const OPEN_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked"];
+/** The core lists a company's tasks up to this many at once. */
+export const ISSUE_LIST_LIMIT = 1000;
+/** The Review Assistant's entry instructions (AGENTS.md), put back on every run. */
+export const AGENT_INSTRUCTIONS = "You are Review Assistant, an agent in the KyoubeAI Review demo company. Work only on the task you are given.\n";
 
 // ---- sample data (all fictional) --------------------------------------------------------------
 
@@ -285,6 +295,39 @@ export function inviteDecision(activeInvites, newInvite) {
   return { keep: [], revoke: open, create: true };
 }
 
+/**
+ * The project's own folder, from kyoube.files' `files.workspaces` answer, or `{ problem }` when the
+ * reset must not touch it. kyoube.files works in a project's configured primary workspace when it
+ * has one, and anyone who can read the project can add one with any path, so the reset only goes
+ * ahead in the managed folder the core keeps for this project:
+ * `…/projects/<companyId>/<projectId>/_default`.
+ */
+export function managedFolder(folders, companyId, projectId) {
+  const suffix = `/projects/${companyId}/${projectId}/_default`;
+  const primary = (folders?.workspaces ?? []).find((w) => w.isPrimary) ?? null;
+  if (!primary || typeof primary.path !== "string") return { problem: "kyoube.files shows no folder for it", suffix };
+  const managed = primary.source === "managed" && primary.id === `${projectId}:managed` && primary.path.endsWith(suffix);
+  if (!managed) return { problem: `it works in ${primary.path}, not in its own managed folder (…${suffix})`, path: primary.path, suffix };
+  return { id: primary.id, path: primary.path };
+}
+
+/** The open core tasks assigned to `agentId` in `companyId`; anything else in the list is left alone. */
+export function openIssues(issues, companyId, agentId) {
+  return issues.filter((issue) => issue.companyId === companyId && issue.assigneeAgentId === agentId
+    && OPEN_ISSUE_STATUSES.includes(issue.status));
+}
+
+/**
+ * The warning for a seeded agent or project that is missing while the company has others of that
+ * kind: a reviewer may have renamed it, and the run is about to create a second one.
+ */
+export function renameWarning(kind, wanted, existingNames) {
+  if (existingNames.length === 0) return null;
+  const names = [...existingNames].sort().map((name) => `"${name}"`).join(", ");
+  return `WARNING: no ${kind} named "${wanted}", but the company has ${kind === "agent" ? "agents" : "projects"} ${names}. `
+    + `A reviewer may have renamed it. Creating a new "${wanted}"; the renamed one is not reset. Remove it by hand.`;
+}
+
 /** The parts of an app version this script sets, for comparing a stored version with the seed. */
 export function appShape(manifest, source) {
   return JSON.stringify({
@@ -382,7 +425,9 @@ function makeClient(baseUrl, key) {
   const get = (path) => call("GET", path);
   const post = (path, body = {}) => call("POST", path, body);
   const patch = (path, body) => call("PATCH", path, body);
-  return { get, post, patch };
+  const put = (path, body) => call("PUT", path, body);
+  const del = (path) => call("DELETE", path);
+  return { get, post, patch, put, del };
 }
 
 function companyApi(http, companyId) {
@@ -430,6 +475,8 @@ async function seedAgent(http, api, companyId, summary) {
   let agent = findOne(agents, SEED.agent.name);
   let status = "unchanged";
   if (!agent) {
+    const warning = renameWarning("agent", SEED.agent.name, agents.map((a) => a.name));
+    if (warning) console.log(`    ${warning}`);
     agent = await http.post(`/api/companies/${companyId}/agents`, { ...SEED.agent, adapterConfig: { cwd: AGENT_CWD } });
     status = "created";
   } else {
@@ -462,7 +509,60 @@ async function seedAgent(http, api, companyId, summary) {
     await api.action("kyoube.apps", "data.set_agent_grant", { agentId: agent.id, level: "write" });
     summary.push(["agent data access", `(write) for ${SEED.agent.name}`, current ? "updated" : "created"]);
   }
+  await seedInstructions(http, agent, status === "created", summary);
   return { agent, created: status === "created" };
+}
+
+/**
+ * Puts the agent's instructions back: AGENTS.md holds AGENT_INSTRUCTIONS and no other file is in
+ * the bundle. A reviewer can change both over the assistant connection.
+ */
+async function seedInstructions(http, agent, agentCreated, summary) {
+  const base = `/api/agents/${agent.id}/instructions-bundle`;
+  const bundle = await http.get(base);
+  if (bundle?.mode !== "managed" || bundle?.entryFile !== "AGENTS.md") {
+    console.log(`    WARNING: the instructions of "${SEED.agent.name}" are not a managed AGENTS.md (mode ${bundle?.mode}, entry ${bundle?.entryFile}); left as they are`);
+    summary.push(["agent instructions", `for ${SEED.agent.name}`, "not checked"]);
+    return;
+  }
+  for (const file of bundle.files ?? []) {
+    if (file.path === bundle.entryFile || file.virtual) continue;
+    await http.del(`${base}/file?path=${encodeURIComponent(file.path)}&baseHash=${encodeURIComponent(file.contentHash)}`);
+    summary.push(["agent instruction file", file.path, "deleted (not in the seed)"]);
+  }
+  const current = await http.get(`${base}/file?path=AGENTS.md`);
+  if (current?.content === AGENT_INSTRUCTIONS) {
+    summary.push(["agent instructions", `for ${SEED.agent.name}`, "unchanged"]);
+    return;
+  }
+  // The core takes the hash of the version read as the base, and refuses the write if it has moved on.
+  await http.put(`${base}/file`, { path: "AGENTS.md", content: AGENT_INSTRUCTIONS, baseHash: current?.contentHash ?? null });
+  summary.push(["agent instructions", `for ${SEED.agent.name}`, agentCreated ? "created" : "reset"]);
+}
+
+/**
+ * Cancels the open core tasks assigned to the seeded agent in the review company, such as ones a
+ * reviewer created over the assistant connection, so they stop spending the agent's budget. App
+ * tasks are cancelled before this, through their app.
+ */
+async function cancelAgentTasks(http, companyId, agent, summary) {
+  const query = new URLSearchParams({ assigneeAgentId: agent.id, status: OPEN_ISSUE_STATUSES.join(","), limit: String(ISSUE_LIST_LIMIT) });
+  const listed = await http.get(`/api/companies/${companyId}/issues?${query}`);
+  const issues = Array.isArray(listed) ? listed : (listed?.issues ?? []);
+  let cancelled = 0;
+  for (const issue of openIssues(issues, companyId, agent.id)) {
+    try {
+      await http.patch(`/api/issues/${issue.id}`, { status: "cancelled" });
+      cancelled += 1;
+    } catch (error) {
+      if (!(error instanceof SeedError)) throw error;
+      console.log(`    WARNING: task ${issue.identifier ?? issue.id} ("${issue.title}") could not be cancelled: ${error.message}`);
+    }
+  }
+  if (issues.length >= ISSUE_LIST_LIMIT) {
+    console.log(`    WARNING: "${SEED.agent.name}" has at least ${ISSUE_LIST_LIMIT} open tasks and only ${ISSUE_LIST_LIMIT} can be listed; run this again to cancel the rest.`);
+  }
+  summary.push([`open tasks of ${SEED.agent.name}`, "", cancelled > 0 ? `reset (${cancelled} cancelled)` : "unchanged"]);
 }
 
 async function allRowIds(api, table) {
@@ -515,16 +615,28 @@ async function seedTables(api, summary) {
 }
 
 async function seedProject(http, api, companyId, summary) {
-  const projects = await http.get(`/api/companies/${companyId}/projects`);
-  let project = findOne(Array.isArray(projects) ? projects : (projects?.projects ?? []), SEED.project.name);
+  const listed = await http.get(`/api/companies/${companyId}/projects`);
+  const projects = Array.isArray(listed) ? listed : (listed?.projects ?? []);
+  let project = findOne(projects, SEED.project.name);
   if (project) {
     summary.push(["project", SEED.project.name, "unchanged"]);
   } else {
+    const warning = renameWarning("project", SEED.project.name, projects.map((p) => p.name));
+    if (warning) console.log(`    ${warning}`);
     project = await http.post(`/api/companies/${companyId}/projects`, { name: SEED.project.name });
     summary.push(["project", SEED.project.name, "created"]);
   }
   const projectId = project.id;
-  const files = (key, params) => api.action("kyoube.files", key, { projectId, ...params });
+  // Nothing below lists, writes or deletes until the folder is known to be the project's own.
+  const folder = managedFolder(await api.action("kyoube.files", "files.workspaces", { projectId }), companyId, projectId);
+  if (folder.problem) {
+    const fix = folder.path
+      ? "Someone gave the project a primary workspace. Remove that workspace from the project (or delete the project), then run this again."
+      : "Check that kyoube.files is installed and ready, then run this again.";
+    throw new SeedError(`project "${SEED.project.name}" was not reset: ${folder.problem}. Nothing in any project folder was listed, written or deleted. ${fix}`);
+  }
+  // Every call names the managed folder; if the project is pointed elsewhere meanwhile, kyoube.files no longer lists it and refuses.
+  const files = (key, params) => api.action("kyoube.files", key, { projectId, workspaceId: folder.id, ...params });
   const list = async (path) => {
     const listing = await files("files.list", { path });
     return listing?.exists === false ? [] : (listing?.entries ?? []);
@@ -728,8 +840,9 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const api = companyApi(http, companyId);
   console.log(`    company id ${companyId}`);
   await seedMcpSetting(http, summary);
-  const { created: agentCreated } = await seedAgent(http, api, companyId, summary);
+  const { agent, created: agentCreated } = await seedAgent(http, api, companyId, summary);
   await cancelAppTasks(api, summary);
+  await cancelAgentTasks(http, companyId, agent, summary);
   await seedTables(api, summary);
   await seedProject(http, api, companyId, summary);
   await seedApp(api, agentCreated, summary);
