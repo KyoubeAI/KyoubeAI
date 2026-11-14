@@ -6,9 +6,9 @@
 // open app tasks and the agent's open tasks. docs/operations.md says what a re-run does not put back.
 // Outside the review company, the script reads the list of companies (to find the company by name),
 // may create the company when it is missing, and reads and may turn on the instance-wide assistant
-// connections setting; every other call names the review company's id or one of its objects. It refuses to reset a project folder that is not the
-// project's own managed folder. The script holds no credentials: the instance-admin board key comes
-// from the environment.
+// connections setting; every other call names the review company's id or one of its objects. It
+// refuses to reset a project folder that is not the project's own managed folder. The script holds
+// no credentials: the instance-admin board key comes from the environment.
 //
 //   KYOUBE_SEED_API_KEY=… node scripts/demo/seed-review-company.mjs --base-url http://localhost:3300 [--decisions] [--new-invite]
 //
@@ -289,7 +289,8 @@ export function taskListFull(tasks) {
 /**
  * What to do about the reviewer's invite, given the company's active invites. An open admin
  * invite may already be in a reviewer's hands, so it is kept unless `--new-invite` asks for a new
- * one; then every open reviewer invite is revoked and one is created.
+ * one; then every open admin invite is revoked and one is created. An older open operator invite
+ * (lower privilege) is left as it is and can be revoked by hand.
  */
 export function inviteDecision(activeInvites, newInvite) {
   const open = activeInvites.filter((invite) => invite.allowedJoinTypes === "human" && invite.humanRole === REVIEWER_ROLE);

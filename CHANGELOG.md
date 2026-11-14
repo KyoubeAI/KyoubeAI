@@ -21,8 +21,8 @@ building on it. The format is loosely [Keep a Changelog](https://keepachangelog.
   from Anthropic's servers, so a gateway such as Cloudflare Access needs bypass rules for
   `/mcp/kyoubeai`, the two `/.well-known/` paths and `/mcp/oauth/`.
 - `scripts/demo/seed-review-company.mjs` builds a "KyoubeAI Review" company for directory reviewers:
-  sample tables, an app with a task template, a project with files, an agent and an invite that joins as admin of that company.
-  Running it again between review rounds puts back the sample rows, the project files and the agent's
+  sample tables, an app with a task template, a project with files, an agent and an invite that joins as admin of that
+  company. Running it again between review rounds puts back the sample rows, the project files and the agent's
   budget and instructions. It removes the tables, apps and project files that reviewers added, and
   cancels open app tasks and the agent's open tasks. Projects, agents, skills and secrets that
   reviewers created stay, and the run warns when the seeded agent or project looks renamed. It stops
