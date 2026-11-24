@@ -4,6 +4,18 @@ All notable changes to KyoubeAI are recorded here, in terms of what changed for 
 building on it. The format is loosely [Keep a Changelog](https://keepachangelog.com/); versioning is
 [SemVer](https://semver.org/).
 
+## 1.18.2 - 2026-11-24
+
+### Fixed
+
+- **Files added to a new task show up in it.** The New task dialog (the sidebar's New Task, and Assign
+  Task on an agent's page) uploaded files to the task, but the task page showed none of them except
+  `.md` and `.txt` files, which become task documents. They now arrive as the task's first message,
+  so they show as files in its conversation. (Core patch `new-task-files-message`, until a core
+  release shows these files.)
+- **Assign task on the Team page and on an agent's profile takes files.** The form has an Add files
+  button; the files go into the new task's first message the same way. Kyoube Studio is 0.7.1.
+
 ## 1.18.1 - 2026-11-14
 
 ### Added
