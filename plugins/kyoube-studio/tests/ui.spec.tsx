@@ -7,7 +7,7 @@ import { AgentProfilePage, StudioBuildLabel, StudioFooter, StudioHome, StudioRou
 import { _resetBoardData, loadBoardSnapshot, loadIssueComments } from "../src/ui/board-data.js";
 import { askLevelStep, parseTeamPath } from "../src/ui/Profile.js";
 import { headline } from "../src/ui/Home.js";
-import { AssignForm, DutySwitch } from "../src/ui/agent-actions.js";
+import { AssignForm, DutySwitch, fileSize } from "../src/ui/agent-actions.js";
 import { memberDetail } from "../src/ui/nav.js";
 import { TeamOrg, toOrgAgent } from "../src/ui/TeamOrg.js";
 import { isActivePath } from "../src/ui/shared.js";
@@ -510,6 +510,14 @@ describe("shared agent actions", () => {
     const assign = render(AssignForm, { agent, onDone: () => {}, idPrefix: "ko-assign" });
     expect(assign).toContain('id="ko-assign-title"');
     expect(assign).toContain("What should Kai do?");
+    expect(assign).toMatch(/<input[^>]*id="ko-assign-files"[^>]*type="file"[^>]*multiple=""[^>]*hidden=""/);
+    expect(assign).toContain(">Add files</button>");
+  });
+
+  it("shows a staged file's size as the core's task dialog does", () => {
+    expect(fileSize(820)).toBe("820 B");
+    expect(fileSize(14_540)).toBe("14.2 KB");
+    expect(fileSize(3_250_586)).toBe("3.1 MB");
   });
 });
 

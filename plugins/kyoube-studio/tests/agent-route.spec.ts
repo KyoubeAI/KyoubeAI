@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CORE_AGENT_HEADER, agentRedirectTarget, coreAgentPage, coreAvatarCss, cssString, isAgentListPage } from "../src/ui/agent-route.js";
-import { assignTask, BoardApiError, boardPost, setAgentOnDuty } from "../src/ui/board-api.js";
+import { assignTask, attachTaskFiles, BoardApiError, boardPost, setAgentOnDuty } from "../src/ui/board-api.js";
 
 describe("the core agent page", () => {
   it("recognises agent URLs and their view, but not the list or the new-agent page", () => {
@@ -77,6 +77,58 @@ describe("board API calls", () => {
     expect(issue.identifier).toBe("BAP-12");
     expect(calls[0]!.url).toBe("/api/companies/c1/issues");
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ title: "Draft the newsletter", status: "todo", assigneeAgentId: "a1" });
+  });
+
+  it("uploads each file to the task, then posts them as one message bound to the uploads, as the core's chat does", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    let next = 0;
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith("/attachments")) {
+        next += 1;
+        return new Response(JSON.stringify({ id: `att-${next}`, contentPath: `/api/attachments/att-${next}/content` }), { status: 201 });
+      }
+      return new Response(JSON.stringify({ id: "comment-1" }), { status: 201 });
+    }) as unknown as typeof fetch;
+    const files = [new File(["%PDF"], "brief.pdf", { type: "application/pdf" }), new File(["x"], "a[1].png", { type: "image/png" })];
+    const result = await attachTaskFiles("c1", "i1", files, fetchImpl);
+    expect(result).toEqual({ failed: [] });
+    expect(calls.map((c) => c.url)).toEqual(["/api/companies/c1/issues/i1/attachments", "/api/companies/c1/issues/i1/attachments", "/api/issues/i1/comments"]);
+    const upload = calls[0]!.init;
+    expect(upload).toMatchObject({ method: "POST", credentials: "include" });
+    expect(upload.headers).toBeUndefined(); // the browser sets the multipart boundary
+    expect((upload.body as FormData).get("file")).toBe(files[0]);
+    expect(JSON.parse(String(calls[2]!.init.body))).toEqual({
+      body: "[brief.pdf](/api/attachments/att-1/content)\n[a\\[1\\].png](/api/attachments/att-2/content)",
+      attachmentIds: ["att-1", "att-2"],
+    });
+  });
+
+  it("names the files that could not be added, and leaves them out of the message", async () => {
+    const posted: string[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      if (url.endsWith("/attachments")) {
+        const file = (init.body as FormData).get("file") as File;
+        return file.name === "huge.mov"
+          ? new Response(JSON.stringify({ error: "Attachment is larger than the 10 MB limit" }), { status: 422 })
+          : new Response(JSON.stringify({ id: "att-1", contentPath: "/api/attachments/att-1/content" }), { status: 201 });
+      }
+      posted.push(String(init.body));
+      return new Response(JSON.stringify({ id: "comment-1" }), { status: 201 });
+    }) as unknown as typeof fetch;
+    const result = await attachTaskFiles("c1", "i1", [new File(["x"], "huge.mov"), new File(["x"], "notes.txt")], fetchImpl);
+    expect(result).toEqual({ failed: ["huge.mov"] });
+    expect(JSON.parse(posted[0]!)).toEqual({ body: "[notes.txt](/api/attachments/att-1/content)", attachmentIds: ["att-1"] });
+
+    const refused = (async (url: string) => url.endsWith("/attachments")
+      ? new Response(JSON.stringify({ id: "att-1", contentPath: "/api/attachments/att-1/content" }), { status: 201 })
+      : new Response(JSON.stringify({ error: "nope" }), { status: 500 })) as unknown as typeof fetch;
+    expect(await attachTaskFiles("c1", "i1", [new File(["x"], "notes.txt")], refused)).toEqual({ failed: ["notes.txt"] });
+
+    let touched = false;
+    const none = (async () => { touched = true; return new Response("{}"); }) as unknown as typeof fetch;
+    expect(await attachTaskFiles("c1", "i1", [], none)).toEqual({ failed: [] });
+    expect(touched).toBe(false);
   });
 
   it("reports the server's own message when the core refuses", async () => {

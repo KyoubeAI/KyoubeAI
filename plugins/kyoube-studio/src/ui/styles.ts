@@ -205,6 +205,15 @@ button.ks-btn { font-family: inherit; }
 .ks-assign label { font-size: 13px; font-weight: 600; }
 .ks-assign input, .ks-assign textarea { font: inherit; font-size: 13.5px; color: var(--foreground, #18181b); background: var(--background, #fff); border: 1px solid var(--input, #e4e4e7); border-radius: 9px; padding: 8px 10px; resize: vertical; }
 .ks-assign input:focus, .ks-assign textarea:focus { outline: 2px solid var(--ring, #0f766e); outline-offset: 0; border-color: transparent; }
+.ks-assign-files { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.ks-assign-files .ks-btn { cursor: pointer; }
+.ks-assign-files ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; align-self: stretch; }
+.ks-assign-files li { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 5px 6px 5px 10px; border: 1px solid var(--border, #e8e8eb); border-radius: 9px; font-size: 13px; color: var(--muted-foreground, #71717a); }
+.ks-assign-files li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground, #18181b); }
+.ks-assign-files li small { flex: none; font-size: 12px; }
+.ks-assign-files li button { flex: none; display: inline-flex; padding: 4px; border: 0; border-radius: 6px; background: none; color: inherit; cursor: pointer; }
+.ks-assign-files li button:hover { background: var(--accent, #f4f4f5); color: var(--foreground, #18181b); }
+.ks-assign-files li button:focus-visible { outline: 2px solid var(--ring, #0f766e); outline-offset: 0; }
 .ks-assign-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .ks-assign-error { margin: 0; font-size: 12.5px; color: var(--kyoube-danger, #dc2626); }
 .ks-banner { padding: 10px 14px; border-radius: 10px; font-size: 13px; border: 1px solid color-mix(in oklab, var(--kyoube-waiting, #c2410c) 35%, var(--border, #e8e8eb)); background: color-mix(in oklab, var(--kyoube-waiting, #c2410c) 8%, transparent); }
