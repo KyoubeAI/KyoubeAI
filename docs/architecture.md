@@ -404,8 +404,9 @@ rename its tools `kyoubeai_*`, title them, drop the two generic API tools, rewri
 wire in `docker/core-patches/mcp-bridge.mjs`, which adds the `kyoube.apps` table, app and app-task tools and the `kyoube.files` file tools
 ([Assistant → MCP](#assistant--mcp)).
 `docker/core-patches/patches.mjs` carries fixes to upstream bugs that had to ship here first, and the
-standing entries (licensing, user groups and work-object visibility, agent questions, the MCP connector). The temporary fixes are nine in the served UI (the first-run wizard's "Skip
-for now", and the pi and Hermes task-chat transcript fixes), one in the Hermes adapter's server source
+standing entries (licensing, user groups and work-object visibility, agent questions, the MCP connector). The temporary fixes are ten in the served UI (the first-run wizard's "Skip
+for now", the pi and Hermes task-chat transcript fixes, and `new-task-files-message`, which posts the
+files added in the New task dialog as the task's first message so they show in its conversation), one in the Hermes adapter's server source
 (`hermes-quiet-default`, upstream PR #12016, in `packages/adapters/hermes/src/server/execute.ts`), and
 one in the adapters' shared process runner (`child-stdin-closed-early`, upstream PR #14057, in
 `packages/adapter-utils/src/server-utils.ts`: an unhandled `EPIPE` on a harness CLI's input no longer

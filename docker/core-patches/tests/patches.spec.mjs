@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -713,6 +713,8 @@ async function writeFullCore(root) {
   await cp(path.join(HERE, "fixtures", "mcp-2026.1023.0"), root, { recursive: true });
   // Its app.js excerpt (the MCP dispatch) joins the visibility excerpt rather than replacing it.
   await writeFile(path.join(root, "server/dist/app.js"), APP_API_2026_1012_0 + await readFile(path.join(HERE, "fixtures", "mcp-2026.1023.0", "server/dist/app.js"), "utf8"));
+  // The New task dialog's create mutation (tests/task-files.spec.mjs) lives in the same main bundle.
+  await appendFile(path.join(root, "ui/dist/assets/index-YJY9oyby.js"), await readFile(path.join(HERE, "fixtures", "new-task-dialog-2026.1023.0.js"), "utf8"));
 }
 
 const licenseImportPatch = patch("license-seat-limit-import");

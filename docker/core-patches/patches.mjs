@@ -410,6 +410,29 @@ export const PATCHES = [
       "$3",
     expect: 1,
   },
+  // ── New task: files added in the dialog reach the conversation ─────────
+  // The New task dialog (sidebar New Task, an agent's Assign Task) creates the
+  // task, then uploads each staged file to it: `.md`/`.txt` become task
+  // documents, everything else a task attachment bound to no message. The
+  // chat-shell task page shows a person's upload only under the message it was
+  // sent with, and the Artifacts tab leaves out people's uploads, so those
+  // files are stored but appear nowhere. This posts them as the task's first
+  // message, bound to the files, the way the chat composer sends files: they
+  // show as file chips in the conversation, and the assignee's wake (merged
+  // with the assignment wake) carries them. Upstream main now lists every task
+  // file in the Artifacts tab (ui/src/lib/issue-artifacts.ts,
+  // selectArtifactAttachments) and moved this upload loop into a helper, so
+  // the next core bump fails here: check where the dialog's files show on that
+  // core, then redo the entry or delete it.
+  {
+    id: "new-task-files-message",
+    title: "New task: files added in the dialog are posted as the task's first message",
+    upstream: "https://github.com/paperclipai/paperclip (ui/src/lib/issue-artifacts.ts, selectArtifactAttachments on main; not in 2026.1023.0)",
+    files: ["ui/dist/assets/*.js"],
+    pattern: /const ([\w$]+)=await ([\w$]+)\.create\(([\w$]+),([\w$]+)\),([\w$]+)=\[\];for\(const ([\w$]+) of ([\w$]+)\)try\{(if\(\6\.kind==="document"\)\{[^{}]*\.upsertDocument\(\1\.id,[^{}]*\{[^{}]*format:"markdown"[^{}]*\}\)\})else await \2\.uploadAttachment\(\3,\1\.id,\6\.file\)\}catch\{\5\.push\(\6\.file\.name\)\}return\{issue:\1,/g,
+    replacement: String.raw`const $1=await $2.create($3,$4),$5=[],kyoubeTaskFiles=[];for(const $6 of $7)try{$8else kyoubeTaskFiles.push({name:$6.file.name,attachment:await $2.uploadAttachment($3,$1.id,$6.file)})}catch{$5.push($6.file.name)}/* kyoube-task-files */if(kyoubeTaskFiles.length>0)try{await $2.addComment($1.id,kyoubeTaskFiles.map(kyoubeFile=>"["+kyoubeFile.name.replace(/[[\]]/g,"\\$&")+"]("+kyoubeFile.attachment.contentPath+")").join("\n"),void 0,void 0,kyoubeTaskFiles.map(kyoubeFile=>kyoubeFile.attachment.id))}catch{for(const kyoubeFile of kyoubeTaskFiles)$5.push(kyoubeFile.name)}return{issue:$1,`,
+    expect: 1,
+  },
   // ── Licensing: KyoubeAI's user limit (standing: never deleted) ───────────
   // The first standing behaviour patch (CONTRIBUTING.md, "Never patch the core";
   // docs/licensing.md). Every account is created through Better Auth's
